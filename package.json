@@ -1,7 +1,7 @@
 {
-  "name": "gpm-automate-editor",
-  "version": "3.0.8",
-  "description": "GPM Automate Editor - Visual workflow editor",
+  "name": "sv-browser-automate-editor",
+  "version": "3.0.9",
+  "description": "SV Browser Automate Editor - Visual workflow editor",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
@@ -12,21 +12,22 @@
     "dist:win": "npm run build && npm run build:electron && electron-builder --win"
   },
   "keywords": [
-    "gpm",
+    "sv-browser",
     "automate",
     "editor",
     "workflow"
   ],
-  "author": "GPM Softwares",
+  "author": "SV Browser",
   "license": "ISC",
   "dependencies": {
+    "bootstrap-icons": "^1.13.1",
+    "bytenode": "^1.6.0",
     "clsx": "^2.1.1",
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.3.0",
-    "xlsx": "^0.18.5",
-    "bytenode": "^1.6.0"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",
@@ -47,14 +48,15 @@
     "vite": "^5.3.1"
   },
   "build": {
-    "appId": "com.gpmsoftwares.gpmautomateeditor",
-    "productName": "GPM Automate Editor",
+    "appId": "com.svbrowser.automateeditor",
+    "productName": "SV Browser Automate Editor",
     "directories": {
       "output": "release"
     },
     "files": [
       "dist/**/*",
-      "dist-electron/**/*"
+      "dist-electron/**/*",
+      "scripts/**/*"
     ],
     "win": {
       "target": [

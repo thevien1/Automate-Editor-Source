@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe } from 'lucide-react';
+import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const ToolBar: React.FC = () => {

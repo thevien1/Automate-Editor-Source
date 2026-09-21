@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { NormalBlockNode, ActionNode } from '../../types/gscript';
 import { useProject } from '../../context/ProjectContext';
 import { ActionNodeItem } from './ActionNodeItem';
-import { Box, ChevronDown, ChevronRight } from 'lucide-react';
+import { Box, ChevronDown, ChevronRight } from '../common/Icons';
 
 interface BlockItemProps {
   blockKey: 'before_init' | 'main_logic' | 'after_quit';

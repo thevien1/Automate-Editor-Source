@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Moon, Sun, Globe, ChevronDown } from 'lucide-react';
+import { Moon, Sun, Globe, ChevronDown, Settings } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 interface MenuBarProps {
@@ -8,7 +8,7 @@ interface MenuBarProps {
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject }) => {
-  const { closeProject, saveProject, theme, toggleTheme, undo, redo, canUndo, canRedo, copySelectedNode, cutSelectedNode, pasteCopiedNode, duplicateSelectedNode, deleteSelectedNode } = useProject();
+  const { closeProject, saveProject, theme, toggleTheme, setShowSettingsModal, undo, redo, canUndo, canRedo, copySelectedNode, cutSelectedNode, pasteCopiedNode, duplicateSelectedNode, deleteSelectedNode } = useProject();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
   const toggleMenu = (menu: string) => {
@@ -202,7 +202,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
                 Documentation
               </a>
               <div
-                onClick={() => alert('GPM Automate Editor v3.0.8-stable')}
+                onClick={() => alert('SV Browser Automate Editor v3.0.8-stable')}
                 className="px-3 py-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] cursor-pointer"
               >
                 About
@@ -213,10 +213,18 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
       </div>
 
       {/* Right Controls */}
-      <div className="flex items-center space-x-3">
+      <div className="flex items-center space-x-2.5">
+        <button
+          onClick={() => setShowSettingsModal(true)}
+          className="p-1 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] hover:text-black dark:hover:text-white transition-colors cursor-pointer"
+          title="Settings (Appearance, Theme Color, AI, License)"
+        >
+          <Settings className="w-3.5 h-3.5" />
+        </button>
+
         <button
           onClick={toggleTheme}
-          className="p-1 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] hover:text-black dark:hover:text-white transition-colors"
+          className="p-1 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] hover:text-black dark:hover:text-white transition-colors cursor-pointer"
           title={`Switch to ${theme === 'dark' ? 'Light' : 'Dark'} Mode`}
         >
           {theme === 'dark' ? (

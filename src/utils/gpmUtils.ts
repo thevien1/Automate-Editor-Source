@@ -31,7 +31,7 @@ export function createDefaultScript(): EditorFile {
   };
 }
 
-export function createDefaultProject(name: string = 'Untitled', folderPath: string = 'D:\\GPM - Chrome\\file luu GPM\\Untitled'): ProjectData {
+export function createDefaultProject(name: string = 'Untitled', folderPath: string = ''): ProjectData {
   const info: ProjectInfo = {
     id: generateGuid(),
     type: 'Browser',
@@ -39,7 +39,7 @@ export function createDefaultProject(name: string = 'Untitled', folderPath: stri
     description: null,
     version: '3.0.8',
     password: null,
-    author_info: 'GPM Softwares - gpmsoftwares.com',
+    author_info: 'SV Browser - svbrowser.com',
     logo: null,
     use_license_system: false,
     created_at: new Date().toISOString(),

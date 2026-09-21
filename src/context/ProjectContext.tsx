@@ -2,16 +2,85 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { ProjectData, ActionNode, BaseNode, NormalBlockNode, BlockNode, WorkflowNode, ForBlockNode, IfBlockNode, WhileBlockNode, EditorFile } from '../types/gscript';
 import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
 import { createDefaultProject, createDefaultNormalBlock, generateGuid, serializeRawInput } from '../utils/gpmUtils';
+import { UpdateInfo, checkForAppUpdates } from '../services/updateService';
 
-export const SYSTEM_VARIABLES = [
+export const BROWSER_SYSTEM_VARIABLES = [
   'profileName',
   'profileId',
   'profileProxy',
   'loopIndex',
+  'threadId',
+  'port',
+];
+
+export const EXCEL_VARIABLES = [
+  'col_A',
+  'col_B',
+  'col_C',
+  'col_D',
+  'col_E',
+  'col_F',
+  'col_G',
+  'col_H',
+  'col_I',
+  'col_J',
+  'col_K',
+  'col_L',
+  'col_M',
+  'col_N',
+  'col_O',
+  'col_P',
+  'col_Q',
+  'col_R',
+  'col_S',
+  'col_T',
+  'col_U',
+  'col_V',
+  'col_W',
+  'col_X',
+  'col_Y',
+  'col_Z',
+  'A',
+  'B',
+  'C',
+  'D',
+  'E',
+  'F',
+  'excel_row',
   'inputExcel',
   'inputExcelFileLocation',
   'inputExcelTotalRows',
   'inputExcelCurrentRow',
+];
+
+export const TXT_VARIABLES = [
+  'txt_line',
+  'line',
+  'line_1',
+  'line_2',
+  'line_3',
+  'line_4',
+  'line_5',
+];
+
+export const COMMON_DATA_VARIABLES = [
+  'email',
+  'password',
+  'code_2fa',
+  'url',
+  'username',
+  'two_factor_code',
+  'otp',
+  'phone',
+  'cookie',
+  'token',
+];
+
+export const SYSTEM_VARIABLES = [
+  ...BROWSER_SYSTEM_VARIABLES,
+  ...EXCEL_VARIABLES,
+  ...TXT_VARIABLES,
+  ...COMMON_DATA_VARIABLES,
 ];
 
 export const extractProjectOutputVariables = (project: ProjectData | null): string[] => {
@@ -23,8 +92,12 @@ export const extractProjectOutputVariables = (project: ProjectData | null): stri
     if ('output_variable_name' in node && (node as ActionNode).output_variable_name) {
       const name = (node as ActionNode).output_variable_name?.trim();
       if (name) {
-        const clean = name.startsWith('$') ? name.substring(1) : name;
-        if (clean) vars.add(clean);
+        // Support comma-separated variable names: e.g. "email, password, code_2fa"
+        const parts = name.split(',').map((s) => s.trim()).filter(Boolean);
+        for (const p of parts) {
+          const clean = p.startsWith('$') ? p.substring(1) : p;
+          if (clean) vars.add(clean);
+        }
       }
     }
     if ('nodes' in node && Array.isArray((node as any).nodes)) {
@@ -45,7 +118,11 @@ interface ProjectContextType {
   screen: ActiveScreen;
   setScreen: (screen: ActiveScreen) => void;
   theme: 'light' | 'dark';
+  themePreference: 'light' | 'dark' | 'system';
+  setTheme: (theme: 'light' | 'dark' | 'system') => void;
   toggleTheme: () => void;
+  accentColor: string;
+  setAccentColor: (color: string) => void;
   currentProject: ProjectData | null;
   recentProjects: RecentProject[];
   selectedNodeId: string | null;
@@ -59,10 +136,19 @@ interface ProjectContextType {
   setShowTestModal: (show: boolean) => void;
   showRuntimeModal: boolean;
   setShowRuntimeModal: (show: boolean) => void;
+  showSettingsModal: boolean;
+  setShowSettingsModal: (show: boolean) => void;
+  showUpdateModal: boolean;
+  setShowUpdateModal: (show: boolean) => void;
+  updateInfo: UpdateInfo | null;
+  isCheckingUpdate: boolean;
+  checkAppUpdate: (manual?: boolean) => Promise<UpdateInfo | null>;
   allVariables: string[];
   customVariables: string[];
   createNewProject: (name: string, folderPath: string, meta?: { description?: string | null; author_info?: string; version?: string }) => Promise<void>;
   openProjectByPath: (path: string, name?: string) => Promise<void>;
+  removeRecentProject: (pathOrId: string) => void;
+  clearRecentProjects: () => void;
   closeProject: () => void;
   saveProject: () => Promise<void>;
   selectNode: (id: string | null, blockKey?: 'before_init' | 'main_logic' | 'after_quit', isMulti?: boolean, isRange?: boolean) => void;
@@ -88,10 +174,70 @@ const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
 
 export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [screen, setScreen] = useState<ActiveScreen>('home');
-  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
-    const saved = localStorage.getItem('gpm_theme');
-    return saved === 'light' || saved === 'dark' ? saved : 'light';
+  const [themePreference, setThemePreference] = useState<'light' | 'dark' | 'system'>(() => {
+    const savedPref = localStorage.getItem('gpm_theme_preference');
+    if (savedPref === 'light' || savedPref === 'dark' || savedPref === 'system') return savedPref;
+    const savedTheme = localStorage.getItem('gpm_theme');
+    if (savedTheme === 'light' || savedTheme === 'dark') return savedTheme;
+    return 'light';
   });
+
+  const computeEffectiveTheme = (pref: 'light' | 'dark' | 'system'): 'light' | 'dark' => {
+    if (pref === 'system') {
+      return typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+    }
+    return pref;
+  };
+
+  const [theme, setThemeState] = useState<'light' | 'dark'>(() => computeEffectiveTheme(themePreference));
+
+  const setTheme = (newPref: 'light' | 'dark' | 'system') => {
+    const eff = computeEffectiveTheme(newPref);
+    setThemePreference(newPref);
+    setThemeState(eff);
+    localStorage.setItem('gpm_theme_preference', newPref);
+    localStorage.setItem('gpm_theme', eff);
+    if (eff === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  };
+
+  // Sync theme changes
+  useEffect(() => {
+    const eff = computeEffectiveTheme(themePreference);
+    setThemeState(eff);
+    localStorage.setItem('gpm_theme_preference', themePreference);
+    localStorage.setItem('gpm_theme', eff);
+    if (eff === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [themePreference]);
+
+  // Listen to OS system theme changes
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const handler = (e: MediaQueryListEvent) => {
+      const currentPref = localStorage.getItem('gpm_theme_preference') || 'light';
+      if (currentPref === 'system') {
+        const eff = e.matches ? 'dark' : 'light';
+        setThemeState(eff);
+        localStorage.setItem('gpm_theme', eff);
+        if (eff === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
+      }
+    };
+    mql.addEventListener('change', handler);
+    return () => mql.removeEventListener('change', handler);
+  }, []);
+
   const [currentProject, setCurrentProject] = useState<ProjectData | null>(null);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => {
     const saved = localStorage.getItem('gpm_recent_projects');
@@ -99,33 +245,97 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   });
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
-  const [selectedBlockKey, setSelectedBlockKey] = useState<'before_init' | 'main_logic' | 'after_quit'>('before_init');
+  const [selectedBlockKey, setSelectedBlockKey] = useState<'before_init' | 'main_logic' | 'after_quit'>('main_logic');
   const [showShortcuts, setShowShortcuts] = useState<boolean>(false);
   const [showSaveToast, setShowSaveToast] = useState<boolean>(false);
   const [showTestModal, setShowTestModal] = useState<boolean>(false);
   const [showRuntimeModal, setShowRuntimeModal] = useState<boolean>(false);
+  const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
+  const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+
+  const checkAppUpdate = async (manual: boolean = false): Promise<UpdateInfo | null> => {
+    setIsCheckingUpdate(true);
+    try {
+      const res = await checkForAppUpdates();
+      setUpdateInfo(res);
+      if (manual && res.hasUpdate) {
+        setShowUpdateModal(true);
+      }
+      return res;
+    } catch {
+      return null;
+    } finally {
+      setIsCheckingUpdate(false);
+    }
+  };
+
+  useEffect(() => {
+    // Check update on startup after 2 seconds
+    const timer = setTimeout(() => {
+      checkAppUpdate(false);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const [undoStack, setUndoStack] = useState<EditorFile[]>([]);
   const [redoStack, setRedoStack] = useState<EditorFile[]>([]);
   const lastUpdateNodeIdRef = useRef<string | null>(null);
   const lastUpdateTimeRef = useRef<number>(0);
 
-  // Sync theme to <html> class
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    return localStorage.getItem('gpm_accent_color') || '#1677ff';
+  });
+
+  // Sync accent color
   useEffect(() => {
-    localStorage.setItem('gpm_theme', theme);
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
-  }, [theme]);
+    localStorage.setItem('gpm_accent_color', accentColor);
+    document.documentElement.style.setProperty('--primary-color', accentColor);
+  }, [accentColor]);
 
   const toggleTheme = () => {
-    setTheme(prev => (prev === 'light' ? 'dark' : 'light'));
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   useEffect(() => {
     localStorage.setItem('gpm_recent_projects', JSON.stringify(recentProjects));
   }, [recentProjects]);
+
+  // Automatically verify that recent project paths still exist on disk (prunes ghost projects from other machines/deleted folders)
+  useEffect(() => {
+    const pruneNonExistent = async () => {
+      if ((window as any).electronAPI?.checkPathExists && recentProjects.length > 0) {
+        try {
+          const verified: RecentProject[] = [];
+          for (const p of recentProjects) {
+            if (p && p.path) {
+              const exists = await (window as any).electronAPI.checkPathExists(p.path);
+              if (exists) verified.push(p);
+            }
+          }
+          if (verified.length !== recentProjects.length) {
+            setRecentProjects(verified);
+            localStorage.setItem('gpm_recent_projects', JSON.stringify(verified));
+          }
+        } catch {}
+      }
+    };
+    pruneNonExistent();
+  }, []);
+
+  const removeRecentProject = (pathOrId: string) => {
+    setRecentProjects((prev) => {
+      const next = prev.filter((p) => p.id !== pathOrId && p.path !== pathOrId);
+      localStorage.setItem('gpm_recent_projects', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  const clearRecentProjects = () => {
+    setRecentProjects([]);
+    localStorage.removeItem('gpm_recent_projects');
+  };
 
   const createNewProject = async (
     name: string,
@@ -138,8 +348,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (meta?.version) newProj.info.version = meta.version;
 
     // Default 3 blocks
-    newProj.script.before_init.expanded = true;
-    newProj.script.main_logic.expanded = false;
+    newProj.script.before_init.expanded = false;
+    newProj.script.main_logic.expanded = true;
     newProj.script.after_quit.expanded = false;
 
     // Save physically to disk if in Electron
@@ -160,10 +370,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setScreen('editor');
     setUndoStack([]);
     setRedoStack([]);
-    // Default select the first block
-    setSelectedNodeId(newProj.script.before_init.id);
-    setSelectedNodeIds([newProj.script.before_init.id]);
-    setSelectedBlockKey('before_init');
+    // Default select main logic block
+    setSelectedNodeId(newProj.script.main_logic.id);
+    setSelectedNodeIds([newProj.script.main_logic.id]);
+    setSelectedBlockKey('main_logic');
   };
 
   const openProjectByPath = async (path: string, name?: string) => {
@@ -192,8 +402,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setScreen('editor');
     setUndoStack([]);
     setRedoStack([]);
-    setSelectedNodeId(proj.script.before_init.id);
-    setSelectedNodeIds([proj.script.before_init.id]);
+    const defaultNodeId = proj.script?.main_logic?.id || proj.script?.before_init?.id || null;
+    setSelectedNodeId(defaultNodeId);
+    setSelectedNodeIds(defaultNodeId ? [defaultNodeId] : []);
+    setSelectedBlockKey('main_logic');
   };
 
   const closeProject = () => {
@@ -1048,7 +1260,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         screen,
         setScreen,
         theme,
+        themePreference,
+        setTheme,
         toggleTheme,
+        accentColor,
+        setAccentColor,
         currentProject,
         recentProjects,
         selectedNodeId,
@@ -1062,10 +1278,19 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setShowTestModal,
         showRuntimeModal,
         setShowRuntimeModal,
+        showSettingsModal,
+        setShowSettingsModal,
+        showUpdateModal,
+        setShowUpdateModal,
+        updateInfo,
+        isCheckingUpdate,
+        checkAppUpdate,
         allVariables,
         customVariables,
         createNewProject,
         openProjectByPath,
+        removeRecentProject,
+        clearRecentProjects,
         closeProject,
         saveProject,
         selectNode,

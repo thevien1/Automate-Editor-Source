@@ -1,8 +1,8 @@
 @echo off
-title GPM Automate Editor v3.0.8-stable
+title SV Browser Automate Editor v3.0.9-stable
 cd /d "%~dp0"
 echo ======================================================
-echo    Dang khoi dong GPM Automate Editor v3.0.8-stable...
+echo    Dang khoi dong SV Browser Automate Editor v3.0.9-stable...
 echo ======================================================
 node ./node_modules/electron/cli.js .
 if %errorlevel% neq 0 (

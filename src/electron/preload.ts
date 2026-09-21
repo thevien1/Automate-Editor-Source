@@ -10,12 +10,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveProjectToDisk: (projectData: any) => ipcRenderer.invoke('fs:saveProject', projectData),
   readProjectFromDisk: (folderPath: string) => ipcRenderer.invoke('fs:readProject', folderPath),
   runWorkflow: (projectData: any) => ipcRenderer.invoke('automation:run', projectData),
-  launchBrowser: (options?: { port?: string | number; url?: string; profileName?: string; windowSize?: any; scale?: number; proxy?: string }) => ipcRenderer.invoke('automation:launchBrowser', options),
+  launchBrowser: (options?: { port?: string | number; url?: string; profileName?: string; windowSize?: any; windowPosition?: any; scale?: number; proxy?: string }) => ipcRenderer.invoke('automation:launchBrowser', options),
   launchMultiThreads: (data: any) => ipcRenderer.invoke('automation:launchMultiThreads', data),
   testPort: (port: string | number) => ipcRenderer.invoke('automation:testPort', port),
   checkIp: (options?: { proxy?: string; timeoutMs?: number }) => ipcRenderer.invoke('automation:checkIp', options),
   cdpAction: (data: { port: string | number; action: string; payload?: any }) => ipcRenderer.invoke('automation:cdpAction', data),
   fileAction: (data: { action: string; payload?: any }) => ipcRenderer.invoke('fs:fileAction', data),
+  getDisplays: () => ipcRenderer.invoke('system:getDisplays'),
   newWindow: () => ipcRenderer.invoke('app:newWindow'),
+  getDefaultSavePath: () => ipcRenderer.invoke('app:getDefaultSavePath'),
+  checkPathExists: (targetPath: string) => ipcRenderer.invoke('app:checkPathExists', targetPath),
+  openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
 });
 

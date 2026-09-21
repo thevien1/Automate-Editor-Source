@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Play, Square, FlaskConical, Copy, Trash2, Check, Globe } from 'lucide-react';
+import { X, Play, Square, FlaskConical, Copy, Trash2, Check } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 import { WorkflowNode, ActionNode } from '../../types/gscript';
 import {
@@ -7,6 +7,7 @@ import {
   getVirtualMouseClickXPathScript,
   getVirtualMouseClickCoordsScript,
 } from '../../utils/virtualMouseScript';
+import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
 
 interface TestLog {
   time: string;
@@ -17,57 +18,6 @@ interface TestLog {
 interface TestModalProps {
   isOpen: boolean;
   onClose: () => void;
-}
-
-/**
- * Safely evaluates GPM Automate condition expressions against runtime variables
- */
-function evaluateGpmCondition(conditionStr: string, vars: Record<string, string>): boolean {
-  if (!conditionStr || !conditionStr.trim()) return true;
-  let expr = conditionStr.trim();
-
-  // Replace variable references like $var or ${var}
-  const keys = Object.keys(vars).sort((a, b) => b.length - a.length);
-  for (const k of keys) {
-    const rawK = k.startsWith('$') ? k.slice(1) : k;
-    const val = vars[k] ?? '';
-    const regex = new RegExp(`\\$${rawK}\\b`, 'g');
-    expr = expr.replace(regex, () => {
-      if (/^-?\d+(\.\d+)?$/.test(val)) {
-        return val;
-      }
-      return JSON.stringify(val);
-    });
-  }
-
-  // Any remaining unassigned $vars become empty string ""
-  expr = expr.replace(/\$[a-zA-Z0-9_]+/g, '""');
-
-  // Handle unquoted word comparisons, e.g. "ok" == ok or ok == "ok"
-  expr = expr.replace(/(===?|!==?)\s*([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match, op, word) => {
-    if (['true', 'false', 'null', 'undefined', 'NaN'].includes(word)) {
-      return match;
-    }
-    return `${op} "${word}"`;
-  });
-  expr = expr.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\s*(===?|!==?)/g, (match, word, op) => {
-    if (['true', 'false', 'null', 'undefined', 'NaN'].includes(word)) {
-      return match;
-    }
-    return `"${word}" ${op}`;
-  });
-
-  // Convert single '=' to '==' if not already part of <=, >=, !=, ==
-  expr = expr.replace(/([^><!=])=([^=])/g, '$1==$2');
-
-  try {
-    // eslint-disable-next-line no-new-func
-    const result = new Function(`return Boolean(${expr});`)();
-    return Boolean(result);
-  } catch (e) {
-    console.warn('Condition eval error:', expr, e);
-    return false;
-  }
 }
 
 function getJsonPath(obj: any, path: string) {
@@ -368,13 +318,14 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       return '';
     });
 
-    // 2. Resolve normal variable references: ${varName} and $varName
+    // 2. Resolve normal variable references: ${varName}, {{varName}} and $varName
     const entries = Object.entries(varsMap).sort((a, b) => b[0].length - a[0].length);
     for (const [k, v] of entries) {
       if (k.includes('[') || k.includes(']')) continue;
       const rawK = k.startsWith('$') ? k.slice(1) : k;
       res = res.replace(new RegExp(`\\$\\{${rawK}\\}`, 'g'), v);
-      res = res.replace(new RegExp(`\\$${rawK}\\b`, 'g'), v);
+      res = res.replace(new RegExp(`\\{\\{${rawK}\\}\\}`, 'g'), v);
+      res = res.replace(new RegExp(`\\$${rawK}(?![a-zA-Z0-9_])`, 'g'), v);
     }
 
     return res;
@@ -392,13 +343,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
     return fallback;
   };
 
-  const evaluateInChrome = async (expr: string): Promise<{ success: boolean; value?: any; error?: string }> => {
+  const evaluateInChrome = async (expr: string, targetId?: string, contextId?: number): Promise<{ success: boolean; value?: any; error?: string }> => {
     try {
       if ((window as any).electronAPI?.cdpAction) {
         return await (window as any).electronAPI.cdpAction({
           port: port.trim() || '43076',
           action: 'evaluate',
-          payload: { expression: expr },
+          payload: { expression: expr, targetId, contextId },
         });
       }
       return { success: false, error: 'CDP action is only available in Electron desktop mode' };
@@ -433,6 +384,32 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       }
     };
 
+    const checkXPathInChromeTest = async (xpath: string): Promise<boolean> => {
+      try {
+        const checkScript = `(() => {
+          try {
+            let doc = document;
+            const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+            if (fx) {
+              const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+              if (fr) {
+                try {
+                  if (fr.contentDocument) doc = fr.contentDocument;
+                  else if (fr.contentWindow && fr.contentWindow.document) doc = fr.contentWindow.document;
+                } catch(e) {}
+              }
+            }
+            const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return !!res.singleNodeValue;
+          } catch(e) { return false; }
+        })()`;
+        const evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+        return !!(evalRes.success && (evalRes.value === true || evalRes.value?.value === true));
+      } catch (e) {
+        return false;
+      }
+    };
+
     for (let i = 0; i < nodes.length; i++) {
       if (stopSignalRef.current) break;
       const n = nodes[i];
@@ -446,7 +423,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         if (bText.startsWith('if') || block.$type?.includes('IfBlockNode')) {
           const cond = block.condition || '';
           await sleep(20);
-          const condMet = evaluateGpmCondition(cond, vars);
+          const condMet = await evaluateGpmConditionAsync(cond, vars, checkXPathInChromeTest);
+          addLog('info', `🔍 If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
           lastConditionBranchMet = condMet;
 
           if (condMet) {
@@ -456,7 +434,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const cond = block.condition || '';
           await sleep(20);
           if (!lastConditionBranchMet) {
-            const condMet = evaluateGpmCondition(cond, vars);
+            const condMet = await evaluateGpmConditionAsync(cond, vars, checkXPathInChromeTest);
+            addLog('info', `🔍 Else If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
             if (condMet) {
               lastConditionBranchMet = true;
               await executeNodes(block.nodes, vars, addLog);
@@ -465,6 +444,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (bText.startsWith('else') || block.$type?.includes('ElseBlockNode')) {
           await sleep(20);
           if (!lastConditionBranchMet) {
+            addLog('info', `🔍 Nhánh Else › Chạy khối lệnh Else`);
             lastConditionBranchMet = true;
             await executeNodes(block.nodes, vars, addLog);
           }
@@ -491,7 +471,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (bText.startsWith('while') || block.$type?.includes('WhileBlockNode')) {
           lastConditionBranchMet = false;
           let count = 0;
-          while (evaluateGpmCondition(block.condition || '', vars) && count < 50 && !stopSignalRef.current) {
+          while (await evaluateGpmConditionAsync(block.condition || '', vars, checkXPathInChromeTest) && count < 50 && !stopSignalRef.current) {
             count++;
             await executeNodes(block.nodes, vars, addLog);
           }
@@ -679,19 +659,40 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const resolvedInput = resolveVars(rawInput, vars);
           const resolvedSep = resolveVars(rawSep, vars);
           const parts = resolvedSep ? resolvedInput.split(resolvedSep) : [resolvedInput];
-          const partsJson = JSON.stringify(parts);
-          const rawVar = act.output_variable_name || 'split_result';
-          const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
-          const cleanName = varName.replace(/^\$/, '');
-          vars[varName] = partsJson;
-          vars[cleanName] = partsJson;
-          parts.forEach((p, idx) => {
-            vars[`${cleanName}[${idx}]`] = p;
-            vars[`${varName}[${idx}]`] = p;
-          });
-          if (stopSignalRef.current) break;
-          addLog('success', `✔ Split text › ${parts.length} items`);
-          addLog('arrow', `   ↳ ${varName} = ${partsJson}`);
+          const outVarRaw = (act.output_variable_name || '').trim();
+          const targetVars = outVarRaw.split(',').map((s) => s.trim()).filter(Boolean);
+
+          if (targetVars.length > 1) {
+            targetVars.forEach((tVar, idx) => {
+              const v = parts[idx] !== undefined ? parts[idx].trim() : '';
+              const cleanTVar = tVar.replace(/^\$/, '');
+              vars[`$${cleanTVar}`] = v;
+              vars[cleanTVar] = v;
+            });
+            if (stopSignalRef.current) break;
+            const assignedPreview = targetVars.map((v) => `$${v.replace(/^\$/, '')}`).join(', ');
+            addLog('success', `✔ Split text › Assigned to [${assignedPreview}]`);
+            addLog('arrow', `   ↳ ${targetVars.map((v, i) => `$${v.replace(/^\$/, '')} = "${parts[i]?.trim() || ''}"`).join(' | ')}`);
+          } else {
+            const rawVar = outVarRaw || 'split_result';
+            const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+            const cleanName = varName.replace(/^\$/, '');
+            const partsJson = JSON.stringify(parts);
+            vars[varName] = partsJson;
+            vars[cleanName] = partsJson;
+            parts.forEach((p, idx) => {
+              const pVal = p.trim();
+              vars[`${cleanName}[${idx}]`] = pVal;
+              vars[`${varName}[${idx}]`] = pVal;
+              vars[`${cleanName}_${idx}`] = pVal;
+              vars[`${varName}_${idx}`] = pVal;
+              vars[`${cleanName}_${idx + 1}`] = pVal;
+              vars[`${varName}_${idx + 1}`] = pVal;
+            });
+            if (stopSignalRef.current) break;
+            addLog('success', `✔ Split text › ${parts.length} items`);
+            addLog('arrow', `   ↳ ${varName} = ${partsJson}`);
+          }
           await sleep(30);
         } else if (actType === 10 || actName === 'read json') {
           const rawJson = getRawInputValue(act.raw_input, 'JSON', '');
@@ -1608,9 +1609,38 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
           try {
             addLog('info', `▶ Wait to image › Timeout ${timeoutSec}s, Threshold ${threshold}`);
-            await sleep(Math.min(timeoutSec * 100, 1000));
-            if (stopSignalRef.current) break;
-            logActionResult(act, `Timeout ${timeoutSec}s, Threshold ${threshold}`);
+            const startTime = Date.now();
+            let found = false;
+            let lastCoord = { x: 0, y: 0 };
+            let lastScore = 0;
+
+            while (Date.now() - startTime < timeoutSec * 1000 && !stopSignalRef.current) {
+              if ((window as any).electronAPI?.fileAction) {
+                const res = await (window as any).electronAPI.fileAction({
+                  action: 'findImage',
+                  payload: { templatePath: img, threshold, trueColor, port: port.trim() },
+                });
+                if (res && res.found) {
+                  found = true;
+                  lastScore = res.score;
+                  lastCoord = { x: res.x, y: res.y };
+                  break;
+                }
+              }
+              await sleep(600);
+            }
+
+            if (found) {
+              const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+              addLog('success', `✔ Wait to image › Found at [${lastCoord.x}, ${lastCoord.y}] (took ${elapsed}s, score: ${(lastScore * 100).toFixed(1)}%)`);
+            } else {
+              if (act.continue_on_error) {
+                addLog('info', `⚠ Wait to image › Timed out after ${timeoutSec}s (Continue on error)`);
+              } else {
+                addLog('error', `✕ Wait to image failed: Timed out after ${timeoutSec}s`);
+                break;
+              }
+            }
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {
@@ -1631,13 +1661,28 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const cleanName = varName.replace(/^\$/, '');
 
           try {
-            const exists = img ? 'True' : 'False';
+            let found = false;
+            let score = 0;
+            if ((window as any).electronAPI?.fileAction) {
+              const res = await (window as any).electronAPI.fileAction({
+                action: 'findImage',
+                payload: { templatePath: img, threshold, trueColor, port: port.trim() },
+              });
+              if (res && res.found) {
+                found = true;
+                score = res.score;
+              }
+            }
+            const exists = found ? 'True' : 'False';
             if (varName) {
               vars[varName] = exists;
               vars[cleanName] = exists;
             }
             if (stopSignalRef.current) break;
-            logActionResult(act, `Threshold ${threshold}`, varName ? { name: varName, value: exists } : undefined);
+            addLog('success', `✔ Image exists › ${exists} (Match score: ${(score * 100).toFixed(1)}%)`);
+            if (varName) {
+              addLog('arrow', `   ↳ ${varName} = ${exists}`);
+            }
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {
@@ -1658,13 +1703,43 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const cleanName = varName.replace(/^\$/, '');
 
           try {
-            const coords = '720,540';
-            if (varName) {
-              vars[varName] = coords;
-              vars[cleanName] = coords;
+            let found = false;
+            let coords = '';
+            let score = 0;
+            if ((window as any).electronAPI?.fileAction) {
+              const res = await (window as any).electronAPI.fileAction({
+                action: 'findImage',
+                payload: { templatePath: img, threshold, trueColor, port: port.trim() },
+              });
+              if (res && res.found) {
+                found = true;
+                coords = `${res.x},${res.y}`;
+                score = res.score;
+              } else if (res && res.x !== undefined && res.y !== undefined) {
+                coords = `${res.x},${res.y}`;
+                score = res.score;
+              }
             }
-            if (stopSignalRef.current) break;
-            logActionResult(act, `Threshold ${threshold}`, varName ? { name: varName, value: coords } : undefined);
+
+            if (found) {
+              if (varName) {
+                vars[varName] = coords;
+                vars[cleanName] = coords;
+              }
+              if (stopSignalRef.current) break;
+              addLog('success', `✔ Image search › Found at [${coords}] (Match: ${(score * 100).toFixed(1)}%)`);
+              if (varName) {
+                addLog('arrow', `   ↳ ${varName} = "${coords}"`);
+              }
+            } else {
+              const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+              if (contOnError) {
+                addLog('info', `⚠ Image search › Not found (Match: ${(score * 100).toFixed(1)}% < Threshold ${threshold}) (Continue on error)`);
+              } else {
+                addLog('error', `✕ Image search failed: Not found on screen (Match: ${(score * 100).toFixed(1)}% < Threshold ${threshold})`);
+                break;
+              }
+            }
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {
@@ -1812,38 +1887,223 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           if (stopSignalRef.current) break;
           addLog('success', '✔ TabCloseAll');
           await sleep(40);
+        } else if (actType === 62 || actName === 'switch to frame') {
+          const rawXPath = act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '');
+          const resolvedXPath = resolveVars(rawXPath, vars);
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          logActionStart(act, resolvedXPath || 'iframe');
+
+          if (!resolvedXPath) {
+            if (!contOnError) {
+              addLog('error', `✕ Switch to frame failed: XPath is empty`);
+              break;
+            } else {
+              addLog('info', `⚠ Switch to frame › XPath is empty (Skipped)`);
+            }
+          } else {
+            addLog('info', `▶ Switch to frame › ${resolvedXPath}`);
+            const checkFrameScript = `(() => {
+              try {
+                const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                const el = res.singleNodeValue;
+                if (!el) return { found: false };
+                const rect = el.getBoundingClientRect();
+                const src = el.src || el.getAttribute('src') || '';
+                return {
+                  found: true,
+                  src,
+                  left: Math.round(rect.left),
+                  top: Math.round(rect.top),
+                };
+              } catch(e) {
+                return { found: false, error: e.message };
+              }
+            })()`;
+
+            let frameFound = false;
+            let frameInfo: any = null;
+            const start = Date.now();
+            while (Date.now() - start < 15000 && !stopSignalRef.current) {
+              const evalRes = await evaluateInChrome(checkFrameScript, vars.$activePopupTargetId);
+              if (evalRes.success && evalRes.value?.found) {
+                frameFound = true;
+                frameInfo = evalRes.value;
+                break;
+              }
+              await sleep(350);
+            }
+
+            if (frameFound) {
+              vars.$currentFrameXPath = resolvedXPath;
+              vars.$currentFrameOffset = `${frameInfo.left || 0},${frameInfo.top || 0}`;
+
+              try {
+                if ((window as any).electronAPI?.cdpAction) {
+                  const treeRes = await (window as any).electronAPI.cdpAction({
+                    port: port.trim() || '43076',
+                    action: 'getFrameTree',
+                    payload: { targetId: vars.$activePopupTargetId },
+                  });
+                  const childFrames = treeRes?.result?.frameTree?.childFrames || [];
+                  const matched = childFrames.find((cf: any) => {
+                    const u = cf.frame?.url || '';
+                    return frameInfo.src && (u === frameInfo.src || u.includes(frameInfo.src) || frameInfo.src.includes(u));
+                  });
+                  if (matched && matched.frame?.id) {
+                    const worldRes = await (window as any).electronAPI.cdpAction({
+                      port: port.trim() || '43076',
+                      action: 'createIsolatedWorld',
+                      payload: {
+                        targetId: vars.$activePopupTargetId,
+                        frameId: matched.frame.id,
+                        worldName: 'gpm_isolated_frame',
+                      },
+                    });
+                    if (worldRes?.result?.executionContextId) {
+                      vars.$currentFrameContextId = String(worldRes.result.executionContextId);
+                    }
+                  }
+                }
+              } catch (e) {}
+
+              addLog('success', `✔ Switch to frame › ${resolvedXPath}`);
+            } else {
+              if (contOnError) {
+                addLog('info', `⚠ Switch to frame › Frame not found (Continue on error)`);
+              } else {
+                addLog('error', `✕ Switch to frame failed: Frame not found (${resolvedXPath})`);
+                break;
+              }
+            }
+          }
+          await sleep(40);
+        } else if (actType === 61 || actName === 'switch to default') {
+          logActionStart(act, 'Default Content');
+          addLog('info', `▶ Switch to default › Chuyển về khung trang chính`);
+          delete vars.$currentFrameXPath;
+          delete vars.$currentFrameContextId;
+          delete vars.$currentFrameOffset;
+
+          if (vars.$activePopupTargetId) {
+            try {
+              if ((window as any).electronAPI?.cdpAction) {
+                const listRes = await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'listTargets',
+                });
+                const pages = (listRes?.targets || []).filter((t: any) => t.type === 'page');
+                if (pages.length > 0 && pages[0].id) {
+                  await (window as any).electronAPI.cdpAction({
+                    port: port.trim() || '43076',
+                    action: 'activateTarget',
+                    payload: { targetId: pages[0].id },
+                  });
+                }
+              }
+            } catch (e) {}
+            delete vars.$activePopupTargetId;
+            delete vars.$activePopupTitle;
+          }
+
+          addLog('success', `✔ Switch to default › Khung trang chính đã được kích hoạt`);
+          await sleep(40);
+        } else if (actType === 63 || actName === 'switch to popup') {
+          const rawTitle = getRawInputValue(act.raw_input, 'TITLE', getRawInputValue(act.raw_input, 'POPUP_TITLE', ''));
+          const resolvedTitle = resolveVars(rawTitle, vars).trim().toLowerCase();
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          logActionStart(act, resolvedTitle || 'Popup');
+          addLog('info', `▶ Switch to popup › "${resolvedTitle || '(any)'}"`);
+
+          const start = Date.now();
+          let matchedTarget: any = null;
+
+          while (Date.now() - start < 15000 && !stopSignalRef.current) {
+            try {
+              if ((window as any).electronAPI?.cdpAction) {
+                const listRes = await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'listTargets',
+                });
+                const pages = (listRes?.targets || []).filter((t: any) => t.type === 'page');
+
+                if (resolvedTitle) {
+                  matchedTarget = pages.find((t: any) => {
+                    const tTitle = (t.title || '').toLowerCase();
+                    const tUrl = (t.url || '').toLowerCase();
+                    return tTitle.includes(resolvedTitle) || tUrl.includes(resolvedTitle);
+                  });
+                } else {
+                  if (pages.length > 1) {
+                    matchedTarget = pages[pages.length - 1];
+                  } else if (pages.length === 1) {
+                    matchedTarget = pages[0];
+                  }
+                }
+              }
+            } catch (e) {}
+
+            if (matchedTarget) break;
+            await sleep(500);
+          }
+
+          if (matchedTarget && matchedTarget.id) {
+            if ((window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port: port.trim() || '43076',
+                action: 'activateTarget',
+                payload: { targetId: matchedTarget.id },
+              });
+            }
+            vars.$activePopupTargetId = matchedTarget.id;
+            vars.$activePopupTitle = matchedTarget.title || '';
+            delete vars.$currentFrameXPath;
+            delete vars.$currentFrameContextId;
+            delete vars.$currentFrameOffset;
+
+            addLog('success', `✔ Switch to popup › "${matchedTarget.title || matchedTarget.url}"`);
+          } else {
+            if (contOnError) {
+              addLog('info', `⚠ Switch to popup › Popup not found (Continue on error)`);
+            } else {
+              addLog('error', `✕ Switch to popup failed: Popup "${resolvedTitle}" not found`);
+              break;
+            }
+          }
+          await sleep(40);
         } else if (actType === 39 || actName === 'go to url') {
           let urlVal = 'https://';
+          let timeoutSec = 60;
           if (act.raw_input) {
             try {
               const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
               if (Array.isArray(parsed)) {
                 const u = parsed.find((p: any) => p.Key === 'URL');
                 if (u && u.Value) urlVal = u.Value;
+                const t = parsed.find((p: any) => p.Key === 'TIME_OUT');
+                if (t && t.Value) timeoutSec = parseInt(resolveVars(t.Value, vars), 10) || 60;
               }
             } catch (e) {}
           }
-          let resolvedUrl = urlVal;
-          for (const [k, v] of Object.entries(vars)) {
-            const rawK = k.startsWith('$') ? k.slice(1) : k;
-            resolvedUrl = resolvedUrl.replace(new RegExp(`\\$${rawK}\\b`, 'g'), v);
-          }
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          let resolvedUrl = resolveVars(urlVal, vars);
           if (!resolvedUrl || resolvedUrl === 'https://') {
             resolvedUrl = 'https://google.com';
           } else if (!resolvedUrl.startsWith('http://') && !resolvedUrl.startsWith('https://') && !resolvedUrl.startsWith('about:') && !resolvedUrl.startsWith('chrome://')) {
             resolvedUrl = `https://${resolvedUrl}`;
           }
 
-          let navSuccess = true;
+          addLog('info', `▶ Navigate › ${resolvedUrl} (Timeout: ${timeoutSec}s)`);
+
+          let navStarted = true;
           try {
             if ((window as any).electronAPI?.cdpAction) {
               const res = await (window as any).electronAPI.cdpAction({
                 port: port.trim(),
                 action: 'goToUrl',
-                payload: { url: resolvedUrl },
+                payload: { url: resolvedUrl, timeout: timeoutSec },
               });
               if (res && res.success === false) {
-                navSuccess = false;
+                navStarted = false;
                 addLog('error', `✕ Navigate failed: ${res.error || 'Port error'}`);
               }
             } else {
@@ -1861,13 +2121,92 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               }
             }
           } catch (e: any) {
-            navSuccess = false;
+            navStarted = false;
             addLog('error', `✕ Navigate failed: ${e.message}`);
           }
-          await sleep(60);
-          if (stopSignalRef.current) break;
-          if (navSuccess) {
-            addLog('success', `✔ Navigate › ${resolvedUrl}`);
+
+          if (navStarted) {
+            // Wait for page to finish loading up to timeoutSec
+            const start = Date.now();
+            const maxWaitMs = timeoutSec * 1000;
+            let pageLoaded = false;
+            let errorMsg = '';
+
+            // Initial sleep so Chrome has started navigating away from previous page
+            await sleep(800);
+
+            while (Date.now() - start < maxWaitMs && !stopSignalRef.current) {
+              await sleep(400);
+              try {
+                const evalRes = await evaluateInChrome(`(() => {
+                  try {
+                    const href = window.location.href;
+                    const readyState = document.readyState;
+                    const title = document.title || '';
+
+                    // Check error pages
+                    if (href.startsWith('chrome-error://') || (title.includes('Error') && !href.includes('google.com/search'))) {
+                      const heading = document.querySelector('.error-code, #main-message h1, #main-message p, [jsselect="heading"]');
+                      const errText = heading ? heading.textContent.trim() : '';
+                      return { loaded: false, error: errText || 'Page failed to load (Connection/Proxy error)' };
+                    }
+
+                    // Must not be still on about:blank if navigating to a web url
+                    if (href === 'about:blank' && !${JSON.stringify(resolvedUrl)}.includes('about:blank')) {
+                      return { loaded: false, readyState, reason: 'Waiting for navigation from about:blank' };
+                    }
+
+                    // Must be 'complete' (NOT 'interactive', interactive still spins and downloads resources)
+                    if (readyState !== 'complete') {
+                      return { loaded: false, readyState };
+                    }
+
+                    // Check if load event has fired (tab spinner has stopped)
+                    const navEntries = performance.getEntriesByType('navigation');
+                    if (navEntries && navEntries.length > 0) {
+                      const nav = navEntries[0];
+                      if (nav.loadEventEnd === 0) {
+                        return { loaded: false, reason: 'Tab is still spinning (loadEventEnd is 0)' };
+                      }
+                    } else if (performance.timing && performance.timing.loadEventEnd === 0) {
+                      return { loaded: false, reason: 'Tab is still spinning (timing.loadEventEnd is 0)' };
+                    }
+
+                    return { loaded: true, readyState, url: href };
+                  } catch(e) {
+                    return { loaded: false, error: e.message };
+                  }
+                })()`);
+
+                const val = evalRes?.value;
+                if (val) {
+                  if (val.error) {
+                    errorMsg = val.error;
+                    break;
+                  }
+                  if (val.loaded) {
+                    pageLoaded = true;
+                    // Settling buffer: wait 800ms so dynamic SPAs/Web Components finish rendering
+                    await sleep(800);
+                    break;
+                  }
+                }
+              } catch (e) {}
+            }
+
+            const elapsedSec = ((Date.now() - start) / 1000).toFixed(1);
+
+            if (pageLoaded) {
+              addLog('success', `✔ Navigate › ${resolvedUrl} (${elapsedSec}s)`);
+            } else {
+              const detail = errorMsg || `Timed out after ${timeoutSec}s`;
+              if (contOnError) {
+                addLog('info', `⚠ Navigate › ${detail} (Continue on error)`);
+              } else {
+                addLog('error', `✕ Navigate failed: ${detail} (${resolvedUrl})`);
+                break;
+              }
+            }
           }
           await sleep(40);
         } else if (actType === 44 || actName === 'wait element') {
@@ -1875,7 +2214,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const timeoutSec = parseInt(timeoutStr, 10) || 20;
           const rawXPath = act.element_xpath || '';
           const resolvedXPath = resolveVars(rawXPath, vars);
-          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          const contOnError =
+            act.continue_on_error === true ||
+            String(act.continue_on_error).toLowerCase() === 'true' ||
+            getRawInputValue(act.raw_input, 'CONTINUE_ON_ERROR', '').toLowerCase() === 'true';
 
           if (!resolvedXPath) {
             if (!contOnError) {
@@ -1888,20 +2230,37 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const startTime = Date.now();
             const maxWaitMs = Math.max(1, timeoutSec) * 1000;
             let found = false;
+            let lastReportSec = 0;
 
             while (Date.now() - startTime < maxWaitMs && !stopSignalRef.current) {
               const checkScript = `(() => {
                 try {
-                  const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  let doc = document;
+                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                  if (fx) {
+                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (fr) {
+                      try {
+                        if (fr.contentDocument) doc = fr.contentDocument;
+                        else if (fr.contentWindow) doc = fr.contentWindow.document;
+                      } catch(e) {}
+                    }
+                  }
+                  const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                   return !!res.singleNodeValue;
                 } catch (e) {
                   return false;
                 }
               })()`;
-              const evalRes = await evaluateInChrome(checkScript);
+              const evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
               if (evalRes.success && evalRes.value === true) {
                 found = true;
                 break;
+              }
+              const elapsedSec = Math.floor((Date.now() - startTime) / 1000);
+              if (elapsedSec > 0 && elapsedSec % 5 === 0 && elapsedSec !== lastReportSec && elapsedSec < timeoutSec) {
+                lastReportSec = elapsedSec;
+                addLog('info', `⏳ Đang chờ phần tử... (${elapsedSec}s / ${timeoutSec}s)`);
               }
               await sleep(350);
             }
@@ -1912,7 +2271,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               addLog('success', `✔ Wait element › Found: ${resolvedXPath}`);
             } else {
               if (contOnError) {
-                addLog('info', `⚠ Wait element › Timeout reached (Continue on error)`);
+                addLog('info', `⚠ Wait element › Không tìm thấy trong ${timeoutSec}s (${resolvedXPath}) (Continue on error: Bỏ qua và chạy tiếp)`);
               } else {
                 addLog('error', `✕ Wait element failed: Element not found within ${timeoutSec}s (${resolvedXPath})`);
                 break;
@@ -2079,22 +2438,37 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedPos = resolveVars(rawPos, vars);
 
-          if (clickType === 'CLICK_COORDINATES' || (!resolvedXPath && resolvedPos)) {
+          const isCoords = clickType === 'CLICK_POS' || clickType === 'CLICK_COORDINATES' || clickType === 'Click by coordinates' || (!resolvedXPath && resolvedPos && clickType !== 'CLICK_XPATH' && clickType !== 'Click by Xpath');
+          const isCurrentPos = clickType === 'CLICK_CURRENT_POS' || clickType === 'Click by current position' || clickType === 'Click current position';
+
+          if (isCoords) {
             const [xStr, yStr] = resolvedPos.split(',');
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
 
+            if ((window as any).electronAPI?.fileAction) {
+              await (window as any).electronAPI.fileAction({
+                action: 'osClick',
+                payload: { x, y },
+              }).catch(() => {});
+            }
+
             const evalRes = await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
             if (evalRes.success) {
-              addLog('success', `✔ Virtual Mouse clicked coordinates [${x}, ${y}]`);
+              addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
             } else {
-              addLog('error', `✕ Mouse click failed: ${evalRes.error || 'Click failed'}`);
+              addLog('success', `✔ Clicked coordinates [${x}, ${y}] (OS Mouse)`);
             }
-          } else if (clickType === 'CLICK_CURRENT_POS') {
-            await evaluateInChrome(`(() => {
+          } else if (isCurrentPos) {
+            await evaluateInChrome(`(async () => {
+              if (window.__gpmVirtualMouse) {
+                const pos = window.__gpmVirtualMouse.getPos();
+                return await window.__gpmVirtualMouse.clickAt(pos.x, pos.y);
+              }
               if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
                 (document.activeElement as any).click();
               }
+              return { success: true };
             })()`);
             addLog('success', `✔ Mouse click › Current position clicked`);
           } else {
@@ -2107,9 +2481,45 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 addLog('info', `⚠ Mouse click › XPath is empty (Skipped)`);
               }
             } else {
-              const evalRes = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath));
+              addLog('info', `▶ Mouse click › ${resolvedXPath}`);
+              let evalRes = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath, vars.$currentFrameXPath), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+              if (!evalRes.success || !evalRes.value?.success) {
+                // Fallback to direct DOM click if virtual mouse script encounters any page-specific restriction
+                const fallbackRes = await evaluateInChrome(`(() => {
+                  try {
+                    let doc = document;
+                    const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                    if (fx) {
+                      const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                      if (fr) {
+                        try {
+                          if (fr.contentDocument) doc = fr.contentDocument;
+                          else if (fr.contentWindow) doc = fr.contentWindow.document;
+                        } catch(e) {}
+                      }
+                    }
+                    const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const el = res.singleNodeValue;
+                    if (!el) return { success: false, error: 'Element not found: ' + ${JSON.stringify(resolvedXPath)} };
+                    if (typeof el.scrollIntoView === 'function') {
+                      try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                    }
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                    if (typeof el.click === 'function') {
+                      try { el.click(); } catch(e) {}
+                    }
+                    return { success: true };
+                  } catch(e) {
+                    return { success: false, error: e.message };
+                  }
+                })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+                if (fallbackRes.success && fallbackRes.value?.success) {
+                  evalRes = fallbackRes;
+                }
+              }
+
               if (evalRes.success && evalRes.value?.success) {
-                addLog('success', `✔ Virtual Mouse smoothly clicked element`);
+                addLog('success', `✔ Clicked element (${resolvedXPath})`);
               } else {
                 const errDetail = evalRes.value?.error || evalRes.error || 'Element not found';
                 if (contOnError) {
@@ -2133,25 +2543,55 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedPos = resolveVars(rawPos, vars);
 
+          const isCoords = clickType === 'Click by coordinates' || clickType === 'CLICK_COORDINATES' || clickType === 'CLICK_POS' || (!resolvedXPath && resolvedPos && clickType !== 'Click by Xpath' && clickType !== 'CLICK_XPATH');
+          const isCurrentPos = clickType === 'Click current position' || clickType === 'Click by current position' || clickType === 'CLICK_CURRENT_POS';
+
           addLog('info', `▶ Mouse try to click (max ${numTries} tries, delay ${delayEachSec}s)`);
 
           let conditionMet = false;
           for (let attempt = 1; attempt <= numTries; attempt++) {
             if (stopSignalRef.current) break;
 
-            if (clickType === 'Click by coordinates' || clickType === 'CLICK_COORDINATES' || (!resolvedXPath && resolvedPos)) {
+            if (isCoords) {
               const [xStr, yStr] = resolvedPos.split(',');
               const x = parseFloat(xStr) || 0;
               const y = parseFloat(yStr) || 0;
+              if ((window as any).electronAPI?.fileAction) {
+                await (window as any).electronAPI.fileAction({
+                  action: 'osClick',
+                  payload: { x, y },
+                }).catch(() => {});
+              }
               await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
-            } else if (clickType === 'Click current position' || clickType === 'CLICK_CURRENT_POS') {
-              await evaluateInChrome(`(() => {
+            } else if (isCurrentPos) {
+              await evaluateInChrome(`(async () => {
+                if (window.__gpmVirtualMouse) {
+                  const p = window.__gpmVirtualMouse.getPos();
+                  return await window.__gpmVirtualMouse.clickAt(p.x, p.y);
+                }
                 if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
                   (document.activeElement as any).click();
                 }
+                return { success: true };
               })()`);
             } else if (resolvedXPath) {
-              await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath));
+              const res = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath));
+              if (!res.success || !res.value?.success) {
+                await evaluateInChrome(`(() => {
+                  try {
+                    const el = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (el) {
+                      if (typeof el.scrollIntoView === 'function') {
+                        try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                      }
+                      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                      if (typeof el.click === 'function') {
+                        try { el.click(); } catch(e) {}
+                      }
+                    }
+                  } catch(e) {}
+                })()`);
+              }
             }
 
             addLog('info', `  ↳ Click attempt #${attempt}/${numTries}`);
@@ -2372,7 +2812,9 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedPos = resolveVars(rawPos, vars);
 
-          if (moveType === 'Move by position' || moveType === 'MOVE_POS' || (!resolvedXPath && resolvedPos)) {
+          const isCoords = moveType === 'Move by position' || moveType === 'MOVE_POS' || moveType === 'Move by coordinates' || moveType === 'MOVE_COORDINATES' || (!resolvedXPath && resolvedPos && moveType !== 'Move by Xpath' && moveType !== 'MOVE_XPATH');
+
+          if (isCoords) {
             const [xStr, yStr] = resolvedPos.split(',');
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
@@ -2387,6 +2829,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
               const el = res.singleNodeValue;
               if (!el) return { success: false, error: 'Element not found' };
+              if (typeof el.scrollIntoView === 'function') {
+                el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                await new Promise(r => setTimeout(r, 200));
+              }
               const rect = el.getBoundingClientRect();
               const tx = Math.round(rect.left + rect.width / 2);
               const ty = Math.round(rect.top + rect.height / 2);
@@ -2397,25 +2843,36 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (actType === 51 || actName === 'mouse press and hold') {
           const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
+          const pressType = getRawInputValue(act.raw_input, 'PRESS_TYPE', (rawPos && !rawXPath) ? 'PRESS_POS' : 'PRESS_XPATH');
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedPos = resolveVars(rawPos, vars);
+
+          const isCoords = pressType === 'PRESS_POS' || pressType === 'Press by coordinates' || (!resolvedXPath && resolvedPos && pressType !== 'PRESS_XPATH' && pressType !== 'Press by Xpath');
 
           await evaluateInChrome(`(async () => {
             ${VIRTUAL_MOUSE_SCRIPT};
             let tx = window.__gpmVirtualMouse.getPos().x;
             let ty = window.__gpmVirtualMouse.getPos().y;
-            ${resolvedXPath ? `
-            const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            const el = res.singleNodeValue;
-            if (el) {
-              const rect = el.getBoundingClientRect();
-              tx = Math.round(rect.left + rect.width / 2);
-              ty = Math.round(rect.top + rect.height / 2);
-            }` : ''}
-            ${resolvedPos ? `
-            tx = ${parseFloat(resolvedPos.split(',')[0]) || 0};
-            ty = ${parseFloat(resolvedPos.split(',')[1]) || 0};
-            ` : ''}
+            ${isCoords ? `
+            if (${JSON.stringify(resolvedPos)}) {
+              tx = ${parseFloat(resolvedPos.split(',')[0]) || 0};
+              ty = ${parseFloat(resolvedPos.split(',')[1]) || 0};
+            }
+            ` : `
+            if (${JSON.stringify(resolvedXPath)}) {
+              const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+              const el = res.singleNodeValue;
+              if (el) {
+                if (typeof el.scrollIntoView === 'function') {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                  await new Promise(r => setTimeout(r, 200));
+                }
+                const rect = el.getBoundingClientRect();
+                tx = Math.round(rect.left + rect.width / 2);
+                ty = Math.round(rect.top + rect.height / 2);
+              }
+            }
+            `}
             await window.__gpmVirtualMouse.moveTo(tx, ty, 250);
             const targetEl = document.elementFromPoint(tx, ty) || document.body;
             if (targetEl) {
@@ -2443,49 +2900,283 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (actType === 54 || actName === 'key press') {
           const rawKey = getRawInputValue(act.raw_input, 'KEY', '');
           const resolvedKey = resolveVars(rawKey, vars);
-          const rawType = getRawInputValue(act.raw_input, 'TYPE', 'Combo key');
+          const rawType = getRawInputValue(act.raw_input, 'TYPE', 'Text');
           const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
           const resolvedXPath = resolveVars(rawXPath, vars);
 
-          await evaluateInChrome(`(async () => {
-            let el = null;
-            ${resolvedXPath ? `
-            const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            el = res.singleNodeValue;
-            if (el && typeof el.focus === 'function') el.focus();
-            ` : `
-            el = document.activeElement;
-            `}
-            const keyStr = ${JSON.stringify(resolvedKey)};
-            const typeStr = ${JSON.stringify(rawType)};
+          const isKnownSingleOrCombo = [
+            'enter', 'return', 'backspace', 'tab', 'escape', 'space', 'delete',
+            'arrowdown', 'arrowup', 'arrowleft', 'arrowright',
+            'control+a', 'ctrl+a', 'control+c', 'ctrl+c', 'control+v', 'ctrl+v',
+            'control+x', 'ctrl+x', 'control+shift+delete', 'alt+tab', 'f1', 'f2', 'f5', 'f11', 'f12'
+          ].includes(resolvedKey.trim().toLowerCase());
 
-            if (typeStr === 'Text') {
-              if (el && ('value' in el)) {
-                el.value = (el.value || '') + keyStr;
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-              } else {
-                document.execCommand('insertText', false, keyStr);
+          const effectiveType = (rawType === 'Text' || !isKnownSingleOrCombo) ? 'Text' : rawType;
+          const delayPress = getRawInputValue(act.raw_input, 'DELAY_PRESS', getRawInputValue(act.raw_input, 'DELAY_EACH_CHAR', '-1'));
+          const activePort = port.trim() || '43076';
+
+          // 1. Nếu có XPath: Tự động tìm kiếm, cuộn tới và click focus bằng CDP
+          if (resolvedXPath) {
+            addLog('info', `🔍 Tự động tìm & kích hoạt ô nhập › ${resolvedXPath}`);
+            let foundCoords: { x: number; y: number } | null = null;
+            const startFind = Date.now();
+
+            while (Date.now() - startFind < 15000 && !stopSignalRef.current) {
+              const evalRes = await evaluateInChrome(`(() => {
+                try {
+                  let doc = document;
+                  let offX = 0;
+                  let offY = 0;
+                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                  if (fx) {
+                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (fr) {
+                      const rectF = fr.getBoundingClientRect();
+                      offX = Math.round(rectF.left);
+                      offY = Math.round(rectF.top);
+                      try {
+                        if (fr.contentDocument) doc = fr.contentDocument;
+                        else if (fr.contentWindow) doc = fr.contentWindow.document;
+                      } catch(e) {}
+                    }
+                  }
+                  const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  const el = res.singleNodeValue;
+                  if (!el) return { found: false };
+                  if (typeof el.scrollIntoView === 'function') {
+                    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                  }
+                  if (typeof el.focus === 'function') el.focus();
+                  const rect = el.getBoundingClientRect();
+                  return {
+                    found: true,
+                    x: Math.round(rect.left + rect.width / 2) + offX,
+                    y: Math.round(rect.top + rect.height / 2) + offY,
+                  };
+                } catch(e) {
+                  return { found: false, error: e.message };
+                }
+              })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+
+              const val = evalRes?.value;
+              if (val && val.found && val.x > 0 && val.y > 0) {
+                foundCoords = { x: val.x, y: val.y };
+                break;
               }
-            } else if (keyStr.toLowerCase() === 'control+a') {
-              if (el && typeof (el as any).select === 'function') {
-                (el as any).select();
+              await sleep(350);
+            }
+
+            if (!foundCoords) {
+              addLog('error', `✕ Không tìm thấy XPath sau 15s: [${resolvedXPath}]`);
+            } else {
+              // Click CDP coordinates
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'clickCoordinates',
+                  payload: { x: foundCoords.x, y: foundCoords.y, targetId: vars.$activePopupTargetId },
+                }).catch(() => {});
               }
-            } else if (keyStr.toLowerCase() === 'backspace') {
-              if (el && ('value' in el)) {
-                el.value = '';
-                el.dispatchEvent(new Event('input', { bubbles: true }));
-                el.dispatchEvent(new Event('change', { bubbles: true }));
-              }
-            } else if (keyStr.toLowerCase() === 'enter') {
-              if (el) {
-                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+              await sleep(150);
+            }
+          }
+
+          // 2. GÕ VĂN BẢN (Text)
+          if (effectiveType === 'Text') {
+            const rawDelay = (delayPress || '').trim();
+            const isPaste = rawDelay === '-1';
+
+            // Tính toán mô tả hiển thị log
+            let logDelayDesc = 'Gõ ngầm Chrome (Tự nhiên ~35-75ms)';
+            if (isPaste) {
+              logDelayDesc = 'Dán nhanh';
+            } else if (rawDelay === '0' || rawDelay === '0,0') {
+              logDelayDesc = 'Gõ tức thì (0ms)';
+            } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
+              logDelayDesc = `Gõ ngầm Chrome (Random ~${rawDelay}ms/phím)`;
+            } else if (rawDelay) {
+              const b = parseInt(rawDelay, 10);
+              if (!isNaN(b) && b > 0) {
+                logDelayDesc = `Gõ ngầm Chrome (Random ~${Math.max(10, Math.round(b * 0.7))}-${Math.round(b * 1.3)}ms)`;
               }
             }
-            return { success: true };
-          })()`);
-          addLog('success', `✔ Key press › ${resolvedKey || rawType}`);
+
+            addLog('info', `▶ Key press (${logDelayDesc}) › "${resolvedKey}"`);
+
+            // Gõ hoàn toàn độc lập bên trong tiến trình Chrome (không dùng bàn phím máy tính của người dùng)
+            const evalRes = await evaluateInChrome(`(async () => {
+              try {
+                let doc = document;
+                const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                if (fx) {
+                  const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                  if (fr) {
+                    try {
+                      if (fr.contentDocument) doc = fr.contentDocument;
+                      else if (fr.contentWindow) doc = fr.contentWindow.document;
+                    } catch(e) {}
+                  }
+                }
+                let el = ${resolvedXPath ? `doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue` : `doc.activeElement`};
+                if (!el && ${JSON.stringify(resolvedXPath || '')}) {
+                  return { success: false, error: 'Element not found' };
+                }
+
+                if (el) {
+                  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center' });
+                  if (typeof el.focus === 'function') el.focus();
+                  if (typeof el.click === 'function') el.click();
+                }
+
+                const text = ${JSON.stringify(resolvedKey)};
+                const delayRaw = ${JSON.stringify(rawDelay)};
+
+                // Tính hàm lấy độ trễ ngẫu nhiên cho từng ký tự
+                const isPasteMode = delayRaw === '-1';
+                let getCharDelay = () => Math.floor(Math.random() * 41) + 35;
+
+                if (isPasteMode) {
+                  getCharDelay = () => -1;
+                } else if (delayRaw === '0' || delayRaw === '0,0') {
+                  getCharDelay = () => 0;
+                } else if (delayRaw.includes(',') || delayRaw.includes('-')) {
+                  const parts = delayRaw.includes(',') ? delayRaw.split(',') : delayRaw.split('-');
+                  const minD = Math.max(0, parseInt(parts[0], 10) || 0);
+                  const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
+                  getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                } else if (delayRaw) {
+                  const base = parseInt(delayRaw, 10);
+                  if (!isNaN(base) && base > 0) {
+                    const minD = Math.max(10, Math.round(base * 0.7));
+                    const maxD = Math.round(base * 1.3);
+                    getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                  } else if (base === 0) {
+                    getCharDelay = () => 0;
+                  }
+                }
+
+                const protoSetter = el ? Object.getOwnPropertyDescriptor(
+                  el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                  'value'
+                )?.set : null;
+
+                if (el && ('value' in el)) {
+                  if (isPasteMode || getCharDelay() === 0) {
+                    // Dán nhanh (Paste)
+                    if (protoSetter) protoSetter.call(el, text);
+                    else el.value = text;
+                    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                  } else {
+                    // Gõ từng ký tự với độ trễ random độc lập bên trong Chrome
+                    let current = '';
+                    for (let i = 0; i < text.length; i++) {
+                      const char = text[i];
+                      current += char;
+                      if (protoSetter) protoSetter.call(el, current);
+                      else el.value = current;
+                      el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: char }));
+                      el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: char }));
+
+                      const waitTime = getCharDelay();
+                      if (waitTime > 0) {
+                        await new Promise(r => setTimeout(r, waitTime));
+                      }
+                    }
+                    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                  }
+                  return { success: true, value: el.value };
+                }
+                return { success: true, notInput: true };
+              } catch(e) {
+                return { success: false, error: e.message };
+              }
+            })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+
+            // Nếu không có XPath hoặc phần tử không phải ô input DOM thông thường, bổ trợ qua lệnh CDP typeText
+            const evalVal = evalRes?.value;
+            if (!resolvedXPath || evalVal?.notInput) {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'typeText',
+                  payload: { text: resolvedKey, delay: rawDelay, targetId: vars.$activePopupTargetId },
+                });
+              }
+            }
+
+            addLog('success', `✔ Typed: "${resolvedKey}" (${logDelayDesc})`);
+          } else {
+            const lower = resolvedKey.toLowerCase().trim();
+            addLog('info', `▶ Key press (${effectiveType}) › "${resolvedKey}"`);
+
+            if (lower === 'enter') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 13, key: 'Enter', code: 'Enter' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 13, key: 'Enter', code: 'Enter' },
+                });
+              }
+            } else if (lower === 'backspace') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' },
+                });
+              }
+            } else if (lower === 'control+a' || lower === 'ctrl+a') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 65, key: 'a', code: 'KeyA', modifiers: 2 },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 65, key: 'a', code: 'KeyA', modifiers: 0 },
+                });
+              }
+              await evaluateInChrome(`(() => {
+                if (document.activeElement && typeof document.activeElement.select === 'function') {
+                  document.activeElement.select();
+                } else {
+                  document.execCommand('selectAll', false, null);
+                }
+              })()`);
+            } else {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyDown', text: resolvedKey },
+                });
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', text: resolvedKey },
+                });
+              }
+            }
+
+            addLog('success', `✔ Sent key: "${resolvedKey}" (${effectiveType})`);
+          }
         } else {
           // Generic action
           const target = act.element_xpath || act.output_variable_name || '';
@@ -2514,30 +3205,6 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleOpenChrome = async () => {
-    const cleanPort = port.trim() || '43076';
-    if ((window as any).electronAPI?.launchBrowser) {
-      setLogs((prev) => [...prev, { time: getTime(), type: 'info', text: `▶ Launching Chrome on port ${cleanPort}...` }]);
-      const res = await (window as any).electronAPI.launchBrowser({ port: cleanPort });
-      if (res && res.success) {
-        setLogs((prev) => [...prev, { time: getTime(), type: 'success', text: `✔ Chrome launched on port ${cleanPort}` }]);
-        setTimeout(async () => {
-          if ((window as any).electronAPI?.cdpAction) {
-            await (window as any).electronAPI.cdpAction({
-              port: cleanPort,
-              action: 'initVirtualMouse',
-              payload: { script: VIRTUAL_MOUSE_SCRIPT },
-            }).catch(() => {});
-          }
-        }, 1200);
-      } else {
-        setLogs((prev) => [...prev, { time: getTime(), type: 'error', text: `✕ Failed to launch Chrome: ${res?.error || 'Unknown error'}` }]);
-      }
-    } else {
-      window.open('https://google.com', '_blank');
-    }
-  };
-
   const handleStart = async () => {
     const cleanPort = port.trim() || '43076';
     localStorage.setItem('gpm_debug_port', cleanPort);
@@ -2547,7 +3214,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
     const startTime = Date.now();
 
-    // Start with empty logs, matching GPM Automate
+    // Start with empty logs, matching SV Browser Automate
     setLogs([]);
 
     const addLog = (type: TestLog['type'], text: string, time?: string) => {
@@ -2637,26 +3304,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
         result = await checkPort();
 
-        // If Chrome port is not responding, attempt to launch Chrome automatically
-        if ((!result || !result.success) && (window as any).electronAPI?.launchBrowser) {
-          addLog('info', `▶ Port ${cleanPort} not ready. Launching Google Chrome...`);
-          await (window as any).electronAPI.launchBrowser({ port: cleanPort });
-          for (let retry = 0; retry < 6; retry++) {
-            await sleep(800);
-            if (stopSignalRef.current) break;
-            result = await checkPort();
-            if (result && result.success) break;
-          }
-        }
-
         if (!result || !result.success) {
           const errorMsg =
             result?.error ||
-            `Failed to fetch browser webSocket url from http://127.0.0.1:${cleanPort}.`;
+            `Failed to connect to browser on port ${cleanPort}. Please make sure your browser is open on remote debugging port ${cleanPort}.`;
 
-          await sleep(300);
+          await sleep(200);
           addLog('error', `✕ Test failed: ${errorMsg}`);
-          addLog('info', `💡 Tip: Click "Open Chrome" button to start Chrome with debugging port ${cleanPort}.`);
           setIsRunning(false);
           setStatusText('Ready');
           return;
@@ -2705,6 +3359,96 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         collectVars(currentProject.script.before_init?.nodes || []);
         collectVars(currentProject.script.main_logic?.nodes || []);
         collectVars(currentProject.script.after_quit?.nodes || []);
+      }
+
+      // If user configured TXT file in Runtime settings, load line 1 into vars for testing
+      const testTxtPath = localStorage.getItem('sv_txt_file_path') || '';
+      if (testTxtPath.trim()) {
+        try {
+          const cleanTestPath = testTxtPath.trim().replace(/^["']|["']$/g, '');
+          const readTxtRes = await (window as any).electronAPI?.fileAction?.({
+            action: 'readLines',
+            payload: { path: cleanTestPath },
+          });
+          if (readTxtRes && readTxtRes.success && Array.isArray(readTxtRes.lines)) {
+            const lines: string[] = readTxtRes.lines
+              .map((l: any) => String(l).replace(/\r$/, ''))
+              .filter((l: string) => l.trim().length > 0);
+            if (lines.length > 0) {
+              const skipKws = (localStorage.getItem('sv_txt_skip_keywords') || 'done, trạng thái:, error, OK')
+                .split(',')
+                .map((k) => k.trim())
+                .filter(Boolean);
+
+              const isLineSkipped = (lineStr: string): boolean => {
+                for (const kw of skipKws) {
+                  const kwLower = kw.toLowerCase();
+                  if (kwLower === 'ok') {
+                    if (/\b(ok)\b/i.test(lineStr) || lineStr.toLowerCase().endsWith('ok')) return true;
+                  } else {
+                    if (lineStr.toLowerCase().includes(kwLower)) return true;
+                  }
+                }
+                return false;
+              };
+
+              const validLines = lines.filter((l) => !isLineSkipped(l));
+              const testLine = validLines.length > 0 ? validLines[0] : lines[0];
+              const skippedCount = lines.length - validLines.length;
+
+              vars['$txt_line'] = testLine;
+              vars['txt_line'] = testLine;
+              vars['$line'] = testLine;
+              vars['line'] = testLine;
+
+              let parts: string[] = [];
+              if (testLine.includes('|')) {
+                parts = testLine.split('|');
+              } else if (testLine.includes('\t')) {
+                parts = testLine.split('\t');
+              } else if (testLine.includes(';') && !testLine.includes('&')) {
+                parts = testLine.split(';');
+              } else if (testLine.includes(':') && !testLine.startsWith('http')) {
+                parts = testLine.split(':');
+              } else if (testLine.includes(',')) {
+                parts = testLine.split(',');
+              } else {
+                parts = [testLine];
+              }
+
+              parts.forEach((part, pIdx) => {
+                const pVal = part.trim();
+                const colNum = pIdx + 1;
+                vars[`line_${colNum}`] = pVal;
+                vars[`$line_${colNum}`] = pVal;
+                vars[`line${colNum}`] = pVal;
+                vars[`$line${colNum}`] = pVal;
+                vars[`data_${colNum}`] = pVal;
+                vars[`$data_${colNum}`] = pVal;
+                vars[`col_${colNum}`] = pVal;
+                vars[`$col_${colNum}`] = pVal;
+                if (colNum === 1) {
+                  vars['email'] = pVal;
+                  vars['$email'] = pVal;
+                  vars['username'] = pVal;
+                  vars['$username'] = pVal;
+                } else if (colNum === 2) {
+                  vars['password'] = pVal;
+                  vars['$password'] = pVal;
+                  vars['pass'] = pVal;
+                  vars['$pass'] = pVal;
+                } else if (colNum === 3) {
+                  vars['2fa'] = pVal;
+                  vars['$2fa'] = pVal;
+                  vars['code_2fa'] = pVal;
+                  vars['$code_2fa'] = pVal;
+                }
+              });
+              const skipNote = skippedCount > 0 ? ` (Tự động bỏ qua ${skippedCount} dòng đã có 'OK')` : '';
+              addLog('info', `📄 [Test] Đã nạp dòng từ TXT (${cleanTestPath}): "$line_1" = "${parts[0] || testLine}"${skipNote}`);
+            }
+          }
+        } catch (e) {}
       }
 
       await executeNodes(nodesToRun, vars, addLog);
@@ -2805,18 +3549,6 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   disabled={isRunning}
                   className="w-48 px-3 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none font-mono"
                 />
-
-                {/* Open Chrome Button */}
-                <button
-                  type="button"
-                  onClick={handleOpenChrome}
-                  disabled={isRunning}
-                  title="Launch Google Chrome with remote debugging port"
-                  className="px-2.5 py-1.5 text-xs rounded-md bg-white dark:bg-[#0f172a] hover:bg-slate-100 dark:hover:bg-[#1a263d] text-[#334155] dark:text-[#cbd5e1] hover:text-black dark:hover:text-white border border-[#d9d9d9] dark:border-[#1e293b] font-medium flex items-center space-x-1.5 transition-colors shrink-0 shadow-xs cursor-pointer active:scale-95 disabled:opacity-50"
-                >
-                  <Globe className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />
-                  <span>Open Chrome</span>
-                </button>
 
                 {/* Engine Dropdown */}
                 <div className="relative flex-1">

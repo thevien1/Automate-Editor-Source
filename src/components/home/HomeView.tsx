@@ -2,6 +2,7 @@ import React from 'react';
 import { HomeSidebar } from './HomeSidebar';
 import { ActionCards } from './ActionCards';
 import { RecentProjects } from './RecentProjects';
+import { useProject } from '../../context/ProjectContext';
 
 interface HomeViewProps {
   onNewProject: () => void;
@@ -14,8 +15,9 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenProject,
   onSettings,
 }) => {
+  const { updateInfo, setShowUpdateModal } = useProject();
   return (
-    <div className="flex-1 flex overflow-hidden bg-[#090d18] text-[#f1f5f9]">
+    <div className="flex-1 flex overflow-hidden bg-[#f8fafc] dark:bg-[#090d18] text-[#1e293b] dark:text-[#f1f5f9] transition-colors duration-200">
       {/* Sidebar */}
       <HomeSidebar onOpenSettings={onSettings} />
 
@@ -23,12 +25,45 @@ export const HomeView: React.FC<HomeViewProps> = ({
       <div className="flex-1 flex flex-col justify-center items-center px-6 overflow-y-auto">
         <div className="w-full max-w-2xl text-center">
           {/* Header Title */}
-          <h1 className="text-2xl font-bold text-[#f8fafc] tracking-tight">
+          <h1 className="text-2xl font-bold text-[#0f172a] dark:text-[#f8fafc] tracking-tight">
             Build, debug, and ship automation flows
           </h1>
-          <p className="text-xs text-[#94a3b8] mt-2">
+          <p className="text-xs text-[#64748b] dark:text-[#94a3b8] mt-2">
             Visual workflow editor — from idea to product in just a few drag and drops.
           </p>
+
+          {/* Update Available Announcement Banner */}
+          {updateInfo?.hasUpdate && (
+            <div
+              onClick={() => setShowUpdateModal(true)}
+              className="w-full max-w-xl mx-auto mt-4 p-3 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800/50 flex items-center justify-between shadow-xs cursor-pointer hover:border-amber-400 transition-all text-left"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-amber-500 to-orange-500 text-white flex items-center justify-center text-sm font-bold shadow-xs">
+                  🚀
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-slate-800 dark:text-slate-100 flex items-center space-x-1.5">
+                    <span>Đã có phiên bản mới: v{updateInfo.latestVersion}</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-amber-200/70 dark:bg-amber-800/60 text-amber-800 dark:text-amber-200 font-semibold">New</span>
+                  </div>
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                    Phiên bản hiện tại v{updateInfo.currentVersion} • Nhấp để xem và tải về bản cập nhật.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowUpdateModal(true);
+                }}
+                className="px-3 py-1.5 rounded-lg bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white text-xs font-semibold shadow-xs cursor-pointer transition-all shrink-0 ml-3"
+              >
+                Cập nhật ngay
+              </button>
+            </div>
+          )}
 
           {/* 3 Action Cards */}
           <ActionCards

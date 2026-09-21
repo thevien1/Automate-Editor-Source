@@ -1,7 +1,7 @@
 import React from 'react';
 import { ActionNode } from '../../types/gscript';
 import { useProject } from '../../context/ProjectContext';
-import { Trash2, Terminal } from 'lucide-react';
+import { Trash2, Terminal } from '../common/Icons';
 
 interface ActionNodeItemProps {
   node: ActionNode;

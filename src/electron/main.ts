@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawn } from 'child_process';
@@ -6,7 +6,7 @@ import * as XLSX from 'xlsx';
 import http from 'http';
 
 // Set Windows AppUserModelId for Taskbar icon grouping and display
-app.setAppUserModelId('com.gpmsoftwares.gpmautomateeditor');
+app.setAppUserModelId('com.svbrowser.automateeditor');
 
 const windows = new Set<BrowserWindow>();
 
@@ -41,7 +41,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: 'GPM Automate Editor v3.0.8-stable',
+    title: 'SV Browser Automate Editor v3.0.9-stable',
   });
 
   if (resolvedIcon) {
@@ -105,6 +105,34 @@ ipcMain.handle('dialog:openFolder', async (event) => {
   }
   return null;
 });
+
+ipcMain.handle('app:getDefaultSavePath', () => {
+  try {
+    return path.join(app.getPath('documents'), 'SV_Browser_Projects');
+  } catch {
+    return 'C:\\SV_Browser_Projects';
+  }
+});
+
+ipcMain.handle('app:checkPathExists', (_event, targetPath: string) => {
+  try {
+    if (!targetPath) return false;
+    return fs.existsSync(targetPath);
+  } catch {
+    return false;
+  }
+});
+
+ipcMain.handle('app:openExternal', async (_event, url: string) => {
+  try {
+    if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+      await shell.openExternal(url);
+      return true;
+    }
+  } catch {}
+  return false;
+});
+
 
 ipcMain.handle('dialog:openFile', async (event, options?: { title?: string; filters?: Array<{ name: string; extensions: string[] }> }) => {
   const win = getTargetWindow(event);
@@ -174,6 +202,85 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
   }
 });
 
+const httpGet = (urlStr: string): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const r = http.get(urlStr, { timeout: 3500 }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { resolve(data); }
+      });
+    });
+    r.on('error', reject);
+    r.on('timeout', () => { r.destroy(); reject(new Error('Timeout')); });
+  });
+};
+
+const httpPut = (urlStr: string): Promise<any> => {
+  return new Promise((resolve, reject) => {
+    const u = new URL(urlStr);
+    const r = http.request({
+      hostname: u.hostname,
+      port: u.port,
+      path: u.pathname + u.search,
+      method: 'PUT',
+      timeout: 3500,
+    }, (res) => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(data)); } catch (e) { resolve(data); }
+      });
+    });
+    r.on('error', reject);
+    r.on('timeout', () => { r.destroy(); reject(new Error('Timeout')); });
+    r.end();
+  });
+};
+
+let nextWsId = 100;
+const sendWs = (wsUrl: string, method: string, params: any = {}, timeoutMs: number = 10000): Promise<any> => {
+  return new Promise((resolve) => {
+    try {
+      const reqId = ++nextWsId;
+      const normalizedWsUrl = wsUrl.replace('//localhost:', '//127.0.0.1:');
+      const ws = new WebSocket(normalizedWsUrl);
+      const timer = setTimeout(() => {
+        try { ws.close(); } catch (e) {}
+        resolve({ success: false, error: 'WebSocket timeout' });
+      }, timeoutMs);
+
+      ws.onopen = () => {
+        ws.send(JSON.stringify({ id: reqId, method, params }));
+      };
+      ws.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data.toString());
+          if (data && data.id === reqId) {
+            clearTimeout(timer);
+            try { ws.close(); } catch (e) {}
+            if (data.error) {
+              resolve({ success: false, error: data.error.message || JSON.stringify(data.error) });
+            } else {
+              resolve({ success: true, result: data.result });
+            }
+          }
+        } catch (e) {}
+      };
+      ws.onerror = (err) => {
+        clearTimeout(timer);
+        try { ws.close(); } catch (e) {}
+        resolve({ success: false, error: String(err) });
+      };
+    } catch (err: any) {
+      resolve({ success: false, error: err.message });
+    }
+  });
+};
+
+// Mutex for sequential atomic file operations (e.g. concurrent profile writes to data.txt)
+let fileActionLock = Promise.resolve<any>(undefined);
+
 // File system actions for File & Folder automations
 ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }) => {
   try {
@@ -200,26 +307,29 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       }
       return { success: true };
     }
-    if (action === 'readText') {
-      if (!fs.existsSync(payload.path)) {
-        return { success: false, error: 'File does not exist' };
+    if (action === 'readText' || action === 'readFileText') {
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        return { success: false, error: 'File does not exist: ' + targetPath };
       }
-      const text = fs.readFileSync(payload.path, 'utf-8');
+      const text = fs.readFileSync(targetPath, 'utf-8');
       return { success: true, text };
     }
-    if (action === 'readLines') {
-      if (!fs.existsSync(payload.path)) {
-        return { success: false, error: 'File does not exist' };
+    if (action === 'readLines' || action === 'readFileLines') {
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        return { success: false, error: 'File does not exist: ' + targetPath };
       }
-      const raw = fs.readFileSync(payload.path, 'utf-8');
+      const raw = fs.readFileSync(targetPath, 'utf-8');
       const lines = raw.split(/\r?\n/);
       return { success: true, lines };
     }
-    if (action === 'readRandomLine') {
-      if (!fs.existsSync(payload.path)) {
-        return { success: false, error: 'File does not exist' };
+    if (action === 'readRandomLine' || action === 'readFileRandomLine') {
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        return { success: false, error: 'File does not exist: ' + targetPath };
       }
-      const raw = fs.readFileSync(payload.path, 'utf-8');
+      const raw = fs.readFileSync(targetPath, 'utf-8');
       const lines = raw.split(/\r?\n/).filter(line => line.trim().length > 0);
       const line = lines.length > 0 ? lines[Math.floor(Math.random() * lines.length)] : '';
       return { success: true, line };
@@ -255,6 +365,65 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
 
       fs.appendFileSync(payload.path, appendText, 'utf-8');
       return { success: true };
+    }
+    if (action === 'updateFileLine' || action === 'updateLine') {
+      const lockRes = await new Promise<{ success: boolean; error?: string; updatedLineIndex?: number; updatedLine?: string }>((resolve) => {
+        fileActionLock = fileActionLock.then(() => {
+          try {
+            const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+            if (!targetPath || !fs.existsSync(targetPath)) {
+              resolve({ success: false, error: 'File does not exist: ' + targetPath });
+              return;
+            }
+            const originalLine = typeof payload?.originalLine === 'string' ? payload.originalLine : undefined;
+            const lineIndex = typeof payload?.lineIndex === 'number' ? payload.lineIndex : -1;
+            const suffix = payload?.suffix || ' | OK';
+            const newText = payload?.newText;
+
+            const raw = fs.readFileSync(targetPath, 'utf-8');
+            const lines = raw.split(/\r?\n/);
+            let targetIdx = -1;
+
+            // 1. Try to match exact original line
+            if (originalLine !== undefined && originalLine.trim().length > 0) {
+              const cleanOrig = originalLine.trim();
+              targetIdx = lines.findIndex(l => l.trim() === cleanOrig);
+              if (targetIdx === -1) {
+                targetIdx = lines.findIndex(l => l.trim().startsWith(cleanOrig));
+              }
+            }
+
+            // 2. Fallback to line index
+            if (targetIdx === -1 && lineIndex >= 0 && lineIndex < lines.length) {
+              targetIdx = lineIndex;
+            }
+
+            if (targetIdx === -1) {
+              resolve({ success: false, error: `Could not find line to update (index: ${lineIndex}, text: "${originalLine}")` });
+              return;
+            }
+
+            if (newText !== undefined) {
+              lines[targetIdx] = newText;
+            } else {
+              const cur = lines[targetIdx];
+              const trimmedSuffix = suffix.trim();
+              if (!cur.trim().endsWith(trimmedSuffix)) {
+                lines[targetIdx] = cur + suffix;
+              }
+            }
+
+            const eol = raw.includes('\r\n') ? '\r\n' : '\n';
+            fs.writeFileSync(targetPath, lines.join(eol), 'utf-8');
+            resolve({ success: true, updatedLineIndex: targetIdx, updatedLine: lines[targetIdx] });
+          } catch (e: any) {
+            resolve({ success: false, error: e.message });
+          }
+        }).catch((err) => {
+          resolve({ success: false, error: err.message });
+        });
+      });
+      return lockRes;
     }
     if (action === 'createEmptyExcel') {
       let target = payload.path;
@@ -302,6 +471,20 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       const cell = ws[cellAddress];
       const val = cell ? (cell.v !== undefined ? String(cell.v) : (cell.w || '')) : '';
       return { success: true, value: val };
+    }
+    if (action === 'readExcelAllRows') {
+      if (!fs.existsSync(payload.path)) {
+        return { success: false, error: 'Excel file does not exist' };
+      }
+      const wb = XLSX.readFile(payload.path);
+      const sheetIdx = parseInt(payload.sheetIndex, 10) || 0;
+      const sheetName = wb.SheetNames[sheetIdx] || wb.SheetNames[0];
+      if (!sheetName || !wb.Sheets[sheetName]) {
+        return { success: false, error: `Sheet index ${sheetIdx} does not exist` };
+      }
+      const ws = wb.Sheets[sheetName];
+      const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+      return { success: true, sheetName, rows };
     }
     if (action === 'writeExcel') {
       let wb: XLSX.WorkBook;
@@ -500,6 +683,123 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       const b64 = `data:${mime};base64,${fileBuf.toString('base64')}`;
       return { success: true, base64: b64 };
     }
+    if (action === 'findImage') {
+      const templatePath = payload?.templatePath || payload?.path || '';
+      const threshold = parseFloat(payload?.threshold) || 0.7;
+      const trueColor = payload?.trueColor === 'Yes' || payload?.trueColor === true || payload?.trueColor === 'yes';
+      const port = payload?.port;
+
+      if (!templatePath || !fs.existsSync(templatePath)) {
+        return { success: false, error: `Template image not found: ${templatePath}` };
+      }
+
+      // 1. Capture primary display screen
+      let screenshotBuf: Buffer | null = null;
+      try {
+        const primary = screen.getPrimaryDisplay();
+        const scale = primary.scaleFactor || 1;
+        const sources = await desktopCapturer.getSources({
+          types: ['screen'],
+          thumbnailSize: {
+            width: Math.round(primary.bounds.width * scale),
+            height: Math.round(primary.bounds.height * scale),
+          },
+        });
+        if (sources.length > 0 && sources[0].thumbnail) {
+          screenshotBuf = sources[0].thumbnail.toPNG();
+        }
+      } catch (errScreen) {}
+
+      // Fallback: If desktopCapturer empty and port is provided, capture CDP Page screenshot
+      if ((!screenshotBuf || screenshotBuf.length === 0) && port) {
+        try {
+          const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
+          if (Array.isArray(list)) {
+            const page = list.find((t: any) => t.type === 'page');
+            if (page?.webSocketDebuggerUrl) {
+              const snap = await sendWs(page.webSocketDebuggerUrl, 'Page.captureScreenshot', { format: 'png' });
+              if (snap?.result?.data) {
+                screenshotBuf = Buffer.from(snap.result.data, 'base64');
+              }
+            }
+          }
+        } catch (e) {}
+      }
+
+      // Spawn python scripts/find_image.py
+      const scriptPath = path.join(app.getAppPath(), 'scripts', 'find_image.py');
+      return new Promise((resolve) => {
+        try {
+          const pyArgs = [scriptPath, templatePath, String(threshold), trueColor ? 'Yes' : 'No'];
+          if (screenshotBuf && screenshotBuf.length > 0) {
+            pyArgs.push('--stdin');
+          }
+          const py = spawn('python', pyArgs);
+          let stdoutData = '';
+          let stderrData = '';
+
+          py.stdout.on('data', (d) => { stdoutData += d.toString(); });
+          py.stderr.on('data', (d) => { stderrData += d.toString(); });
+
+          py.on('close', (code) => {
+            if (stdoutData.trim()) {
+              try {
+                const parsed = JSON.parse(stdoutData.trim());
+                resolve(parsed);
+                return;
+              } catch (e) {}
+            }
+            resolve({ success: false, error: stderrData || `Image search failed with exit code ${code}` });
+          });
+
+          py.on('error', (err) => {
+            resolve({ success: false, error: `Python spawn error: ${err.message}` });
+          });
+
+          if (screenshotBuf && screenshotBuf.length > 0) {
+            py.stdin.write(screenshotBuf);
+            py.stdin.end();
+          }
+        } catch (err: any) {
+          resolve({ success: false, error: err.message });
+        }
+      });
+    }
+    if (action === 'osClick') {
+      const x = payload?.x ?? 0;
+      const y = payload?.y ?? 0;
+      const button = payload?.button || 'left';
+      const clicks = payload?.clicks || 1;
+
+      const scriptPath = path.join(app.getAppPath(), 'scripts', 'mouse_click.py');
+      return new Promise((resolve) => {
+        try {
+          const py = spawn('python', [scriptPath, String(x), String(y), button, String(clicks)]);
+          let stdoutData = '';
+          let stderrData = '';
+
+          py.stdout.on('data', (d) => { stdoutData += d.toString(); });
+          py.stderr.on('data', (d) => { stderrData += d.toString(); });
+
+          py.on('close', (code) => {
+            if (stdoutData.trim()) {
+              try {
+                const parsed = JSON.parse(stdoutData.trim());
+                resolve(parsed);
+                return;
+              } catch (e) {}
+            }
+            resolve({ success: code === 0, error: stderrData });
+          });
+
+          py.on('error', (err) => {
+            resolve({ success: false, error: `Python spawn error: ${err.message}` });
+          });
+        } catch (err: any) {
+          resolve({ success: false, error: err.message });
+        }
+      });
+    }
     return { success: false, error: `Unknown fs action: ${action}` };
   } catch (err: any) {
     return { success: false, error: err.message };
@@ -542,7 +842,8 @@ const launchChrome = (
   profileName: string = 'ChromeAutomationProfile',
   windowSize?: { width: number; height: number },
   scale?: number,
-  proxy?: string
+  proxy?: string,
+  windowPosition?: { x: number; y: number }
 ) => {
   const chromePath = findChromePath();
   if (!chromePath) {
@@ -570,8 +871,12 @@ const launchChrome = (
     }
   }
 
+  if (windowPosition && windowPosition.x !== undefined && windowPosition.y !== undefined) {
+    args.push(`--window-position=${Math.round(windowPosition.x)},${Math.round(windowPosition.y)}`);
+  }
+
   if (windowSize && windowSize.width && windowSize.height) {
-    args.push(`--window-size=${windowSize.width},${windowSize.height}`);
+    args.push(`--window-size=${Math.round(windowSize.width)},${Math.round(windowSize.height)}`);
   } else {
     args.push('--start-maximized');
   }
@@ -702,6 +1007,7 @@ ipcMain.handle('automation:launchBrowser', async (_, options?: {
   url?: string;
   profileName?: string;
   windowSize?: { width: number; height: number };
+  windowPosition?: { x: number; y: number };
   scale?: number;
   proxy?: string;
 }) => {
@@ -709,7 +1015,7 @@ ipcMain.handle('automation:launchBrowser', async (_, options?: {
     const port = options?.port || 43076;
     const url = options?.url || 'https://google.com';
     const profile = options?.profileName || `ChromeProfile_${port}`;
-    return launchChrome(port, url, profile, options?.windowSize, options?.scale, options?.proxy);
+    return launchChrome(port, url, profile, options?.windowSize, options?.scale, options?.proxy, options?.windowPosition);
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -717,7 +1023,7 @@ ipcMain.handle('automation:launchBrowser', async (_, options?: {
 
 // Launch multiple Chrome instances for multi-threading
 ipcMain.handle('automation:launchMultiThreads', async (_, req: {
-  threads: Array<{ id: number; port: number; name: string; url?: string; proxy?: string }>;
+  threads: Array<{ id: number; port: number; name: string; url?: string; proxy?: string; windowPosition?: { x: number; y: number } }>;
   windowSize?: { width: number; height: number };
   scale?: number;
 }) => {
@@ -730,7 +1036,8 @@ ipcMain.handle('automation:launchMultiThreads', async (_, req: {
         `ChromeProfile_Thread_${t.id}_${t.port}`,
         req.windowSize,
         req.scale,
-        t.proxy
+        t.proxy,
+        t.windowPosition
       );
       results.push({ ...t, success: res.success });
       await new Promise(r => setTimeout(r, 450));
@@ -738,6 +1045,25 @@ ipcMain.handle('automation:launchMultiThreads', async (_, req: {
     return { success: true, threads: results };
   } catch (err: any) {
     return { success: false, error: err.message };
+  }
+});
+
+// Get all connected displays & resolutions for window arrangement
+ipcMain.handle('system:getDisplays', async () => {
+  try {
+    const displays = screen.getAllDisplays();
+    const primary = screen.getPrimaryDisplay();
+    return displays.map((d, idx) => ({
+      id: d.id,
+      index: idx,
+      isPrimary: d.id === primary.id,
+      label: `Screen ${idx + 1} • ${d.bounds.width}x${d.bounds.height}${d.id === primary.id ? ' (primary)' : ''}`,
+      bounds: d.bounds,
+      workArea: d.workArea,
+      scaleFactor: d.scaleFactor,
+    }));
+  } catch (err: any) {
+    return [];
   }
 });
 
@@ -823,90 +1149,14 @@ ipcMain.handle('automation:testPort', async (_, port: string | number) => {
 // CDP Browser Controller via Remote Debugging Port (Node.js level, no CORS restrictions)
 ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; action: string; payload?: any }) => {
   const { port, action, payload } = req;
-  const http = await import('http');
-
-  const httpGet = (urlStr: string): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      const r = http.get(urlStr, { timeout: 3500 }, (res) => {
-        let data = '';
-        res.on('data', c => { data += c; });
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); } catch (e) { resolve(data); }
-        });
-      });
-      r.on('error', reject);
-      r.on('timeout', () => { r.destroy(); reject(new Error('Timeout')); });
-    });
-  };
-
-  const httpPut = (urlStr: string): Promise<any> => {
-    return new Promise((resolve, reject) => {
-      const u = new URL(urlStr);
-      const r = http.request({
-        hostname: u.hostname,
-        port: u.port,
-        path: u.pathname + u.search,
-        method: 'PUT',
-        timeout: 3500,
-      }, (res) => {
-        let data = '';
-        res.on('data', c => { data += c; });
-        res.on('end', () => {
-          try { resolve(JSON.parse(data)); } catch (e) { resolve(data); }
-        });
-      });
-      r.on('error', reject);
-      r.on('timeout', () => { r.destroy(); reject(new Error('Timeout')); });
-      r.end();
-    });
-  };
-
-  let nextId = 100;
-  const sendWs = (wsUrl: string, method: string, params: any = {}): Promise<any> => {
-    return new Promise((resolve) => {
-      try {
-        const reqId = ++nextId;
-        const normalizedWsUrl = wsUrl.replace('//localhost:', '//127.0.0.1:');
-        const ws = new WebSocket(normalizedWsUrl);
-        const timer = setTimeout(() => {
-          try { ws.close(); } catch (e) {}
-          resolve({ success: false, error: 'WebSocket timeout' });
-        }, 5000);
-
-        ws.onopen = () => {
-          ws.send(JSON.stringify({ id: reqId, method, params }));
-        };
-        ws.onmessage = (evt) => {
-          try {
-            const data = JSON.parse(evt.data.toString());
-            // Wait for matching response ID
-            if (data && data.id === reqId) {
-              clearTimeout(timer);
-              try { ws.close(); } catch (e) {}
-              if (data.error) {
-                resolve({ success: false, error: data.error.message || JSON.stringify(data.error) });
-              } else {
-                resolve({ success: true, result: data.result });
-              }
-            }
-          } catch (e) {
-            // Ignore non-json or unrelated notifications
-          }
-        };
-        ws.onerror = (err) => {
-          clearTimeout(timer);
-          try { ws.close(); } catch (e) {}
-          resolve({ success: false, error: String(err) });
-        };
-      } catch (err: any) {
-        resolve({ success: false, error: err.message });
-      }
-    });
-  };
 
   const getPageTarget = async () => {
     const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
     if (Array.isArray(list)) {
+      if (payload?.targetId) {
+        const found = list.find((t: any) => t.id === payload.targetId);
+        if (found) return found;
+      }
       const page = list.find((t: any) => t.type === 'page');
       return page || list[0];
     }
@@ -914,6 +1164,48 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
   };
 
   try {
+    if (action === 'listTargets') {
+      const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
+      if (Array.isArray(list)) {
+        const pages = list.filter((t: any) => t.type === 'page');
+        return { success: true, targets: pages };
+      }
+      return { success: false, error: 'Failed to list targets' };
+    }
+
+    if (action === 'activateTarget') {
+      const targetId = payload?.targetId || payload?.id;
+      if (targetId) {
+        await httpGet(`http://127.0.0.1:${port}/json/activate/${targetId}`);
+        return { success: true };
+      }
+      return { success: false, error: 'No targetId provided' };
+    }
+
+    if (action === 'getFrameTree') {
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Page.getFrameTree', {});
+      return wsRes;
+    }
+
+    if (action === 'createIsolatedWorld') {
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+      const frameId = payload?.frameId;
+      const worldName = payload?.worldName || 'gpmWorld';
+      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Page.createIsolatedWorld', {
+        frameId,
+        worldName,
+        grantUniversalAccess: true,
+      });
+      return wsRes;
+    }
+
     if (action === 'initVirtualMouse') {
       const page = await getPageTarget();
       if (!page || !page.webSocketDebuggerUrl) {
@@ -932,17 +1224,58 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       return { success: true };
     }
 
+    if (action === 'setWindowBounds') {
+      const { x, y, width, height } = payload || {};
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        // 1. Try Browser.setWindowBounds via CDP Browser target
+        try {
+          const versionInfo = await httpGet(`http://127.0.0.1:${port}/json/version`);
+          const browserWs = versionInfo?.webSocketDebuggerUrl;
+          if (browserWs) {
+            const winRes = await sendWs(browserWs, 'Browser.getWindowForTarget', { targetId: page.id }).catch(() => null);
+            const windowId = winRes?.result?.windowId;
+            if (windowId) {
+              await sendWs(browserWs, 'Browser.setWindowBounds', {
+                windowId,
+                bounds: {
+                  left: Math.round(x),
+                  top: Math.round(y),
+                  width: Math.round(width),
+                  height: Math.round(height),
+                  windowState: 'normal',
+                },
+              }).catch(() => {});
+            }
+          }
+        } catch (e) {}
+
+        // 2. Also execute JS window.moveTo and window.resizeTo
+        if (width && height) {
+          await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+            expression: `try { window.moveTo(${Math.round(x)}, ${Math.round(y)}); window.resizeTo(${Math.round(width)}, ${Math.round(height)}); } catch(e){}`,
+          }).catch(() => {});
+        }
+        return { success: true };
+      }
+      return { success: false, error: 'No active Chrome page' };
+    }
+
     if (action === 'evaluate') {
       const expression = payload?.expression || '';
       const page = await getPageTarget();
       if (!page || !page.webSocketDebuggerUrl) {
         return { success: false, error: 'No active Chrome page found.' };
       }
-      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+      const evalParams: any = {
         expression,
         returnByValue: true,
         awaitPromise: true,
-      });
+      };
+      if (payload?.contextId !== undefined && payload?.contextId !== null) {
+        evalParams.contextId = Number(payload.contextId);
+      }
+      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', evalParams);
       if (!wsRes.success) {
         return { success: false, error: wsRes.error || 'Evaluation failed' };
       }
@@ -954,29 +1287,141 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       return { success: true, value: cdpRes?.result?.value };
     }
 
-    if (action === 'clickCoordinates') {
-      const { x, y } = payload || {};
+    if (action === 'insertText') {
+      const { text } = payload || {};
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        await sendWs(page.webSocketDebuggerUrl, 'Input.insertText', { text: String(text || '') }).catch(() => {});
+        return { success: true };
+      }
+      return { success: false, error: 'No active Chrome page found.' };
+    }
+
+    if (action === 'typeText') {
+      const { text, delay, delayMs } = payload || {};
       const page = await getPageTarget();
       if (!page || !page.webSocketDebuggerUrl) {
         return { success: false, error: 'No active Chrome page found.' };
       }
+      const str = String(text || '');
+      const wsUrl = page.webSocketDebuggerUrl;
+      const rawDelay = String(delay ?? delayMs ?? '').trim();
+
+      // If rawDelay is -1: instant paste
+      if (rawDelay === '-1') {
+        await sendWs(wsUrl, 'Input.insertText', { text: str }).catch(() => {});
+        return { success: true };
+      }
+
+      let getDelay = () => Math.floor(Math.random() * 41) + 35;
+      if (rawDelay === '0' || rawDelay === '0,0') {
+        getDelay = () => 0;
+      } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
+        const parts = rawDelay.includes(',') ? rawDelay.split(',') : rawDelay.split('-');
+        const minD = Math.max(0, parseInt(parts[0], 10) || 0);
+        const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
+        getDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+      } else if (rawDelay) {
+        const base = parseInt(rawDelay, 10);
+        if (!isNaN(base) && base > 0) {
+          const minD = Math.max(10, Math.round(base * 0.7));
+          const maxD = Math.round(base * 1.3);
+          getDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+        } else if (base === 0) {
+          getDelay = () => 0;
+        }
+      }
+
+      const normalizedWsUrl = wsUrl.replace('//localhost:', '//127.0.0.1:');
+      return new Promise((resolve) => {
+        try {
+          const ws = new WebSocket(normalizedWsUrl);
+          const cleanup = () => {
+            try { ws.close(); } catch (e) {}
+          };
+          const timer = setTimeout(() => {
+            cleanup();
+            resolve({ success: false, error: 'typeText timeout' });
+          }, Math.max(15000, str.length * 500 + 10000));
+
+          ws.onerror = (err) => {
+            clearTimeout(timer);
+            cleanup();
+            resolve({ success: false, error: String(err) });
+          };
+
+          ws.onopen = async () => {
+            try {
+              for (let i = 0; i < str.length; i++) {
+                const char = str[i];
+                const reqId = ++nextWsId;
+                ws.send(JSON.stringify({ id: reqId, method: 'Input.insertText', params: { text: char } }));
+                const wait = getDelay();
+                if (wait > 0) {
+                  await new Promise((r) => setTimeout(r, wait));
+                }
+              }
+              clearTimeout(timer);
+              cleanup();
+              resolve({ success: true });
+            } catch (err: any) {
+              clearTimeout(timer);
+              cleanup();
+              resolve({ success: false, error: err.message });
+            }
+          };
+        } catch (e: any) {
+          resolve({ success: false, error: e.message });
+        }
+      });
+    }
+
+    if (action === 'dispatchKeyEvent') {
+      const { type, key, code, windowsVirtualKeyCode, modifiers, text } = payload || {};
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchKeyEvent', {
+          type: type || 'rawKeyDown',
+          key,
+          code,
+          windowsVirtualKeyCode,
+          modifiers: modifiers || 0,
+          text,
+        }).catch(() => {});
+        return { success: true };
+      }
+      return { success: false, error: 'No active Chrome page found.' };
+    }
+
+    if (action === 'clickCoordinates') {
+      const { x, y } = payload || {};
       const posX = parseFloat(x) || 0;
       const posY = parseFloat(y) || 0;
 
-      await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
-        type: 'mousePressed',
-        x: posX,
-        y: posY,
-        button: 'left',
-        clickCount: 1,
-      });
-      await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
-        type: 'mouseReleased',
-        x: posX,
-        y: posY,
-        button: 'left',
-        clickCount: 1,
-      });
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        try {
+          await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+            type: 'mouseMoved',
+            x: posX,
+            y: posY,
+          });
+          await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+            type: 'mousePressed',
+            x: posX,
+            y: posY,
+            button: 'left',
+            clickCount: 1,
+          });
+          await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+            type: 'mouseReleased',
+            x: posX,
+            y: posY,
+            button: 'left',
+            clickCount: 1,
+          });
+        } catch (e) {}
+      }
 
       return { success: true, x: posX, y: posY };
     }
@@ -1039,6 +1484,7 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
 
     if (action === 'goToUrl') {
       let url = (payload?.url || '').trim();
+      const timeoutSec = parseInt(payload?.timeout, 10) || 60;
       if (!url || url === 'https://') {
         url = 'https://google.com';
       } else if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('about:') && !url.startsWith('chrome://')) {
@@ -1049,7 +1495,7 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       if (Array.isArray(list)) {
         const page = list.find((t: any) => t.type === 'page');
         if (page && page.webSocketDebuggerUrl) {
-          const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url });
+          const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url }, Math.max(15000, timeoutSec * 1000));
           return wsRes.success ? wsRes : { success: true };
         }
       }

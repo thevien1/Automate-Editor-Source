@@ -1,6 +1,25 @@
+@import 'bootstrap-icons/font/bootstrap-icons.css';
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Bootstrap Icons baseline centering & Tailwind size scaling */
+i.bi {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  line-height: 1;
+}
+
+i.bi.w-2\.5 { font-size: 0.625rem; }
+i.bi.w-3 { font-size: 0.75rem; }
+i.bi.w-3\.5 { font-size: 0.875rem; }
+i.bi.w-4 { font-size: 1rem; }
+i.bi.w-5 { font-size: 1.25rem; }
+i.bi.w-6 { font-size: 1.5rem; }
+i.bi.w-7 { font-size: 1.75rem; }
+i.bi.w-8 { font-size: 2rem; }
 
 /* Custom scrollbars */
 ::-webkit-scrollbar {

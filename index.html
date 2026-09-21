@@ -1,12 +1,29 @@
 <!doctype html>
-<html lang="en" class="dark">
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/x-icon" href="/icon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>GPM Automate Editor v3.0.8-stable</title>
+    <title>SV Browser Automate Editor v3.0.9-stable</title>
+    <script>
+      (function() {
+        try {
+          var pref = localStorage.getItem('gpm_theme_preference') || localStorage.getItem('gpm_theme') || 'light';
+          var isDark = pref === 'dark' || (pref === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          if (isDark) {
+            document.documentElement.classList.add('dark');
+          } else {
+            document.documentElement.classList.remove('dark');
+          }
+          var accent = localStorage.getItem('gpm_accent_color');
+          if (accent) {
+            document.documentElement.style.setProperty('--primary-color', accent);
+          }
+        } catch (e) {}
+      })();
+    </script>
   </head>
-  <body class="bg-[#080d19] text-[#e2e8f0] select-none overflow-hidden antialiased">
+  <body class="bg-[#f8fafc] dark:bg-[#080d19] text-[#1e293b] dark:text-[#e2e8f0] select-none overflow-hidden antialiased">
     <div id="root" class="h-screen w-screen flex flex-col"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

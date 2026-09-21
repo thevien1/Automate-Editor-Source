@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { CheckCircle2, X } from 'lucide-react';
+import { CheckCircle2, X } from './Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const SaveToast: React.FC = () => {

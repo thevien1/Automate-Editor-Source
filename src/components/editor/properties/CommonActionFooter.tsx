@@ -31,20 +31,25 @@ export const CommonActionFooter: React.FC<CommonActionFooterProps> = ({
       </div>
 
       {/* Continue on error */}
-      <div className="flex items-center space-x-2 pt-0.5">
-        <input
-          type="checkbox"
-          id={`continue_on_error_${actionNode.id}`}
-          checked={actionNode.continue_on_error || false}
-          onChange={(e) => updateNode(actionNode.id, { continue_on_error: e.target.checked })}
-          className="rounded bg-white dark:bg-[#0f172a] border-[#d9d9d9] dark:border-[#1e293b] text-[#1677ff] dark:text-[#38bdf8] focus:ring-0 cursor-pointer"
-        />
-        <label
-          htmlFor={`continue_on_error_${actionNode.id}`}
-          className="text-xs text-[#334155] dark:text-[#cbd5e1] cursor-pointer"
-        >
-          Continue on error
-        </label>
+      <div>
+        <div className="flex items-center space-x-2 pt-0.5">
+          <input
+            type="checkbox"
+            id={`continue_on_error_${actionNode.id}`}
+            checked={actionNode.continue_on_error || false}
+            onChange={(e) => updateNode(actionNode.id, { continue_on_error: e.target.checked })}
+            className="rounded bg-white dark:bg-[#0f172a] border-[#d9d9d9] dark:border-[#1e293b] text-[#1677ff] dark:text-[#38bdf8] focus:ring-0 cursor-pointer"
+          />
+          <label
+            htmlFor={`continue_on_error_${actionNode.id}`}
+            className="text-xs font-medium text-[#334155] dark:text-[#cbd5e1] cursor-pointer"
+          >
+            Continue on error
+          </label>
+        </div>
+        <p className="mt-0.5 pl-5 text-[10px] text-[#64748b] dark:text-[#94a3b8]">
+          Nếu lỗi hoặc hết thời gian chờ, bỏ qua và tiếp tục hành động kế tiếp (không dừng profile)
+        </p>
       </div>
 
       {/* Note */}

@@ -15,7 +15,7 @@ export const AppLogo: React.FC<AppLogoProps> = ({ size = 36, className = '' }) =
     >
       <img
         src={logoImg}
-        alt="ChromeTech Logo"
+        alt="SV Browser Logo"
         className="w-full h-full object-cover rounded-xl"
         draggable={false}
       />

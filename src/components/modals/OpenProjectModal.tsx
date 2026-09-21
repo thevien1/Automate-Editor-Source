@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, FolderOpen } from 'lucide-react';
+import { X, FolderOpen } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 interface OpenProjectModalProps {
@@ -9,9 +9,21 @@ interface OpenProjectModalProps {
 
 export const OpenProjectModal: React.FC<OpenProjectModalProps> = ({ isOpen, onClose }) => {
   const { openProjectByPath } = useProject();
-  const [folderPath, setFolderPath] = useState('D:\\GPM - Chrome\\file luu GPM\\Login gmail');
+  const [folderPath, setFolderPath] = useState('');
 
   if (!isOpen) return null;
+
+  const handleBrowse = async () => {
+    if ((window as any).electronAPI?.openFolderDialog) {
+      const selected = await (window as any).electronAPI.openFolderDialog();
+      if (selected) {
+        setFolderPath(selected);
+      }
+    } else {
+      const custom = prompt('Enter project directory path:', folderPath);
+      if (custom) setFolderPath(custom);
+    }
+  };
 
   const handleOpen = (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,8 +68,8 @@ export const OpenProjectModal: React.FC<OpenProjectModalProps> = ({ isOpen, onCl
               />
               <button
                 type="button"
-                onClick={() => alert('Folder picker dialog')}
-                className="px-3 py-1.5 bg-[#f5f5f5] hover:bg-[#e8e8e8] text-[#595959] rounded-lg text-xs"
+                onClick={handleBrowse}
+                className="px-3 py-1.5 bg-[#f5f5f5] hover:bg-[#e8e8e8] text-[#595959] rounded-lg text-xs transition-colors"
               >
                 Browse
               </button>

@@ -64,7 +64,7 @@ export const TextProps: React.FC<ActionPropsCommon> = ({
           <VariableInput
             value={getRawVal('INPUT_TEXT', '')}
             onChange={(val) => handleRawInputByKey('INPUT_TEXT', val)}
-            placeholder=""
+            placeholder="e.g. $txt_line or user1|pass123|key2fa"
           />
         </div>
 
@@ -75,21 +75,29 @@ export const TextProps: React.FC<ActionPropsCommon> = ({
           <VariableInput
             value={getRawVal('SPLIT_CHAR', '')}
             onChange={(val) => handleRawInputByKey('SPLIT_CHAR', val)}
-            placeholder=""
+            placeholder="e.g. | or , or \t"
           />
         </div>
 
         <div>
-          <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
-            Output Variable Name
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8]">
+              Output Variable Name
+            </label>
+            <span className="text-[10px] text-[#1677ff] dark:text-[#38bdf8]">Supports multiple variables</span>
+          </div>
           <input
             type="text"
             value={actionNode.output_variable_name || ''}
             onChange={(e) => updateNode(actionNode.id, { output_variable_name: e.target.value })}
-            placeholder=""
+            placeholder="e.g. email, password, code_2fa, url"
             className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
           />
+          <div className="mt-1.5 p-2 rounded bg-blue-50/60 dark:bg-blue-950/40 border border-blue-200/60 dark:border-blue-900/40 text-[11px] text-[#475569] dark:text-[#cbd5e1] space-y-1">
+            <div className="font-semibold text-[#1677ff] dark:text-[#38bdf8]">💡 Cách gán biến tự động:</div>
+            <div>• Nhập nhiều biến: <code className="text-[#1677ff] dark:text-[#38bdf8] font-mono">email, password, code_2fa, url</code> sẽ tự tách vào <code className="font-mono text-emerald-600 dark:text-emerald-400">$email</code>, <code className="font-mono text-emerald-600 dark:text-emerald-400">$password</code>, <code className="font-mono text-emerald-600 dark:text-emerald-400">$code_2fa</code>...</div>
+            <div>• Hoặc nhập 1 biến: <code className="text-[#1677ff] dark:text-[#38bdf8] font-mono">account</code> sẽ truy xuất qua <code className="font-mono text-emerald-600 dark:text-emerald-400">$account_1</code>, <code className="font-mono text-emerald-600 dark:text-emerald-400">$account_2</code>...</div>
+          </div>
         </div>
 
         <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />

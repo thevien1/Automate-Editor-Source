@@ -1,5 +1,5 @@
 import React from 'react';
-import { Folder, Plus } from 'lucide-react';
+import { Folder, Plus } from '../common/Icons';
 
 export const WorkflowTabs: React.FC = () => {
   return (

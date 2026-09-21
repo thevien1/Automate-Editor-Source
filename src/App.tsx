@@ -5,16 +5,28 @@ import { EditorView } from './components/editor/EditorView';
 import { NewProjectModal } from './components/modals/NewProjectModal';
 import { OpenProjectModal } from './components/modals/OpenProjectModal';
 import { SettingsModal } from './components/modals/SettingsModal';
+import { UpdateModal } from './components/modals/UpdateModal';
 import { TestModal } from './components/modals/TestModal';
 import { RuntimeModal } from './components/modals/RuntimeModal';
 import { SaveToast } from './components/common/SaveToast';
 import { useProject } from './context/ProjectContext';
 
 export const App: React.FC = () => {
-  const { screen, currentProject, showTestModal, setShowTestModal, showRuntimeModal, setShowRuntimeModal } = useProject();
+  const {
+    screen,
+    currentProject,
+    showTestModal,
+    setShowTestModal,
+    showRuntimeModal,
+    setShowRuntimeModal,
+    showSettingsModal,
+    setShowSettingsModal,
+    showUpdateModal,
+    setShowUpdateModal,
+    updateInfo,
+  } = useProject();
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isOpenModalOpen, setIsOpenModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f8fafc] dark:bg-[#080d19] select-none text-[#1e293b] dark:text-[#e2e8f0] transition-colors">
@@ -27,7 +39,7 @@ export const App: React.FC = () => {
           <HomeView
             onNewProject={() => setIsNewModalOpen(true)}
             onOpenProject={() => setIsOpenModalOpen(true)}
-            onSettings={() => setIsSettingsModalOpen(true)}
+            onSettings={() => setShowSettingsModal(true)}
           />
         ) : (
           <EditorView
@@ -47,8 +59,13 @@ export const App: React.FC = () => {
         onClose={() => setIsOpenModalOpen(false)}
       />
       <SettingsModal
-        isOpen={isSettingsModalOpen}
-        onClose={() => setIsSettingsModalOpen(false)}
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
+      />
+      <UpdateModal
+        isOpen={showUpdateModal}
+        onClose={() => setShowUpdateModal(false)}
+        updateInfo={updateInfo}
       />
       <TestModal
         isOpen={showTestModal}

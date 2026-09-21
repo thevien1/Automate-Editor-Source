@@ -1,5 +1,5 @@
 import React from 'react';
-import { X, Keyboard } from 'lucide-react';
+import { X, Keyboard } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const ShortcutsOverlay: React.FC = () => {

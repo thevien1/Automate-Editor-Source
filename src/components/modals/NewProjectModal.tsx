@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Folder, Globe, FolderPlus } from 'lucide-react';
+import { X, Folder, Globe, FolderPlus } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 interface NewProjectModalProps {
@@ -13,7 +13,17 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({ isOpen, onClos
   const [description, setDescription] = useState('');
   const [author, setAuthor] = useState('Anonymous');
   const [version, setVersion] = useState('1.0.0');
-  const [saveLocation, setSaveLocation] = useState('C:\\Users\\pc\\Desktop\\project');
+  const [saveLocation, setSaveLocation] = useState('');
+
+  React.useEffect(() => {
+    if ((window as any).electronAPI?.getDefaultSavePath) {
+      (window as any).electronAPI.getDefaultSavePath().then((defaultPath: string) => {
+        if (defaultPath) {
+          setSaveLocation(defaultPath);
+        }
+      });
+    }
+  }, []);
 
   if (!isOpen) return null;
 
@@ -170,6 +180,7 @@ export const NewProjectModal: React.FC<NewProjectModalProps> = ({ isOpen, onClos
                 required
                 value={saveLocation}
                 onChange={(e) => setSaveLocation(e.target.value)}
+                placeholder="Select or enter save directory..."
                 className="flex-1 px-3 py-1.5 text-xs font-mono bg-[#070c17] text-[#38bdf8] border border-[#1e293b] rounded-lg hover:border-[#38bdf8] focus:border-[#38bdf8] focus:outline-none transition-colors"
               />
               <button

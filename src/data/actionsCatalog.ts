@@ -195,12 +195,12 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
     name: 'Browser - Mouse',
     count: 6,
     actions: [
-      { type: 48, name: 'Mouse click', category: 'Browser - Mouse', description: 'Click element by XPath or screen coordinate', hasXPath: true, defaultRawInput: [{ Key: 'CLICK_TYPE', Value: 'CLICK_XPATH' }, { Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }] },
-      { type: 49, name: 'Mouse try to click', category: 'Browser - Mouse', description: 'Try click multiple times until condition met', hasXPath: true, defaultRawInput: [{ Key: 'NUMBER_OF_TRIES', Value: '5' }, { Key: 'DELAY_EACH_CLICK', Value: '2' }, { Key: 'STOP_CONDITION', Value: '' }, { Key: 'CLICK_TYPE', Value: 'Click by Xpath' }, { Key: 'POS', Value: '' }] },
+      { type: 48, name: 'Mouse click', category: 'Browser - Mouse', description: 'Click element by XPath or screen coordinate', hasXPath: true, defaultRawInput: [{ Key: 'CLICK_TYPE', Value: 'Click by Xpath' }, { Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }] },
+      { type: 49, name: 'Mouse try to click', category: 'Browser - Mouse', description: 'Try click multiple times until condition met', hasXPath: true, defaultRawInput: [{ Key: 'CLICK_TYPE', Value: 'Click by Xpath' }, { Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }, { Key: 'NUMBER_OF_TRIES', Value: '5' }, { Key: 'DELAY_EACH_CLICK', Value: '2' }, { Key: 'STOP_CONDITION', Value: '' }] },
       { type: 50, name: 'Mouse move', category: 'Browser - Mouse', description: 'Move mouse cursor smoothly', hasXPath: true, defaultRawInput: [{ Key: 'MOVE_TYPE', Value: 'Move by Xpath' }, { Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }] },
-      { type: 51, name: 'Mouse press and hold', category: 'Browser - Mouse', description: 'Hold down mouse button', hasXPath: true, defaultRawInput: [{ Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }] },
+      { type: 51, name: 'Mouse press and hold', category: 'Browser - Mouse', description: 'Hold down mouse button', hasXPath: true, defaultRawInput: [{ Key: 'PRESS_TYPE', Value: 'Press by Xpath' }, { Key: 'XPATH', Value: '' }, { Key: 'POS', Value: '' }] },
       { type: 52, name: 'Mouse release', category: 'Browser - Mouse', description: 'Release held mouse button' },
-      { type: 53, name: 'Mouse scroll', category: 'Browser - Mouse', description: 'Scroll page down or up', defaultRawInput: [{ Key: 'SCROLL_NUM', Value: '' }] },
+      { type: 53, name: 'Mouse scroll', category: 'Browser - Mouse', description: 'Scroll page down or up', defaultRawInput: [{ Key: 'SCROLL_NUM', Value: '1' }] },
     ]
   },
   {
@@ -208,7 +208,7 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
     name: 'Browser - Keyboard',
     count: 3,
     actions: [
-      { type: 54, name: 'Key press', category: 'Browser - Keyboard', description: 'Simulate typing or hotkeys (Enter, Control+A)', hasXPath: true, defaultDelay: '1000,2000', defaultRawInput: [{ Key: 'XPATH', Value: '' }, { Key: 'TYPE', Value: 'Combo key' }, { Key: 'KEY', Value: '' }, { Key: 'DELAY_PRESS', Value: '' }] },
+      { type: 54, name: 'Key press', category: 'Browser - Keyboard', description: 'Simulate typing or hotkeys (Enter, Control+A)', hasXPath: true, defaultDelay: '1000,2000', defaultRawInput: [{ Key: 'XPATH', Value: '' }, { Key: 'TYPE', Value: 'Text' }, { Key: 'KEY', Value: '' }, { Key: 'DELAY_PRESS', Value: '-1' }] },
       { type: 55, name: 'File upload', category: 'Browser - Keyboard', description: 'Upload file to file input element', hasXPath: true, defaultRawInput: [{ Key: 'FILE_PATH', Value: '' }] },
       { type: 111, name: 'Select dropdown', category: 'Browser - Keyboard', description: 'Select option in select HTML element', hasXPath: true, defaultRawInput: [{ Key: 'SELECT_TEXT', Value: '' }] },
     ]

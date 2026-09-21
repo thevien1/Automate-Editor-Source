@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 
 # Production build outputs
@@ -19,3 +19,5 @@ Thumbs.db
 .idea/
 
 test_chrome_profile/
+__pycache__/
+*.pyc

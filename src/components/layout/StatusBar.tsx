@@ -1,5 +1,5 @@
 import React from 'react';
-import { CheckCircle2, Folder, AlertTriangle } from 'lucide-react';
+import { CheckCircle2, Folder, AlertTriangle } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const StatusBar: React.FC = () => {

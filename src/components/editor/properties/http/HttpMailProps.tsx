@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff } from '../../../common/Icons';
 import { ActionPropsCommon } from '../types';
 import { VariableInput } from '../../../common/VariableInput';
 import { CommonActionFooter } from '../CommonActionFooter';

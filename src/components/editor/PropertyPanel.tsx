@@ -8,7 +8,7 @@ import {
   Search,
   Check,
   Copy,
-} from 'lucide-react';
+} from '../common/Icons';
 import { ActionNode } from '../../types/gscript';
 import { parseRawInput, serializeRawInput } from '../../utils/gpmUtils';
 
@@ -31,7 +31,9 @@ import { ElementProps } from './properties/element/ElementProps';
 import { TextProps } from './properties/text/TextProps';
 import { FileFolderExcelProps } from './properties/file/FileFolderExcelProps';
 import { HttpMailProps } from './properties/http/HttpMailProps';
+import { SwitchProps } from './properties/navigation/SwitchProps';
 import { GenericActionProps } from './properties/GenericActionProps';
+import { VariablesPanel } from './VariablesPanel';
 
 export const PropertyPanel: React.FC = () => {
   const {
@@ -223,6 +225,16 @@ export const PropertyPanel: React.FC = () => {
       return <HttpMailProps {...commonProps} />;
     }
 
+    // Switch Actions (Switch to frame, Switch to default, Switch to popup)
+    if (
+      name.includes('switch to frame') ||
+      name.includes('switch to default') ||
+      name.includes('switch to popup') ||
+      [61, 62, 63].includes(type as number)
+    ) {
+      return <SwitchProps {...commonProps} />;
+    }
+
     // Fallback generic form
     return (
       <GenericActionProps
@@ -281,53 +293,8 @@ export const PropertyPanel: React.FC = () => {
       <div className="flex-1 overflow-y-auto p-4 text-left">
         {activeTab === 'variables' ? (
           /* Variables Tab Content */
-          <div className="space-y-3.5 text-left">
-            <div className="relative">
-              <Search className="w-3.5 h-3.5 text-[#94a3b8] dark:text-[#64748b] absolute left-2.5 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                value={varSearchTerm}
-                onChange={(e) => setVarSearchTerm(e.target.value)}
-                placeholder="Search actions..."
-                className="w-full pl-8 pr-2.5 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none placeholder-[#94a3b8]"
-              />
-            </div>
-
-            <div className="bg-[#e6f4ff] dark:bg-[#0c1830] border border-[#91caff] dark:border-[#1d4ed8]/70 rounded-md p-2.5 text-xs text-[#0958d9] dark:text-[#60a5fa] leading-relaxed">
-              Use the syntax: <span className="font-mono font-bold">$variable_name</span> to embed variables in necessary inputs.
-            </div>
-
-            <div className="space-y-1 pt-1">
-              {filteredVars.map((vName) => {
-                const isCopied = copiedVar === vName;
-                return (
-                  <div
-                    key={vName}
-                    onClick={() => copyVariable(vName)}
-                    className="flex items-center justify-between px-2.5 py-2 rounded-md hover:bg-[#e6f4ff] dark:hover:bg-[#15233c] cursor-pointer text-[#1e293b] dark:text-[#f1f5f9] group transition-colors"
-                    title={`Click to copy $${vName}`}
-                  >
-                    <div className="flex items-center space-x-3">
-                      <span className="font-mono text-[#1677ff] dark:text-[#38bdf8] font-bold text-xs">{'{ }'}</span>
-                      <span className="text-xs font-medium group-hover:text-[#1677ff] dark:group-hover:text-[#38bdf8]">
-                        {vName}
-                      </span>
-                    </div>
-
-                    {isCopied ? (
-                      <span className="text-[10px] text-green-600 flex items-center space-x-1 font-semibold">
-                        <Check className="w-3 h-3" />
-                        <span>Copied</span>
-                      </span>
-                    ) : (
-                      <span className="text-[10px] text-[#94a3b8] opacity-0 group-hover:opacity-100 transition-opacity">
-                        Copy
-                      </span>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+          <div className="h-full flex flex-col -m-4">
+            <VariablesPanel showHeader={false} />
           </div>
         ) : selectedNodeIds.length > 1 ? (
           /* Multi-selection view */
@@ -397,10 +364,9 @@ export const PropertyPanel: React.FC = () => {
             </div>
           </div>
         ) : !selectedNode ? (
-          /* Empty State */
-          <div className="h-full flex flex-col items-center justify-center text-[#64748b]">
-            <Folder className="w-10 h-10 mb-2 text-[#cbd5e1] dark:text-[#1e293b] fill-[#f1f5f9] dark:fill-[#0f172a]" />
-            <span className="text-xs text-[#64748b]">No action or block selected</span>
+          /* Khi chưa chọn action nào: Hiển thị ngay bảng Variables ở cột bên phải */
+          <div className="h-full flex flex-col -m-4">
+            <VariablesPanel showHeader={true} title="System & Excel Variables" />
           </div>
         ) : (
           /* Property Form */

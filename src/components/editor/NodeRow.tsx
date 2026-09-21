@@ -1,74 +1,20 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WorkflowNode, ActionNode } from '../../types/gscript';
 import { useProject } from '../../context/ProjectContext';
 import {
   ChevronDown,
   ChevronRight,
-  Box,
-  Repeat,
-  HelpCircle,
-  GitBranch,
-  CornerDownRight,
-  PlayCircle,
-  FileText,
-  Globe,
-  Variable,
-  Dices,
-  Square,
-  MousePointer,
-  Move,
-  Hand,
-  Pointer,
-  Mouse,
-  Keyboard,
-  Hourglass,
-  Download,
   Trash2,
-  RefreshCw,
-  Plus,
-  Minus,
-  ListOrdered,
-  Pause,
-  LogOut,
-  SkipForward,
-  Link,
-  Eye,
-  Camera,
-  Layers,
-  Copy,
-  X,
-  XCircle,
-  Link2,
-  ArrowLeft,
-  RotateCw,
-  Code2,
-  Clock,
-  SlidersHorizontal,
-  AlertTriangle,
-  Shuffle,
-  Scissors,
-  Asterisk,
-  Calculator,
-  Key,
-  FileCheck,
-  FileEdit,
-  FilePlus,
-  FileSpreadsheet,
-  FolderCheck,
-  FolderPlus,
-  FolderSync,
-  FolderEdit,
-  FolderX,
-  FolderTree,
-  Clipboard,
-  ClipboardCopy,
-  ClipboardPaste,
-  Pencil,
-  Image as ImageIcon,
-  FileImage,
-  Search,
-} from 'lucide-react';
+  Palette,
+} from '../common/Icons';
+import {
+  ActionIcon,
+  getEffectiveCustomOverride,
+  adjustHexBrightness,
+  isLightColor,
+} from '../common/ActionIcon';
 import { ActionDefinition } from '../../types/ui';
+import { ActionIconEditorModal } from '../modals/ActionIconEditorModal';
 
 interface NodeRowProps {
   node: WorkflowNode;
@@ -101,6 +47,14 @@ export const NodeRow: React.FC<NodeRowProps> = ({
   const [isDraggingThis, setIsDraggingThis] = useState(false);
   const [isEmptyZoneDragOver, setIsEmptyZoneDragOver] = useState(false);
   const [isContainerEndDragOver, setIsContainerEndDragOver] = useState(false);
+  const [isEditingIcon, setIsEditingIcon] = useState(false);
+  const [, setCustomIconVer] = useState(0);
+
+  useEffect(() => {
+    const handleUpdate = () => setCustomIconVer((v) => v + 1);
+    window.addEventListener('gpm_custom_icons_updated', handleUpdate);
+    return () => window.removeEventListener('gpm_custom_icons_updated', handleUpdate);
+  }, []);
 
   const isSelected = selectedNodeIds.includes(node.id) || selectedNodeId === node.id;
   const isBlock = 'nodes' in node && Array.isArray((node as any).nodes);
@@ -114,200 +68,47 @@ export const NodeRow: React.FC<NodeRowProps> = ({
   const isIf = isBlock && !isElseIf && !isElse && (node.$type?.includes('IfBlockNode') || node.display_text?.toLowerCase().startsWith('if'));
   const isNormalBlock = isBlock && !isFor && !isIf && !isWhile && !isElseIf && !isElse;
 
+  const blockType = isFor
+    ? 'for'
+    : isWhile
+    ? 'while'
+    : isElseIf
+    ? 'else if'
+    : isElse
+    ? 'else'
+    : isIf
+    ? 'if'
+    : isNormalBlock
+    ? 'normal block'
+    : undefined;
+
+  const customOverride = isBlock
+    ? getEffectiveCustomOverride(node.display_text, (node as any).type, blockType)
+    : getEffectiveCustomOverride((node as ActionNode).display_text, (node as ActionNode).type);
+
+  const isHeaderLight = customOverride?.color ? isLightColor(customOverride.color) : false;
+
   // Custom Icon matching Actions sidebar and PropertyPanel
   const getActionIcon = () => {
-    if (isFor) return <Repeat className="w-4 h-4 text-white" />;
-    if (isWhile) return <RefreshCw className="w-4 h-4 text-white" />;
-    if (isElseIf) return <GitBranch className="w-4 h-4 text-white" />;
-    if (isElse) return <CornerDownRight className="w-4 h-4 text-white" />;
-    if (isIf) return <GitBranch className="w-4 h-4 text-white" />;
-    if (isNormalBlock) return <Box className="w-4 h-4 text-white" />;
+    if (isBlock) {
+      return (
+        <ActionIcon
+          actionName={node.display_text}
+          blockType={blockType}
+          isBlockHeader={true}
+          className={`w-4 h-4 ${isHeaderLight ? 'text-slate-900' : 'text-white'}`}
+        />
+      );
+    }
 
     const act = node as ActionNode;
-    const type = act.type;
-    const name = act.display_text?.toLowerCase() || '';
-
-    if (name === 'wait element' || type === 44) {
-      return <Hourglass className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'delay' || type === 7) {
-      return <Clock className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'stop' || type === 76) {
-      return <Square className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8] fill-current" />;
-    }
-    if (name === 'throw' || type === 117) {
-      return <AlertTriangle className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8] fill-current" />;
-    }
-    if (name === 'random text' || type === 8) {
-      return <Shuffle className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'split text' || type === 9) {
-      return <Scissors className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'read json' || type === 10) {
-      return <FileText className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'regex' || type === 82) {
-      return <Asterisk className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'random number' || type === 11) {
-      return <Dices className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'math execute' || type === 12) {
-      return <Calculator className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === '2fa code' || type === 81) {
-      return <Key className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file exists' || type === 13) {
-      return <FileCheck className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'copy file' || type === 14) {
-      return <Copy className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('move') || name.includes('rename') || type === 15) {
-      return <FileEdit className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'delete file' || type === 16) {
-      return <Trash2 className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file read all text' || type === 17) {
-      return <FileText className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file read all lines' || type === 18) {
-      return <FileText className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file read random line' || type === 184) {
-      return <FileText className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file write all text' || type === 19) {
-      return <Pencil className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'file append line' || type === 20) {
-      return <FilePlus className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'create empty excel' || type === 74) {
-      return <FileSpreadsheet className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'read excel file' || type === 21) {
-      return <FileSpreadsheet className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'write excel file' || type === 22) {
-      return <FileSpreadsheet className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'append excel file' || type === 71) {
-      return <FileSpreadsheet className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'folder exists' || type === 23) {
-      return <FolderCheck className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'create folder' || type === 24) {
-      return <FolderPlus className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if ((name.includes('move') && name.includes('folder')) || type === 26) {
-      return <FolderEdit className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'delete folder' || type === 25) {
-      return <FolderX className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'folder get file list' || type === 72) {
-      return <FolderTree className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'get clipboard text' || type === 27) {
-      return <ClipboardCopy className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'set clipboard text' || type === 28) {
-      return <ClipboardPaste className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('random')) {
-      return <Dices className="w-3.5 h-3.5 text-[#64748b] dark:text-[#e2e8f0]" />;
-    }
-    if (name === 'http download' || type === 30) {
-      return <Download className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('http') || type === 29) {
-      return <Globe className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('json') || name.includes('file') || (type >= 13 && type <= 22)) {
-      return <FileText className="w-3.5 h-3.5 text-[#64748b] dark:text-[#e2e8f0]" />;
-    }
-    if (name.includes('exit') || type === 5) {
-      return <LogOut className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('next') || type === 6) {
-      return <SkipForward className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-
-    // Browser - Navigation actions
-    if (name === 'new tab' || type === 36) return <Copy className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'active tab' || type === 37) return <Eye className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'close tab' || type === 38) return <X className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'close all tab' || type === 73) return <XCircle className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'go to url' || type === 39) return <Link2 className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name.includes('back url') || type === 40) return <ArrowLeft className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name.includes('reload') || type === 41) return <RotateCw className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name.includes('get url') || type === 42) return <Code2 className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name.includes('wait url') || type === 43) return <Clock className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-
-    // Browser - Element actions
-    if (name === 'wait element' || type === 44) return <Hourglass className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'get element attribute' || type === 45) return <SlidersHorizontal className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    if (name === 'get element text' || type === 46) return <span className="font-bold font-sans text-[11px] text-[#1677ff] dark:text-[#38bdf8]">A</span>;
-    if (name === 'count element' || type === 47) return <span className="font-bold font-mono text-[11px] text-[#1677ff] dark:text-[#38bdf8]">#</span>;
-
-    if (name.includes('url')) {
-      return <Link className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('increase') || type === 2) {
-      return <Plus className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('decrease') || type === 3) {
-      return <Minus className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'set variable' || type === 1) {
-      return <span className="font-bold font-mono text-[11px] text-[#1677ff] dark:text-[#38bdf8]">√x</span>;
-    }
-    if (name.includes('variable')) {
-      return <Variable className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('count') || type === 4) {
-      return <ListOrdered className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name.includes('stop') || type === 76) {
-      return <Square className="w-3 h-3 text-[#ef4444] fill-[#ef4444]" />;
-    }
-    if (name === 'mouse move' || type === 50) {
-      return <Move className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name === 'mouse press and hold' || type === 51) {
-      return <Hand className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name === 'mouse release' || type === 52) {
-      return <Pointer className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name === 'mouse scroll' || type === 53) {
-      return <Mouse className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name === 'key press' || type === 54 || name.includes('key')) {
-      return <Keyboard className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name.includes('mouse') || name.includes('click')) {
-      return <MousePointer className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#60a5fa]" />;
-    }
-    if (name === 'wait to image' || type === 107) {
-      return <Hourglass className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'image exists' || type === 108) {
-      return <ImageIcon className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'image search' || type === 109) {
-      return <Search className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    if (name === 'image to base64' || type === 110) {
-      return <FileImage className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />;
-    }
-    return <PlayCircle className="w-3.5 h-3.5 text-[#64748b] dark:text-[#94a3b8]" />;
+    return (
+      <ActionIcon
+        actionName={act.display_text}
+        actionType={act.type}
+        className="w-3.5 h-3.5"
+      />
+    );
   };
 
   // Drag and drop handlers
@@ -420,8 +221,11 @@ export const NodeRow: React.FC<NodeRowProps> = ({
     return 'border border-[#d9d9d9] dark:border-[#1e293b] bg-white dark:bg-[#0b111e] shadow-xs';
   };
 
-  // Block header banner styling (matching Image 1!)
+  // Block header banner styling (matching Image 1 & custom colors)
   const getBlockHeaderStyle = () => {
+    if (customOverride?.color) {
+      return ''; // Inline style handles background and text color
+    }
     if (isFor) {
       return 'bg-gradient-to-r from-[#d97706] to-[#f59e0b] text-white';
     }
@@ -433,6 +237,17 @@ export const NodeRow: React.FC<NodeRowProps> = ({
     }
     // Normal block
     return 'bg-gradient-to-r from-[#334155] to-[#475569] text-white';
+  };
+
+  const getBlockHeaderInlineStyle = (): React.CSSProperties | undefined => {
+    if (customOverride?.color) {
+      const c = customOverride.color;
+      return {
+        background: `linear-gradient(to right, ${c}, ${adjustHexBrightness(c, -16)})`,
+        color: isHeaderLight ? '#0f172a' : '#ffffff',
+      };
+    }
+    return undefined;
   };
 
   // Extract comment or parameters for cyan display
@@ -483,6 +298,11 @@ export const NodeRow: React.FC<NodeRowProps> = ({
   if (isBlock) {
     return (
       <div
+        style={
+          !isSelected && customOverride?.color
+            ? { borderColor: `${customOverride.color}45` }
+            : undefined
+        }
         className={`relative select-none my-1.5 transition-all rounded-lg border ${getBlockContainerStyle()} ${
           dropPosition === 'inside'
             ? 'ring-2 ring-[#1677ff] dark:ring-[#38bdf8] shadow-[0_0_12px_rgba(22,119,255,0.25)] border-[#1677ff] dark:border-[#38bdf8]'
@@ -521,6 +341,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
             const isRange = e.shiftKey;
             selectNode(node.id, undefined, isMulti, isRange);
           }}
+          style={getBlockHeaderInlineStyle()}
           className={`flex items-center justify-between px-3 py-2 cursor-pointer transition-all ${
             isExpanded ? 'rounded-t-md border-b border-black/10 dark:border-white/10' : 'rounded-md'
           } ${getBlockHeaderStyle()}`}
@@ -532,7 +353,9 @@ export const NodeRow: React.FC<NodeRowProps> = ({
                 e.stopPropagation();
                 toggleBlockExpand(node.id);
               }}
-              className="p-0.5 rounded hover:bg-black/20 dark:hover:bg-white/20 text-white/90 shrink-0 transition-colors"
+              className={`p-0.5 rounded hover:bg-black/20 dark:hover:bg-white/20 shrink-0 transition-colors ${
+                isHeaderLight ? 'text-slate-800' : 'text-white/90'
+              }`}
             >
               {isExpanded ? (
                 <ChevronDown className="w-3.5 h-3.5" />
@@ -541,23 +364,29 @@ export const NodeRow: React.FC<NodeRowProps> = ({
               )}
             </button>
 
-            <div className="shrink-0 flex items-center justify-center text-white/90">
+            <div className={`shrink-0 flex items-center justify-center ${isHeaderLight ? 'text-slate-900' : 'text-white/90'}`}>
               {getActionIcon()}
             </div>
 
             <div className="flex items-center space-x-2 truncate">
-              <span className="font-bold text-xs text-white tracking-tight shrink-0">
+              <span className={`font-bold text-xs tracking-tight shrink-0 ${isHeaderLight ? 'text-slate-900' : 'text-white'}`}>
                 {displayText}
               </span>
               {subtext && (
-                <span className="text-[11px] truncate font-mono text-cyan-200 dark:text-[#38bdf8]">
+                <span className={`text-[11px] truncate font-mono ${
+                  isHeaderLight ? 'text-blue-900 font-semibold' : 'text-cyan-200 dark:text-[#38bdf8]'
+                }`}>
                   {subtext}
                 </span>
               )}
             </div>
 
             {blockChildren.length > 0 && (
-              <span className="text-[10px] px-2 py-0.5 rounded font-medium bg-black/25 dark:bg-black/40 text-white/90 border border-white/15 shrink-0">
+              <span className={`text-[10px] px-2 py-0.5 rounded font-medium border shrink-0 ${
+                isHeaderLight
+                  ? 'bg-black/10 text-slate-800 border-black/15'
+                  : 'bg-black/25 dark:bg-black/40 text-white/90 border-white/15'
+              }`}>
                 {blockChildren.length} block
               </span>
             )}
@@ -569,8 +398,21 @@ export const NodeRow: React.FC<NodeRowProps> = ({
             )}
           </div>
 
-          {/* Right Side: Delete and Step number pill */}
-          <div className="flex items-center space-x-2 shrink-0 ml-2">
+          {/* Right Side: Palette, Delete and Step number pill */}
+          <div className="flex items-center space-x-1.5 shrink-0 ml-2">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                setIsEditingIcon(true);
+              }}
+              className={`p-1 rounded hover:bg-black/20 dark:hover:bg-white/20 transition-colors ${
+                isHeaderLight ? 'text-slate-700 hover:text-slate-900' : 'text-white/80 hover:text-white'
+              }`}
+              title="Đổi màu sắc & Icon"
+            >
+              <Palette className="w-3 h-3" />
+            </button>
+
             {!isRoot && (
               <button
                 onClick={(e) => {
@@ -578,7 +420,9 @@ export const NodeRow: React.FC<NodeRowProps> = ({
                   if (!isSelected) selectNode(node.id);
                   deleteSelectedNode();
                 }}
-                className="opacity-0 group-hover:opacity-100 hover:opacity-100 p-1 rounded hover:bg-black/30 text-white/80 hover:text-white transition-opacity"
+                className={`opacity-0 group-hover:opacity-100 hover:opacity-100 p-1 rounded hover:bg-black/30 transition-opacity ${
+                  isHeaderLight ? 'text-slate-800' : 'text-white/80 hover:text-white'
+                }`}
                 title="Delete (Del)"
               >
                 <Trash2 className="w-3 h-3" />
@@ -586,7 +430,11 @@ export const NodeRow: React.FC<NodeRowProps> = ({
             )}
 
             {/* Dark pill step badge like Image 1 */}
-            <div className="w-6 h-5 rounded-full bg-black/35 text-white text-[11px] font-mono flex items-center justify-center border border-white/20">
+            <div className={`w-6 h-5 rounded-full text-[11px] font-mono flex items-center justify-center border ${
+              isHeaderLight
+                ? 'bg-black/10 text-slate-800 border-black/15'
+                : 'bg-black/35 text-white border-white/20'
+            }`}>
               {stepNumber}
             </div>
           </div>
@@ -694,6 +542,23 @@ export const NodeRow: React.FC<NodeRowProps> = ({
             )}
           </div>
         )}
+
+        {/* Modal chỉnh sửa Icon & Màu sắc cho Block */}
+        {isEditingIcon && (
+          <ActionIconEditorModal
+            isOpen={isEditingIcon}
+            actionName={
+              isFor
+                ? 'for'
+                : isWhile
+                ? 'while'
+                : isElseIf || isElse || isIf
+                ? 'if'
+                : 'Normal block'
+            }
+            onClose={() => setIsEditingIcon(false)}
+          />
+        )}
       </div>
     );
   }
@@ -757,8 +622,19 @@ export const NodeRow: React.FC<NodeRowProps> = ({
         </div>
       </div>
 
-      {/* Right: Delete button on hover & Step badge */}
-      <div className="flex items-center space-x-2 shrink-0 ml-2">
+      {/* Right: Palette on hover, Delete button on hover & Step badge */}
+      <div className="flex items-center space-x-1 shrink-0 ml-2">
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsEditingIcon(true);
+          }}
+          className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-amber-500/15 text-amber-500 dark:text-amber-400 transition-opacity"
+          title="Đổi màu sắc & Icon"
+        >
+          <Palette className="w-3 h-3" />
+        </button>
+
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -775,6 +651,16 @@ export const NodeRow: React.FC<NodeRowProps> = ({
           {stepNumber}
         </div>
       </div>
+
+      {/* Modal chỉnh sửa Icon & Màu sắc cho Action */}
+      {isEditingIcon && (
+        <ActionIconEditorModal
+          isOpen={isEditingIcon}
+          actionName={(node as ActionNode).display_text || 'Action'}
+          actionType={(node as ActionNode).type}
+          onClose={() => setIsEditingIcon(false)}
+        />
+      )}
     </div>
   );
 };

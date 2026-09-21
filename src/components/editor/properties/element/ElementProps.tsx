@@ -37,16 +37,22 @@ export const ElementProps: React.FC<ActionPropsCommon> = ({
 
         {/* Timeout (s) */}
         <div>
-          <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
-            Timeout (s)
-          </label>
+          <div className="flex items-center justify-between mb-1.5">
+            <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8]">
+              Timeout (s)
+            </label>
+            <span className="text-[10px] text-[#94a3b8]">Đơn vị: Giây (s)</span>
+          </div>
           <input
             type="text"
             value={waitTimeout}
             onChange={(e) => handleRawInputByKey('TIME_OUT', e.target.value)}
-            placeholder=""
+            placeholder="20"
             className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
           />
+          <p className="mt-1 text-[10px] text-[#64748b] dark:text-[#94a3b8]">
+            Thời gian tối đa chờ phần tử xuất hiện (khuyến nghị 10 - 20s). Lưu ý: 300 = 300 giây (5 phút).
+          </p>
         </div>
 
         <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />

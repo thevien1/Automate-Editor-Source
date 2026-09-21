@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../../context/ProjectContext';
-import { FolderOpen } from 'lucide-react';
+import { FolderOpen } from './Icons';
 
 export interface VariableInputProps {
   value: string;
@@ -232,9 +232,25 @@ export const VariableInput: React.FC<VariableInputProps> = ({
 
       {/* Autocomplete Dropdown popup matching Image 2 */}
       {showDropdown && filteredVars.length > 0 && (
-        <div className="absolute z-50 left-0 top-full mt-1 w-64 max-h-56 overflow-y-auto bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-md shadow-lg py-1 text-left text-xs">
+        <div className="absolute z-50 left-0 top-full mt-1 w-72 max-h-60 overflow-y-auto bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg shadow-xl py-1 text-left text-xs">
+          <div className="px-3 py-1 text-[10px] font-bold tracking-wider text-[#94a3b8] uppercase border-b border-slate-100 dark:border-slate-800/80 mb-1 flex justify-between">
+            <span>Available Variables</span>
+            <span>{filteredVars.length} found</span>
+          </div>
           {filteredVars.map((vName, idx) => {
             const isSelected = idx === selectedIndex;
+            const clean = vName.replace(/^\$/, '');
+            let badge = { label: 'Custom', color: 'bg-amber-50 text-amber-600 dark:bg-amber-950/60 dark:text-amber-400' };
+            if (/^col_[A-Za-z0-9]+$/i.test(clean) || /^[A-Z]$/.test(clean) || clean.startsWith('excel') || clean.startsWith('inputExcel')) {
+              badge = { label: 'Excel', color: 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/60 dark:text-emerald-400' };
+            } else if (clean.startsWith('txt_') || clean.startsWith('line') || clean.startsWith('data_')) {
+              badge = { label: 'TXT', color: 'bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400' };
+            } else if (['email', 'password', 'code_2fa', 'url', 'username', 'two_factor_code', 'otp', 'phone', 'cookie', 'token'].includes(clean)) {
+              badge = { label: 'Data', color: 'bg-purple-50 text-purple-600 dark:bg-purple-950/60 dark:text-purple-400' };
+            } else if (['profileName', 'profileId', 'profileProxy', 'loopIndex', 'threadId', 'port'].includes(clean)) {
+              badge = { label: 'System', color: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' };
+            }
+
             return (
               <div
                 key={vName}
@@ -243,13 +259,19 @@ export const VariableInput: React.FC<VariableInputProps> = ({
                   selectVariable(vName);
                 }}
                 onMouseEnter={() => setSelectedIndex(idx)}
-                className={`px-3 py-1.5 cursor-pointer text-xs transition-colors ${
+                className={`px-3 py-1.5 cursor-pointer text-xs transition-colors flex items-center justify-between ${
                   isSelected
-                    ? 'bg-[#e6f4ff] dark:bg-[#15233c] text-[#1677ff] dark:text-[#38bdf8] font-medium'
+                    ? 'bg-[#e6f4ff] dark:bg-[#15233c] text-[#1677ff] dark:text-[#38bdf8] font-semibold'
                     : 'text-[#334155] dark:text-[#cbd5e1] hover:bg-[#f8fafc] dark:hover:bg-[#111c30]'
                 }`}
               >
-                {vName}
+                <div className="flex items-center space-x-1 font-mono">
+                  <span className="text-[#1677ff] dark:text-[#38bdf8] font-bold">$</span>
+                  <span>{vName}</span>
+                </div>
+                <span className={`text-[9px] px-1.5 py-0.5 rounded font-medium ${badge.color}`}>
+                  {badge.label}
+                </span>
               </div>
             );
           })}

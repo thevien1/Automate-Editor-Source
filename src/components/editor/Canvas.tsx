@@ -3,7 +3,7 @@ import { WorkflowTabs } from './WorkflowTabs';
 import { NodeRow } from './NodeRow';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { useProject } from '../../context/ProjectContext';
-import { Lightbulb, Keyboard } from 'lucide-react';
+import { Lightbulb, Keyboard } from '../common/Icons';
 import { ActionDefinition } from '../../types/ui';
 import { WorkflowNode } from '../../types/gscript';
 

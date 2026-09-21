@@ -1,21 +1,21 @@
-# GPM Automate Editor (Desktop Application)
+# SV Browser Automate Editor (Desktop Application)
 
-Phần mềm thiết kế kịch bản tự động hóa trực quan (Visual Workflow Editor) phong cách **GPM Automate Editor v3.0.8-stable**.
+Phần mềm thiết kế kịch bản tự động hóa trực quan (Visual Workflow Editor) cho **SV Browser Automate Editor v3.0.8-stable**.
 
 ---
 
-## 📸 Giao diện được tái hiện 100%
+## 📸 Giao diện & Tính năng
 
-1. **Màn hình Chào mừng (Ảnh 1 - Home Launcher)**:
-   - Sidebar trái: Logo sấm sét GPM, `Recent Project`, `App Store`, các liên kết mạng xã hội (YouTube, TikTok, Facebook) và nút `Settings`.
+1. **Màn hình Chào mừng (Home Launcher)**:
+   - Sidebar trái: Logo sấm sét SV Browser, `Recent Project`, `App Store`, các liên kết mạng xã hội (YouTube, TikTok, Facebook) và nút `Settings`.
    - 3 nút thẻ lớn: `+ New Project`, `📁 Open Project`, `⚙ Settings`.
    - Danh sách `Recent Project` hiển thị đường dẫn ổ đĩa và số lượng project, bấm vào để mở ngay.
-2. **Màn hình Biên tập (Ảnh 2 - Editor View)**:
+2. **Màn hình Biên tập (Editor View)**:
    - Menu Bar: `File`, `Edit`, `Build`, `Support`, Dark/Light mode toggle, Language selector `EN`.
    - Tool Bar: `Run`, `Test`, `Save`, `Undo`, `Redo`, `Search`, `Clear All`, `Record action`, `Generate with AI`, breadcrumb `Browser > Main logic > [Project Name]`.
    - 3 Cột làm việc:
-     - **Cột trái (Actions library)**: Đủ 19 nhóm theo chuẩn GPM Automate kèm số đếm badge (`Block (6)`, `Variables (4)`, `Workflow (5)`, `Text & Number (7)`, `File & Folder (18)`, `Browser - Navigation (9)`,...).
-     - **Cột giữa (Canvas quy trình)**: Tabs quy trình (`Main workflow` + `+`), Hộp thông báo màu xanh biển dẫn tới [docs.gpmautomate.com](https://docs.gpmautomate.com/), 3 khối mặc định (`Before browser opened`, `Main logic`, `After browser closed`) và thẻ phím tắt nổi **Shortcuts** góc dưới phải.
+     - **Cột trái (Actions library)**: Đủ 19 nhóm theo chuẩn Automate kèm số đếm badge (`Block (6)`, `Variables (4)`, `Workflow (5)`, `Text & Number (7)`, `File & Folder (18)`, `Browser - Navigation (9)`,...).
+     - **Cột giữa (Canvas quy trình)**: Tabs quy trình (`Main workflow` + `+`), 3 khối mặc định (`Before browser opened`, `Main logic`, `After browser closed`) và thẻ phím tắt nổi **Shortcuts** góc dưới phải.
      - **Cột phải (Inspector)**: 2 Tab `Property` & `Variables (0)`, hiển thị trạng thái `No data to display` khi chưa chọn node, và form chi tiết khi chọn node (XPath, Delay, Output Var, Raw Parameters, Note, Continue on error).
    - Thanh trạng thái đáy: Màu xanh biển, trạng thái `Ready`, đường dẫn thư mục hiện tại, `0 Error List`.
 
@@ -39,7 +39,7 @@ Chạy ứng dụng cửa sổ phần mềm máy tính không viền với thanh
 ```bash
 npm run dist:win
 ```
-Lệnh này sẽ tạo ra bộ cài đặt Windows chuyên nghiệp trong thư mục `release/` (file dạng `GPM Automate Editor Setup 3.0.8.exe`), có thể gửi cho người khác cài đặt vào máy tính như bất kỳ phần mềm nào khác.
+Lệnh này sẽ tạo ra bộ cài đặt Windows chuyên nghiệp trong thư mục `release/` (file dạng `SV Browser Automate Editor Setup 3.0.8.exe`), có thể gửi cho người khác cài đặt vào máy tính như bất kỳ phần mềm nào khác.
 
 ---
 
