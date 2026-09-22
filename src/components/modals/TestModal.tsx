@@ -425,7 +425,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
     };
 
     for (let i = 0; i < nodes.length; i++) {
-      if (stopSignalRef.current) break;
+      if (stopSignalRef.current) return 'STOP';
       const n = nodes[i];
 
       const isBlock = 'nodes' in n && Array.isArray((n as any).nodes);
@@ -442,7 +442,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           lastConditionBranchMet = condMet;
 
           if (condMet) {
-            await executeNodes(block.nodes, vars, addLog);
+            const res = await executeNodes(block.nodes, vars, addLog);
+            if (res === 'STOP') return 'STOP';
           }
         } else if (bText.startsWith('else if') || block.$type?.includes('ElseIfBlockNode')) {
           const cond = block.condition || '';
@@ -452,7 +453,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             addLog('info', `🔍 Else If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
             if (condMet) {
               lastConditionBranchMet = true;
-              await executeNodes(block.nodes, vars, addLog);
+              const res = await executeNodes(block.nodes, vars, addLog);
+              if (res === 'STOP') return 'STOP';
             }
           }
         } else if (bText.startsWith('else') || block.$type?.includes('ElseBlockNode')) {
@@ -460,7 +462,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           if (!lastConditionBranchMet) {
             addLog('info', `🔍 Nhánh Else › Chạy khối lệnh Else`);
             lastConditionBranchMet = true;
-            await executeNodes(block.nodes, vars, addLog);
+            const res = await executeNodes(block.nodes, vars, addLog);
+            if (res === 'STOP') return 'STOP';
           }
         } else if (bText.startsWith('for') || block.$type?.includes('ForBlockNode')) {
           lastConditionBranchMet = false;
@@ -480,20 +483,23 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             vars['index'] = String(iter);
             vars['$i'] = String(iter);
             vars['i'] = String(iter);
-            await executeNodes(block.nodes, vars, addLog);
+            const res = await executeNodes(block.nodes, vars, addLog);
+            if (res === 'STOP') return 'STOP';
           }
         } else if (bText.startsWith('while') || block.$type?.includes('WhileBlockNode')) {
           lastConditionBranchMet = false;
           let count = 0;
           while (await evaluateGpmConditionAsync(block.condition || '', vars, checkXPathInChromeTest) && count < 50 && !stopSignalRef.current) {
             count++;
-            await executeNodes(block.nodes, vars, addLog);
+            const res = await executeNodes(block.nodes, vars, addLog);
+            if (res === 'STOP') return 'STOP';
           }
           addLog('success', `✔ While loop completed`);
         } else {
           // Normal block
           lastConditionBranchMet = false;
-          await executeNodes(block.nodes, vars, addLog);
+          const res = await executeNodes(block.nodes, vars, addLog);
+          if (res === 'STOP') return 'STOP';
           addLog('success', `✔ ${block.display_text || 'Block'}`);
         }
       } else {
@@ -502,6 +508,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         const act = n as ActionNode;
         const actType = act.type;
         const actName = (act.display_text || '').toLowerCase();
+
+        // Stop action (type 76)
+        if (actType === 76 || actName === 'stop') {
+          stopSignalRef.current = true;
+          addLog('info', `⏹ Stop action: Gặp lệnh dừng, dừng toàn bộ kịch bản.`);
+          return 'STOP';
+        }
 
         if (actType === 1 || actName === 'set variable') {
           const rawVar = act.output_variable_name || 'x';
@@ -3252,6 +3265,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         }
       }
     }
+    return 'CONTINUE';
   };
 
   const handleStart = async () => {
@@ -3515,14 +3529,14 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } catch (e) {}
       }
 
-      await executeNodes(nodesToRun, vars, addLog);
+      const runResult = await executeNodes(nodesToRun, vars, addLog);
 
-      if (!stopSignalRef.current) {
+      if (runResult === 'STOP' || stopSignalRef.current) {
+        addLog('info', '⏹ Kịch bản đã dừng lại bởi lệnh Stop. Đã dừng hoàn toàn.');
+        setStatusText('Stopped');
+      } else {
         addLog('success', '✓ Test completed');
         setStatusText('Ready');
-      } else {
-        addLog('error', '■ Test stopped by user.');
-        setStatusText('Stopped');
       }
       setIsRunning(false);
     } catch (err: any) {
