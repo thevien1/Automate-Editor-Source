@@ -222,10 +222,12 @@ export function nodesToJsCodeString(nodes: WorkflowNode | WorkflowNode[]): strin
   const snippets = list.map((n) => {
     if ('nodes' in n) {
       // Block
+      const condField = (n as any).condition !== undefined ? `\n  condition: ${JSON.stringify((n as any).condition)},` : '';
+      const forFields = (n as any).start !== undefined ? `\n  start: ${JSON.stringify((n as any).start)},\n  end: ${JSON.stringify((n as any).end)},\n  step: ${JSON.stringify((n as any).step)},` : '';
       return `{
   $type: ${JSON.stringify(n.$type)},
   id: generateGuid(),
-  display_text: ${JSON.stringify(n.display_text)},
+  display_text: ${JSON.stringify(n.display_text)},${condField}${forFields}
   expanded: true,
   nodes: [
     // Child nodes here...

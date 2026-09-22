@@ -1544,31 +1544,71 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       try {
         const checkScript = `(() => {
           try {
-            let doc = document;
+            function checkInDoc(d) {
+              if (!d) return false;
+              try {
+                const res = d.evaluate(${JSON.stringify(xpath)}, d, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                return !!res.singleNodeValue;
+              } catch(e) { return false; }
+            }
+            if (checkInDoc(document)) return true;
             const fx = ${JSON.stringify(threadVars.$currentFrameXPath || '')};
             if (fx) {
-              const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-              if (fr) {
-                try {
-                  if (fr.contentDocument) doc = fr.contentDocument;
-                  else if (fr.contentWindow && fr.contentWindow.document) doc = fr.contentWindow.document;
-                } catch(e) {}
-              }
+              try {
+                const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (fr) {
+                  const subDoc = fr.contentDocument || (fr.contentWindow && fr.contentWindow.document);
+                  if (checkInDoc(subDoc)) return true;
+                }
+              } catch(e) {}
             }
-            const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return !!res.singleNodeValue;
+            const frames = document.querySelectorAll('iframe, frame');
+            for (let i = 0; i < frames.length; i++) {
+              try {
+                const fDoc = frames[i].contentDocument || (frames[i].contentWindow && frames[i].contentWindow.document);
+                if (fDoc && checkInDoc(fDoc)) return true;
+              } catch(e) {}
+            }
+            return false;
           } catch(e) { return false; }
         })()`;
-        const evalRes = await (window as any).electronAPI?.cdpAction({
-          port: activePort,
-          action: 'evaluate',
-          payload: {
-            expression: checkScript,
-            targetId: threadVars.$activePopupTargetId,
-            contextId: threadVars.$currentFrameContextId ? Number(threadVars.$currentFrameContextId) : undefined,
-          },
-        });
-        return !!(evalRes && (evalRes.value === true || evalRes.result?.value === true));
+
+        const isTrueVal = (res: any) => {
+          if (!res) return false;
+          return res.value === true || res.result?.value === true || res.value?.value === true;
+        };
+
+        const doEval = async (withCtx: boolean) => {
+          return await (window as any).electronAPI?.cdpAction({
+            port: activePort,
+            action: 'evaluate',
+            payload: {
+              expression: checkScript,
+              targetId: threadVars.$activePopupTargetId,
+              contextId: withCtx && threadVars.$currentFrameContextId ? Number(threadVars.$currentFrameContextId) : undefined,
+            },
+          });
+        };
+
+        // 1. Immediate evaluation
+        let evalRes = await doEval(true);
+        if ((!evalRes || evalRes.error?.includes('context')) && threadVars.$currentFrameContextId) {
+          evalRes = await doEval(false);
+        }
+        if (isTrueVal(evalRes)) return true;
+
+        // 2. Poll for up to 2000ms (150ms intervals) to allow async DOM rendering / SPA navigation
+        const startWait = Date.now();
+        while (Date.now() - startWait < 2000 && !stopSignalRef.current) {
+          await sleep(150);
+          evalRes = await doEval(true);
+          if ((!evalRes || evalRes.error?.includes('context')) && threadVars.$currentFrameContextId) {
+            evalRes = await doEval(false);
+          }
+          if (isTrueVal(evalRes)) return true;
+        }
+
+        return false;
       } catch (e) {
         return false;
       }
@@ -1963,22 +2003,35 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         while (Date.now() - start < timeoutSec * 1000 && !stopSignalRef.current) {
           const checkScript = `(() => {
             try {
-              let doc = document;
+              function checkInDoc(d) {
+                if (!d) return false;
+                try {
+                  const res = d.evaluate(${JSON.stringify(xpath)}, d, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  return !!res.singleNodeValue;
+                } catch(e) { return false; }
+              }
+              if (checkInDoc(document)) return true;
               const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
               if (fx) {
-                const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                if (fr) {
-                  try {
-                    if (fr.contentDocument) doc = fr.contentDocument;
-                    else if (fr.contentWindow && fr.contentWindow.document) doc = fr.contentWindow.document;
-                  } catch(e) {}
-                }
+                try {
+                  const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                  if (fr) {
+                    const subDoc = fr.contentDocument || (fr.contentWindow && fr.contentWindow.document);
+                    if (checkInDoc(subDoc)) return true;
+                  }
+                } catch(e) {}
               }
-              const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-              return !!res.singleNodeValue;
+              const frames = document.querySelectorAll('iframe, frame');
+              for (let i = 0; i < frames.length; i++) {
+                try {
+                  const fDoc = frames[i].contentDocument || (frames[i].contentWindow && frames[i].contentWindow.document);
+                  if (fDoc && checkInDoc(fDoc)) return true;
+                } catch(e) {}
+              }
+              return false;
             } catch(e) { return false; }
           })()`;
-          const res = await (window as any).electronAPI?.cdpAction({
+          let res = await (window as any).electronAPI?.cdpAction({
             port,
             action: 'evaluate',
             payload: {
@@ -1987,7 +2040,17 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               contextId: vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined,
             },
           });
-          if (res && res.value === true) {
+          if ((!res || res.error?.includes('context')) && vars.$currentFrameContextId) {
+            res = await (window as any).electronAPI?.cdpAction({
+              port,
+              action: 'evaluate',
+              payload: {
+                expression: checkScript,
+                targetId: vars.$activePopupTargetId,
+              },
+            });
+          }
+          if (res && (res.value === true || res.result?.value === true || res.value?.value === true)) {
             found = true;
             break;
           }

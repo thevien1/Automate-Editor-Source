@@ -370,11 +370,28 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const evaluateInChrome = async (expr: string, targetId?: string, contextId?: number): Promise<{ success: boolean; value?: any; error?: string }> => {
     try {
       if ((window as any).electronAPI?.cdpAction) {
-        return await (window as any).electronAPI.cdpAction({
+        let res = await (window as any).electronAPI.cdpAction({
           port: port.trim() || '43076',
           action: 'evaluate',
           payload: { expression: expr, targetId, contextId },
         });
+        // If evaluation failed with contextId (e.g. context destroyed on page nav), retry without contextId
+        if ((!res?.success || res?.error?.includes('context')) && contextId !== undefined) {
+          res = await (window as any).electronAPI.cdpAction({
+            port: port.trim() || '43076',
+            action: 'evaluate',
+            payload: { expression: expr, targetId },
+          });
+        }
+        // If evaluation failed with targetId (target closed/stale), retry with active page
+        if ((!res?.success || res?.error?.includes('target') || res?.error?.includes('No active')) && targetId) {
+          res = await (window as any).electronAPI.cdpAction({
+            port: port.trim() || '43076',
+            action: 'evaluate',
+            payload: { expression: expr },
+          });
+        }
+        return res || { success: false };
       }
       return { success: false, error: 'CDP action is only available in Electron desktop mode' };
     } catch (err: any) {
@@ -412,23 +429,54 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       try {
         const checkScript = `(() => {
           try {
-            let doc = document;
+            function checkInDoc(d) {
+              if (!d) return false;
+              try {
+                const res = d.evaluate(${JSON.stringify(xpath)}, d, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                return !!res.singleNodeValue;
+              } catch(e) { return false; }
+            }
+            if (checkInDoc(document)) return true;
             const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
             if (fx) {
-              const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-              if (fr) {
-                try {
-                  if (fr.contentDocument) doc = fr.contentDocument;
-                  else if (fr.contentWindow && fr.contentWindow.document) doc = fr.contentWindow.document;
-                } catch(e) {}
-              }
+              try {
+                const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (fr) {
+                  const subDoc = fr.contentDocument || (fr.contentWindow && fr.contentWindow.document);
+                  if (checkInDoc(subDoc)) return true;
+                }
+              } catch(e) {}
             }
-            const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return !!res.singleNodeValue;
+            const frames = document.querySelectorAll('iframe, frame');
+            for (let i = 0; i < frames.length; i++) {
+              try {
+                const fDoc = frames[i].contentDocument || (frames[i].contentWindow && frames[i].contentWindow.document);
+                if (fDoc && checkInDoc(fDoc)) return true;
+              } catch(e) {}
+            }
+            return false;
           } catch(e) { return false; }
         })()`;
-        const evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
-        return !!(evalRes.success && (evalRes.value === true || evalRes.value?.value === true));
+
+        const isTrueVal = (evalRes: any) => {
+          if (!evalRes || !evalRes.success) return false;
+          return evalRes.value === true || evalRes.value?.value === true || (evalRes as any).result?.value === true;
+        };
+
+        // 1. Try immediate check first (~5-15ms)
+        let evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+        if (isTrueVal(evalRes)) return true;
+
+        // 2. If not found immediately, poll for up to 2000ms (150ms intervals)
+        // to give SPA transitions (e.g. Next button loading password input) time to render
+        const startCheck = Date.now();
+        while (Date.now() - startCheck < 2000 && !stopSignalRef.current) {
+          await sleep(150);
+          evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+          if (isTrueVal(evalRes)) return true;
+        }
+
+        return false;
       } catch (e) {
         return false;
       }
@@ -2266,25 +2314,38 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             while (Date.now() - startTime < maxWaitMs && !stopSignalRef.current) {
               const checkScript = `(() => {
                 try {
-                  let doc = document;
+                  function checkInDoc(d) {
+                    if (!d) return false;
+                    try {
+                      const res = d.evaluate(${JSON.stringify(resolvedXPath)}, d, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                      return !!res.singleNodeValue;
+                    } catch(e) { return false; }
+                  }
+                  if (checkInDoc(document)) return true;
                   const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
                   if (fx) {
-                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                    if (fr) {
-                      try {
-                        if (fr.contentDocument) doc = fr.contentDocument;
-                        else if (fr.contentWindow) doc = fr.contentWindow.document;
-                      } catch(e) {}
-                    }
+                    try {
+                      const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                      if (fr) {
+                        const subDoc = fr.contentDocument || (fr.contentWindow && fr.contentWindow.document);
+                        if (checkInDoc(subDoc)) return true;
+                      }
+                    } catch(e) {}
                   }
-                  const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                  return !!res.singleNodeValue;
+                  const frames = document.querySelectorAll('iframe, frame');
+                  for (let i = 0; i < frames.length; i++) {
+                    try {
+                      const fDoc = frames[i].contentDocument || (frames[i].contentWindow && frames[i].contentWindow.document);
+                      if (fDoc && checkInDoc(fDoc)) return true;
+                    } catch(e) {}
+                  }
+                  return false;
                 } catch (e) {
                   return false;
                 }
               })()`;
-              const evalRes = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
-              if (evalRes.success && evalRes.value === true) {
+              const evalRes: any = await evaluateInChrome(checkScript, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+              if (evalRes?.success && (evalRes.value === true || evalRes.value?.value === true || evalRes.result?.value === true)) {
                 found = true;
                 break;
               }

@@ -1,19 +1,83 @@
 /**
  * conditionEvaluator.ts
  * Evaluates GPM Automate conditional expressions (If, Else If, While, Loop)
- * against runtime variables with full support for:
- * - Boolean variables ('True', 'False', 'true', 'false')
- * - Comparisons ($check = true, $check == true, $check = True, $check == "True", etc.)
- * - Numeric comparisons ($count > 5, $i <= 10)
- * - String comparisons ($status == "ok", $text != "error")
+ * against runtime variables according to official specification:
+ * https://docs.gpmautomate.com/huong-dan-cac-action/cac-block/huong-dan-viet-dieu-kien
+ * 
+ * Supported features:
+ * - Arithmetic comparisons: >, <, >=, <= ($count > 5, $i <= 10)
+ * - Logic comparisons: = (single equal), != ($status = "admin", 3 = 3, "a" != "b")
+ * - String contains operators:
+ *     "ABCD" contains "AB" (true)
+ *     "ABCD" !contains "AB" (false)
+ *     !"ABCD" contains "AB" (false)
+ *     contains "B" (standalone empty check: true if empty, false if has data)
+ * - Element checks:
+ *     hasElement(XPATH) / has_element(XPATH)
+ *     !hasElement(XPATH) / !has_element(XPATH)
+ *     With quotes or unquoted XPaths containing brackets, single/double quotes, contains()
+ * - Compound conditions: &&, ||, parentheses ()
+ * - Boolean literals and coercions: True, False, true, false, "true" = true, etc.
  */
+
+/**
+ * Transforms GPM contains operators into valid JavaScript expressions.
+ */
+export function transformContainsOperators(expr: string): string {
+  let s = expr;
+
+  const operandPattern = `(?:"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s&|()]+)`;
+
+  // 1. Infix !contains: "A" !contains "B"
+  const infixNotContainsRegex = new RegExp(`(${operandPattern})\\s+!contains\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixNotContainsRegex, (_, a, b) => {
+    return `(!String(${a}).includes(String(${b})))`;
+  });
+
+  // 2. Negated first operand with contains: !"A" contains "B"
+  const negatedPrefixContainsRegex = new RegExp(`!\\s*(${operandPattern})\\s+contains\\s+(${operandPattern})`, 'gi');
+  s = s.replace(negatedPrefixContainsRegex, (_, a, b) => {
+    return `(!String(${a}).includes(String(${b})))`;
+  });
+
+  // 3. Infix contains: "A" contains "B"
+  const infixContainsRegex = new RegExp(`(${operandPattern})\\s+contains\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixContainsRegex, (_, a, b) => {
+    return `(String(${a}).includes(String(${b})))`;
+  });
+
+  // 4. Standalone !contains operand: !contains "foo" (checks if NOT empty / has data)
+  const standaloneNotContainsRegex = new RegExp(`(^|&&|\\|\\||[(!])\\s*!contains\\s+(${operandPattern})`, 'gi');
+  s = s.replace(standaloneNotContainsRegex, (_, prefix, target) => {
+    return `${prefix} (Boolean(String(${target}).trim()))`;
+  });
+
+  // 5. Standalone contains operand: contains "foo" (checks if empty: true if empty, false if has data)
+  const standaloneContainsRegex = new RegExp(`(^|&&|\\|\\||[(!])\\s*contains\\s+(${operandPattern})`, 'gi');
+  s = s.replace(standaloneContainsRegex, (_, prefix, target) => {
+    return `${prefix} (!String(${target}).trim())`;
+  });
+
+  return s;
+}
 
 export function evaluateGpmCondition(conditionStr: string, vars: Record<string, string>): boolean {
   if (!conditionStr || !conditionStr.trim()) return true;
   let expr = conditionStr.trim();
 
+  // Protect string literals before converting '=' so that '=' inside strings is untouched
+  const strings: string[] = [];
+  expr = expr.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, (match) => {
+    strings.push(match);
+    return `__STR_LITERAL_${strings.length - 1}__`;
+  });
+
   // Convert single '=' to '==' if not already part of <=, >=, !=, ==
   expr = expr.replace(/([^><!=])=([^=])/g, '$1==$2');
+  expr = expr.replace(/(^|&&|\|\||\()\s*=\s*/g, '$1 == ');
+
+  // Restore string literals
+  expr = expr.replace(/__STR_LITERAL_(\d+)__/g, (_, idx) => strings[Number(idx)]);
 
   // Replace variables: longest variable names first to avoid partial replacements
   const keys = Object.keys(vars).sort((a, b) => b.length - a.length);
@@ -41,6 +105,9 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
 
   // Normalize standalone True / False literals to true / false
   expr = expr.replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false');
+
+  // Handle contains / !contains operators
+  expr = transformContainsOperators(expr);
 
   // Handle string-to-boolean equality coercions in JavaScript
   expr = expr.replace(/"(true|True)"\s*==\s*true/g, 'true');
@@ -82,8 +149,9 @@ export interface ExtractedHasElement {
 }
 
 /**
- * Extracts hasElement(...) calls from an expression, accurately balancing parentheses
- * and handling nested parentheses inside XPath (like normalize-space() or contains(...)).
+ * Extracts hasElement(...) and has_element(...) calls from an expression,
+ * accurately balancing parentheses and handling nested parentheses inside XPath
+ * (like normalize-space(), contains(...), etc.).
  */
 export function extractHasElements(expr: string): ExtractedHasElement[] {
   const results: ExtractedHasElement[] = [];
@@ -91,24 +159,38 @@ export function extractHasElements(expr: string): ExtractedHasElement[] {
   let searchIdx = 0;
 
   while (true) {
-    const foundIdx = lower.indexOf('haselement', searchIdx);
+    let fnName = '';
+    let foundIdx = lower.indexOf('haselement', searchIdx);
+    if (foundIdx === -1) {
+      foundIdx = lower.indexOf('has_element', searchIdx);
+      if (foundIdx !== -1) fnName = 'has_element';
+    } else {
+      const altIdx = lower.indexOf('has_element', searchIdx);
+      if (altIdx !== -1 && altIdx < foundIdx) {
+        foundIdx = altIdx;
+        fnName = 'has_element';
+      } else {
+        fnName = 'haselement';
+      }
+    }
+
     if (foundIdx === -1) break;
 
     // Must be preceded by start of string, whitespace, !, (, or operator
     if (foundIdx > 0 && /[a-zA-Z0-9_]/.test(expr[foundIdx - 1])) {
-      searchIdx = foundIdx + 10;
+      searchIdx = foundIdx + fnName.length;
       continue;
     }
 
-    const openParenIdx = expr.indexOf('(', foundIdx + 10);
+    const openParenIdx = expr.indexOf('(', foundIdx + fnName.length);
     if (openParenIdx === -1) {
-      searchIdx = foundIdx + 10;
+      searchIdx = foundIdx + fnName.length;
       continue;
     }
 
-    const between = expr.substring(foundIdx + 10, openParenIdx).trim();
+    const between = expr.substring(foundIdx + fnName.length, openParenIdx).trim();
     if (between.length > 0) {
-      searchIdx = foundIdx + 10;
+      searchIdx = foundIdx + fnName.length;
       continue;
     }
 
@@ -151,7 +233,7 @@ export function extractHasElements(expr: string): ExtractedHasElement[] {
       });
       searchIdx = closeParenIdx + 1;
     } else {
-      searchIdx = foundIdx + 10;
+      searchIdx = foundIdx + fnName.length;
     }
   }
 
@@ -201,4 +283,3 @@ export async function evaluateGpmConditionAsync(
 
   return evaluateGpmCondition(expr, vars);
 }
-
