@@ -436,8 +436,17 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
             const lines = raw.split(/\r?\n/);
             let targetIdx = -1;
 
-            // 1. Try to match exact original line
-            if (originalLine !== undefined && originalLine.trim().length > 0) {
+            // 1. Direct check by lineIndex if it matches or starts with originalLine
+            if (lineIndex >= 0 && lineIndex < lines.length) {
+              const lineAtIdx = lines[lineIndex].trim();
+              const cleanOrig = (originalLine || '').trim();
+              if (!cleanOrig || lineAtIdx === cleanOrig || lineAtIdx.startsWith(cleanOrig)) {
+                targetIdx = lineIndex;
+              }
+            }
+
+            // 2. Try to match exact original line if lineIndex didn't match
+            if (targetIdx === -1 && originalLine !== undefined && originalLine.trim().length > 0) {
               const cleanOrig = originalLine.trim();
               targetIdx = lines.findIndex(l => l.trim() === cleanOrig);
               if (targetIdx === -1) {
@@ -445,7 +454,7 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
               }
             }
 
-            // 2. Fallback to line index
+            // 3. Fallback to line index
             if (targetIdx === -1 && lineIndex >= 0 && lineIndex < lines.length) {
               targetIdx = lineIndex;
             }

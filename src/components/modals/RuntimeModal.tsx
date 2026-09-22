@@ -69,6 +69,15 @@ export interface GpmProfile {
   status?: string;
 }
 
+export interface AssignedTxtEntry {
+  fileLineIndex: number;
+  text: string;
+  isExhausted?: boolean;
+  skippedCount: number;
+  totalValid: number;
+  totalLines: number;
+}
+
 interface ThreadState {
   id: number;
   profileId?: string;
@@ -78,6 +87,7 @@ interface ThreadState {
   status: 'idle' | 'running' | 'completed' | 'error';
   currentAction: string;
   logs: Array<{ time: string; text: string; type: 'info' | 'success' | 'error' | 'arrow' }>;
+  assignedTxtEntry?: AssignedTxtEntry | null;
 }
 
 function getJsonPath(obj: any, path: string) {
@@ -878,6 +888,109 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     setIsExecuting(true);
     setElapsedSeconds(0);
 
+    // 0. Pre-read and pre-filter TXT lines ONCE at session start to ensure strict FIFO order
+    // and avoid any race conditions or index shifting when profiles finish asynchronously.
+    interface TxtDispatchItem {
+      fileLineIndex: number;
+      text: string;
+    }
+    const unworkedTxtLines: TxtDispatchItem[] = [];
+    let initialTxtSkippedCount = 0;
+    let initialTxtTotalLines = 0;
+
+    if (useInputTxt && txtFilePath.trim()) {
+      try {
+        const cleanTxtPath = txtFilePath.trim().replace(/^["']|["']$/g, '');
+        const readTxtRes = await (window as any).electronAPI?.fileAction?.({
+          action: 'readLines',
+          payload: { path: cleanTxtPath },
+        });
+
+        if (readTxtRes && readTxtRes.success && Array.isArray(readTxtRes.lines)) {
+          const skipKws = (txtSkipKeywords || 'done, trạng thái:, error, OK')
+            .split(',')
+            .map((k) => k.trim())
+            .filter(Boolean);
+
+          const isLineSkipped = (lineStr: string): boolean => {
+            for (const kw of skipKws) {
+              const kwLower = kw.toLowerCase();
+              if (kwLower === 'ok') {
+                if (/\b(ok)\b/i.test(lineStr) || lineStr.toLowerCase().endsWith('ok')) {
+                  return true;
+                }
+              } else {
+                if (lineStr.toLowerCase().includes(kwLower)) {
+                  return true;
+                }
+              }
+            }
+            return false;
+          };
+
+          readTxtRes.lines.forEach((l: any, idx: number) => {
+            const rawLine = String(l).replace(/\r$/, '');
+            if (rawLine.trim().length > 0) {
+              initialTxtTotalLines++;
+              if (isLineSkipped(rawLine)) {
+                initialTxtSkippedCount++;
+              } else {
+                unworkedTxtLines.push({
+                  fileLineIndex: idx,
+                  text: rawLine,
+                });
+              }
+            }
+          });
+        }
+      } catch (err: any) {
+        console.error('Lỗi nạp file TXT ban đầu:', err);
+      }
+    }
+
+    const buildTxtEntry = (idx: number): AssignedTxtEntry | null => {
+      if (!useInputTxt || !txtFilePath.trim()) return null;
+      if (txtMapMode === 'all') {
+        if (unworkedTxtLines.length === 0) {
+          return {
+            fileLineIndex: -1,
+            text: '',
+            isExhausted: true,
+            skippedCount: initialTxtSkippedCount,
+            totalValid: 0,
+            totalLines: initialTxtTotalLines,
+          };
+        }
+        return {
+          fileLineIndex: unworkedTxtLines[0].fileLineIndex,
+          text: unworkedTxtLines[0].text,
+          isExhausted: false,
+          skippedCount: initialTxtSkippedCount,
+          totalValid: unworkedTxtLines.length,
+          totalLines: initialTxtTotalLines,
+        };
+      }
+      // txtMapMode === 'one': Mỗi profile nhận 1 dòng chưa làm theo đúng thứ tự FIFO từ trên xuống dưới
+      if (idx < unworkedTxtLines.length) {
+        return {
+          fileLineIndex: unworkedTxtLines[idx].fileLineIndex,
+          text: unworkedTxtLines[idx].text,
+          isExhausted: false,
+          skippedCount: initialTxtSkippedCount,
+          totalValid: unworkedTxtLines.length,
+          totalLines: initialTxtTotalLines,
+        };
+      }
+      return {
+        fileLineIndex: -1,
+        text: '',
+        isExhausted: true,
+        skippedCount: initialTxtSkippedCount,
+        totalValid: unworkedTxtLines.length,
+        totalLines: initialTxtTotalLines,
+      };
+    };
+
     let initial: ThreadState[] = [];
     const selected = profiles.filter((p) => selectedProfileIds.includes(p.id));
 
@@ -891,9 +1004,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         status: 'idle',
         currentAction: 'Ready',
         logs: [{ time: getTime(), text: `Profile "${p.name}" initialized (ID: ${p.id})`, type: 'info' }],
+        assignedTxtEntry: buildTxtEntry(idx),
       }));
     } else {
-      initial = generateInitialThreads(numThreads);
+      const baseThreads = generateInitialThreads(numThreads);
+      initial = baseThreads.map((t, idx) => ({
+        ...t,
+        assignedTxtEntry: buildTxtEntry(idx),
+      }));
     }
 
     setThreads(initial);
@@ -1097,123 +1215,88 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
     // Check Text file line input condition
     if (useInputTxt && txtFilePath.trim()) {
-      try {
-        const cleanTxtPath = txtFilePath.trim().replace(/^["']|["']$/g, '');
-        updateThreadLog(threadId, 'info', `📄 Đang nạp file TXT: ${cleanTxtPath}...`, 'Check TXT');
-        const readTxtRes = await (window as any).electronAPI?.fileAction?.({
-          action: 'readLines',
-          payload: { path: cleanTxtPath },
-        });
-
-        if (!readTxtRes || !readTxtRes.success) {
-          updateThreadLog(threadId, 'error', `✕ Không đọc được file TXT: ${readTxtRes?.error || 'Lỗi không xác định'}`);
-        } else if (Array.isArray(readTxtRes.lines)) {
-          const skipKws = (txtSkipKeywords || 'done, trạng thái:, error, OK')
-            .split(',')
-            .map((k) => k.trim())
-            .filter(Boolean);
-
-          const isLineSkipped = (lineStr: string): { skipped: boolean; kw?: string } => {
-            for (const kw of skipKws) {
-              const kwLower = kw.toLowerCase();
-              if (kwLower === 'ok') {
-                if (/\b(ok)\b/i.test(lineStr) || lineStr.toLowerCase().endsWith('ok')) {
-                  return { skipped: true, kw };
-                }
-              } else {
-                if (lineStr.toLowerCase().includes(kwLower)) {
-                  return { skipped: true, kw };
-                }
-              }
-            }
-            return { skipped: false };
-          };
-
-          // Store physical line index along with text
-          interface TxtEntry {
-            fileLineIndex: number;
-            text: string;
-            isSkipped: boolean;
-            skipReason?: string;
-          }
-
-          const allEntries: TxtEntry[] = [];
-          readTxtRes.lines.forEach((l: any, idx: number) => {
-            const rawLine = String(l).replace(/\r$/, '');
-            if (rawLine.trim().length > 0) {
-              const chk = isLineSkipped(rawLine);
-              allEntries.push({
-                fileLineIndex: idx,
-                text: rawLine,
-                isSkipped: chk.skipped,
-                skipReason: chk.kw,
-              });
-            }
+      const entry = t.assignedTxtEntry;
+      if (entry) {
+        if (entry.isExhausted) {
+          const skipMsg =
+            entry.totalValid === 0
+              ? `⏭ BỎ QUA Profile "${t.profileName}" - Tất cả ${entry.totalLines} dòng trong file TXT đều đã hoàn thành (chứa từ khóa: ${txtSkipKeywords || 'done, trạng thái:, error, OK'})`
+              : `⏭ BỎ QUA Profile "${t.profileName}" - Đã hết dòng TXT chưa làm (Tổng cộng ${entry.totalValid} dòng chưa có 'OK' đã được phân bổ cho các Profile trước)`;
+          updateThreadLog(threadId, 'info', skipMsg, 'Hết dòng TXT');
+          setThreadStatus(threadId, 'idle');
+          setThreads((prev) =>
+            prev.map((item) =>
+              item.id === threadId
+                ? { ...item, status: 'idle', currentAction: `Bỏ qua: Hết dòng TXT chưa làm` }
+                : item
+            )
+          );
+          return;
+        } else {
+          targetTxtLineIdx = entry.fileLineIndex;
+          matchedTxtLine = entry.text;
+          const skipNote = entry.skippedCount > 0 ? ` (Tự động bỏ qua ${entry.skippedCount} dòng đã có 'OK')` : '';
+          updateThreadLog(
+            threadId,
+            'info',
+            `📄 [Luồng ${threadId}] Đã nạp dòng #${targetTxtLineIdx + 1} từ TXT: "${matchedTxtLine.slice(0, 50)}${matchedTxtLine.length > 50 ? '...' : ''}"${skipNote}`,
+            'Nạp dữ liệu'
+          );
+        }
+      } else {
+        // Fallback if not pre-allocated
+        try {
+          const cleanTxtPath = txtFilePath.trim().replace(/^["']|["']$/g, '');
+          const readTxtRes = await (window as any).electronAPI?.fileAction?.({
+            action: 'readLines',
+            payload: { path: cleanTxtPath },
           });
 
-          const validEntries = allEntries.filter((e) => !e.isSkipped);
-          const skippedCount = allEntries.length - validEntries.length;
+          if (readTxtRes && readTxtRes.success && Array.isArray(readTxtRes.lines)) {
+            const skipKws = (txtSkipKeywords || 'done, trạng thái:, error, OK')
+              .split(',')
+              .map((k) => k.trim())
+              .filter(Boolean);
 
-          if (allEntries.length === 0) {
-            updateThreadLog(threadId, 'info', `⚠ File TXT không có nội dung hợp lệ`);
-          } else if (validEntries.length === 0) {
-            updateThreadLog(
-              threadId,
-              'info',
-              `⏭ BỎ QUA Profile "${t.profileName}" - Tất cả ${allEntries.length} dòng trong file TXT đều đã hoàn thành (chứa từ khóa: ${skipKws.join(', ')})`,
-              'Đã làm hết'
-            );
-            setThreadStatus(threadId, 'idle');
-            setThreads((prev) =>
-              prev.map((item) =>
-                item.id === threadId
-                  ? { ...item, status: 'idle', currentAction: `Bỏ qua: Đã xử lý hết dòng trong TXT` }
-                  : item
-              )
-            );
-            return;
-          } else {
-            let chosenEntry: TxtEntry | null = null;
-            if (txtMapMode === 'all') {
-              chosenEntry = validEntries[0];
-            } else {
-              const slotIdx = threadId - 1;
-              if (slotIdx < validEntries.length) {
-                chosenEntry = validEntries[slotIdx];
-              } else {
-                updateThreadLog(
-                  threadId,
-                  'info',
-                  `⏭ BỎ QUA Profile "${t.profileName}" - Không còn dòng TXT chưa làm (Chỉ còn ${validEntries.length} dòng chưa có 'OK', các luồng trước đã nhận hết)`,
-                  'Hết dòng TXT'
-                );
-                setThreadStatus(threadId, 'idle');
-                setThreads((prev) =>
-                  prev.map((item) =>
-                    item.id === threadId
-                      ? { ...item, status: 'idle', currentAction: `Bỏ qua: Hết dòng TXT chưa làm` }
-                      : item
-                  )
-                );
-                return;
+            const isLineSkipped = (lineStr: string): boolean => {
+              for (const kw of skipKws) {
+                const kwLower = kw.toLowerCase();
+                if (kwLower === 'ok') {
+                  if (/\b(ok)\b/i.test(lineStr) || lineStr.toLowerCase().endsWith('ok')) return true;
+                } else {
+                  if (lineStr.toLowerCase().includes(kwLower)) return true;
+                }
               }
-            }
+              return false;
+            };
 
-            if (chosenEntry) {
-              targetTxtLineIdx = chosenEntry.fileLineIndex;
-              matchedTxtLine = chosenEntry.text;
-              const skipNote = skippedCount > 0 ? ` (Đã tự động bỏ qua ${skippedCount} dòng đã có 'OK')` : '';
+            const validLines: Array<{ fileLineIndex: number; text: string }> = [];
+            readTxtRes.lines.forEach((l: any, idx: number) => {
+              const raw = String(l).replace(/\r$/, '');
+              if (raw.trim().length > 0 && !isLineSkipped(raw)) {
+                validLines.push({ fileLineIndex: idx, text: raw });
+              }
+            });
+
+            const slotIdx = threadId - 1;
+            if (slotIdx < validLines.length) {
+              targetTxtLineIdx = validLines[slotIdx].fileLineIndex;
+              matchedTxtLine = validLines[slotIdx].text;
               updateThreadLog(
                 threadId,
                 'info',
-                `📄 Đã nạp dòng #${targetTxtLineIdx + 1} từ TXT: "${matchedTxtLine.slice(0, 50)}${matchedTxtLine.length > 50 ? '...' : ''}"${skipNote}`,
+                `📄 Đã nạp dòng #${targetTxtLineIdx + 1} từ TXT: "${matchedTxtLine.slice(0, 50)}${matchedTxtLine.length > 50 ? '...' : ''}"`,
                 'Nạp dữ liệu'
               );
+            } else {
+              updateThreadLog(threadId, 'info', `⏭ BỎ QUA Profile "${t.profileName}" - Hết dòng TXT`, 'Hết dòng TXT');
+              setThreadStatus(threadId, 'idle');
+              return;
             }
           }
+        } catch (err: any) {
+          updateThreadLog(threadId, 'error', `✕ Lỗi nạp dữ liệu TXT: ${err.message}`);
         }
-      } catch (err: any) {
-        updateThreadLog(threadId, 'error', `✕ Lỗi nạp dữ liệu TXT: ${err.message}`);
       }
     }
 
@@ -1715,12 +1798,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     if (stopSignalRef.current) {
       setThreadStatus(threadId, 'idle');
       updateThreadLog(threadId, 'error', `■ Thread stopped by user`, 'Stopped');
-    } else if (wasStoppedByAction) {
-      setThreadStatus(threadId, 'completed');
-      updateThreadLog(threadId, 'info', `⏹ Workflow stopped by Stop action`, 'Stopped');
     } else {
       setThreadStatus(threadId, 'completed');
-      updateThreadLog(threadId, 'success', `✔ Workflow finished successfully!`, 'Completed');
+      if (wasStoppedByAction) {
+        updateThreadLog(threadId, 'info', `⏹ Workflow stopped by Stop action`, 'Stopped');
+      } else {
+        updateThreadLog(threadId, 'success', `✔ Workflow finished successfully!`, 'Completed');
+      }
 
       // If Write 'OK' status to Excel is enabled:
       if (useInputExcel && excelWriteOk && excelFilePath.trim() && targetExcelRow > 0) {
