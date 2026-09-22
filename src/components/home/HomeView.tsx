@@ -3,6 +3,7 @@ import { HomeSidebar } from './HomeSidebar';
 import { ActionCards } from './ActionCards';
 import { RecentProjects } from './RecentProjects';
 import { useProject } from '../../context/ProjectContext';
+import { CheckCircle2 } from '../common/Icons';
 
 interface HomeViewProps {
   onNewProject: () => void;
@@ -33,7 +34,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </p>
 
           {/* Update Available Announcement Banner */}
-          {updateInfo?.hasUpdate && (
+          {updateInfo?.hasUpdate ? (
             <div
               onClick={() => setShowUpdateModal(true)}
               className="w-full max-w-xl mx-auto mt-4 p-3 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800/50 flex items-center justify-between shadow-xs cursor-pointer hover:border-amber-400 transition-all text-left"
@@ -63,7 +64,37 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 Cập nhật ngay
               </button>
             </div>
-          )}
+          ) : updateInfo ? (
+            <div
+              onClick={() => setShowUpdateModal(true)}
+              className="w-full max-w-xl mx-auto mt-4 p-2.5 px-3.5 rounded-xl bg-emerald-50/70 dark:bg-emerald-950/20 border border-emerald-200/80 dark:border-emerald-800/40 flex items-center justify-between shadow-2xs cursor-pointer hover:border-emerald-400 transition-all text-left"
+            >
+              <div className="flex items-center space-x-3">
+                <div className="w-8 h-8 rounded-lg bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-sm font-bold shadow-2xs border border-emerald-500/20">
+                  <CheckCircle2 className="w-4 h-4" />
+                </div>
+                <div>
+                  <div className="text-xs font-bold text-emerald-800 dark:text-emerald-300 flex items-center space-x-1.5">
+                    <span>Đang sử dụng phiên bản mới nhất: v{updateInfo.currentVersion}</span>
+                    <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-200/70 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-semibold">Đã cài đặt</span>
+                  </div>
+                  <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
+                    Phần mềm đã được cập nhật đầy đủ và đồng bộ với GitHub.
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowUpdateModal(true);
+                }}
+                className="px-2.5 py-1 rounded-lg bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium border border-emerald-500/20 cursor-pointer transition-all shrink-0 ml-3"
+              >
+                Chi tiết
+              </button>
+            </div>
+          ) : null}
 
           {/* 3 Action Cards */}
           <ActionCards

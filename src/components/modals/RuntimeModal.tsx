@@ -1355,7 +1355,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       if ((window as any).electronAPI?.launchBrowser) {
         const launchRes = await (window as any).electronAPI.launchBrowser({
           port: activePort,
-          url: 'https://google.com',
+          url: 'about:blank',
           profileName: `ChromeProfile_Thread_${threadId}_${activePort}`,
           windowSize: { width: pos.width, height: pos.height },
           windowPosition: { x: pos.x, y: pos.y },
@@ -1835,10 +1835,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       let errorMsg = '';
 
       // Initial sleep so Chrome has started navigating away from previous page
-      await sleep(800);
+      await sleep(500);
 
       while (Date.now() - start < maxWaitMs && !stopSignalRef.current) {
-        await sleep(400);
+        await sleep(350);
         try {
           const evalRes = await (window as any).electronAPI?.cdpAction({
             port,
@@ -1848,10 +1848,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                 try {
                   const href = window.location.href;
                   const readyState = document.readyState;
-                  const title = document.title || '';
 
                   // Check error pages
-                  if (href.startsWith('chrome-error://') || (title.includes('Error') && !href.includes('google.com/search'))) {
+                  if (href.startsWith('chrome-error://') || href.includes('chromewebdata')) {
                     const heading = document.querySelector('.error-code, #main-message h1, #main-message p, [jsselect="heading"]');
                     const errText = heading ? heading.textContent.trim() : '';
                     return { loaded: false, error: errText || 'Page failed to load (Connection/Proxy error)' };
@@ -1862,23 +1861,17 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     return { loaded: false, readyState, reason: 'Waiting for navigation from about:blank' };
                   }
 
-                  // Must be 'complete' (NOT 'interactive', interactive still spins and downloads resources)
-                  if (readyState !== 'complete') {
-                    return { loaded: false, readyState };
+                  // When readyState is complete, page is ready
+                  if (readyState === 'complete') {
+                    return { loaded: true, readyState, url: href };
                   }
 
-                  // Check if load event has fired (tab spinner has stopped)
-                  const navEntries = performance.getEntriesByType('navigation');
-                  if (navEntries && navEntries.length > 0) {
-                    const nav = navEntries[0];
-                    if (nav.loadEventEnd === 0) {
-                      return { loaded: false, reason: 'Tab is still spinning (loadEventEnd is 0)' };
-                    }
-                  } else if (performance.timing && performance.timing.loadEventEnd === 0) {
-                    return { loaded: false, reason: 'Tab is still spinning (timing.loadEventEnd is 0)' };
+                  // For modern SPAs (Google Accounts, YouTube, etc.), interactive state with body content is ready
+                  if (readyState === 'interactive' && document.body && (document.body.children.length > 0 || document.body.innerText.length > 0)) {
+                    return { loaded: true, readyState, url: href };
                   }
 
-                  return { loaded: true, readyState, url: href };
+                  return { loaded: false, readyState };
                 } catch(e) {
                   return { loaded: false, error: e.message };
                 }
@@ -1894,14 +1887,35 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             }
             if (val.loaded) {
               pageLoaded = true;
-              // Settling buffer: wait 800ms so dynamic SPAs/Web Components finish rendering
-              await sleep(800);
+              // Settling buffer: wait 400ms so dynamic SPAs/Web Components finish rendering
+              await sleep(400);
               break;
             }
           }
         } catch (e: any) {
           // Context might be reloading, continue waiting
         }
+      }
+
+      if (!pageLoaded && !errorMsg) {
+        // Final check: if tab is on an http/https url and document.body exists, consider ready
+        try {
+          const finalCheck = await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: {
+              expression: `(() => ({
+                url: window.location.href,
+                hasBody: !!document.body,
+                hasContent: document.body ? document.body.innerText.length > 0 : false
+              }))()`,
+            },
+          });
+          const fVal = finalCheck?.value || finalCheck?.result?.value;
+          if (fVal?.url && fVal.url.startsWith('http') && fVal.hasBody) {
+            pageLoaded = true;
+          }
+        } catch (e) {}
       }
 
       const elapsedSec = ((Date.now() - start) / 1000).toFixed(1);
@@ -4203,7 +4217,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             <div className="w-4 h-4 rounded bg-[#1677ff] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
               <span className="scale-75">🤖</span>
             </div>
-            <span>{appName} 1.0.0 - SV Browser Automate Runtime v3.0.8-stable</span>
+            <span>{appName} 1.0.0 - SV Browser Automate Runtime v3.1.0-stable</span>
           </div>
 
           <div className="flex items-center space-x-1">

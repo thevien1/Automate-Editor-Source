@@ -1,5 +1,5 @@
 import React from 'react';
-import { Minus, Square, X } from '../common/Icons';
+import { Minus, Square, X, CheckCircle2 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 import { AppLogo } from '../common/AppLogo';
 import packageInfo from '../../../package.json';
@@ -10,7 +10,7 @@ interface TitleBarProps {
 
 export const TitleBar: React.FC<TitleBarProps> = ({ projectName }) => {
   const { screen, updateInfo, setShowUpdateModal } = useProject();
-  const currentVersion = packageInfo.version || '3.0.9';
+  const currentVersion = packageInfo.version || '3.1.0';
 
   const handleMinimize = () => {
     if ((window as any).electronAPI?.minimize) {
@@ -38,7 +38,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({ projectName }) => {
           SV Browser Automate Editor v{currentVersion}-stable {screen === 'editor' && projectName ? `- ${projectName}` : ''}
         </span>
 
-        {updateInfo?.hasUpdate && (
+        {updateInfo?.hasUpdate ? (
           <button
             onClick={() => setShowUpdateModal(true)}
             className="flex items-center space-x-1 px-2.5 py-0.5 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white font-bold text-[11px] shadow-sm animate-pulse cursor-pointer transition-all ml-1.5"
@@ -46,7 +46,16 @@ export const TitleBar: React.FC<TitleBarProps> = ({ projectName }) => {
           >
             <span>🚀 Update v{updateInfo.latestVersion}</span>
           </button>
-        )}
+        ) : updateInfo ? (
+          <button
+            onClick={() => setShowUpdateModal(true)}
+            className="flex items-center space-x-1 px-2 py-0.5 rounded-full bg-emerald-50 dark:bg-emerald-950/60 hover:bg-emerald-100 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 font-semibold text-[10px] border border-emerald-300 dark:border-emerald-700/60 cursor-pointer transition-all ml-1.5 shadow-2xs"
+            title="Đã cài đặt đúng phiên bản mới nhất! Bấm để xem chứng nhận & chi tiết"
+          >
+            <CheckCircle2 className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+            <span>Đã cài mới nhất</span>
+          </button>
+        ) : null}
       </div>
 
       {/* Window Controls */}

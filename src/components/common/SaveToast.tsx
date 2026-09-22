@@ -3,7 +3,7 @@ import { CheckCircle2, X } from './Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const SaveToast: React.FC = () => {
-  const { showSaveToast, setShowSaveToast } = useProject();
+  const { showSaveToast, setShowSaveToast, toastInfo } = useProject();
 
   useEffect(() => {
     if (!showSaveToast) return;
@@ -25,10 +25,10 @@ export const SaveToast: React.FC = () => {
       {/* Message Text */}
       <div className="flex-1 pr-3">
         <div className="font-semibold text-xs text-[#1e293b] dark:text-white leading-tight">
-          Save
+          {toastInfo?.title || 'Save'}
         </div>
         <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] leading-tight mt-0.5">
-          Save Successful
+          {toastInfo?.message || 'Save Successful'}
         </div>
       </div>
 

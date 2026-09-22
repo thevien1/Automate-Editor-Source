@@ -1,9 +1,22 @@
 import React from 'react';
-import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe } from '../common/Icons';
+import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe, Code2 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const ToolBar: React.FC = () => {
-  const { currentProject, saveProject, selectedBlockKey, setShowTestModal, setShowRuntimeModal, undo, redo, canUndo, canRedo, clearWorkflow } = useProject();
+  const {
+    currentProject,
+    saveProject,
+    selectedBlockKey,
+    setShowTestModal,
+    setShowRuntimeModal,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    clearWorkflow,
+    setShowJsonModal,
+    setJsonModalMode,
+  } = useProject();
 
   const handleRun = () => {
     setShowRuntimeModal(true);
@@ -79,6 +92,21 @@ export const ToolBar: React.FC = () => {
           title="Redo (Ctrl+Y)"
         >
           <Redo2 className="w-3.5 h-3.5" />
+        </button>
+
+        <div className="h-4 w-[1px] bg-[#e2e8f0] dark:bg-[#1e293b] mx-1" />
+
+        {/* JSON Code Button */}
+        <button
+          onClick={() => {
+            setJsonModalMode('export');
+            setShowJsonModal(true);
+          }}
+          className="flex items-center space-x-1 px-2.5 py-1 rounded-md text-[#6366f1] hover:bg-[#6366f1]/15 font-semibold transition-colors cursor-pointer active:scale-95"
+          title="JSON Code Transfer (Sao chép / Dán JSON trực tiếp)"
+        >
+          <Code2 className="w-3.5 h-3.5 text-[#6366f1]" />
+          <span>JSON</span>
         </button>
 
         <div className="h-4 w-[1px] bg-[#e2e8f0] dark:bg-[#1e293b] mx-1" />

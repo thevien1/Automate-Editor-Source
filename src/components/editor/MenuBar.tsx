@@ -8,7 +8,25 @@ interface MenuBarProps {
 }
 
 export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject }) => {
-  const { closeProject, saveProject, theme, toggleTheme, setShowSettingsModal, undo, redo, canUndo, canRedo, copySelectedNode, cutSelectedNode, pasteCopiedNode, duplicateSelectedNode, deleteSelectedNode } = useProject();
+  const {
+    closeProject,
+    saveProject,
+    theme,
+    toggleTheme,
+    setShowSettingsModal,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+    copySelectedNode,
+    cutSelectedNode,
+    pasteCopiedNode,
+    duplicateSelectedNode,
+    deleteSelectedNode,
+    setShowJsonModal,
+    setJsonModalMode,
+    setShowUpdateModal,
+  } = useProject();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
   const toggleMenu = (menu: string) => {
@@ -143,6 +161,27 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
               </button>
               <div className="border-t border-[#e2e8f0] dark:border-[#1e293b] my-1" />
               <button
+                onClick={() => {
+                  setJsonModalMode('export');
+                  setShowJsonModal(true);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
+              >
+                <span>Copy / Export JSON...</span>
+                <span className="text-[#64748b] text-[10px]">Ctrl+Shift+C</span>
+              </button>
+              <button
+                onClick={() => {
+                  setJsonModalMode('import');
+                  setShowJsonModal(true);
+                }}
+                className="w-full text-left px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
+              >
+                <span>Paste / Import JSON...</span>
+                <span className="text-[#64748b] text-[10px]">Ctrl+Shift+V</span>
+              </button>
+              <div className="border-t border-[#e2e8f0] dark:border-[#1e293b] my-1" />
+              <button
                 onClick={deleteSelectedNode}
                 className="w-full text-left px-3 py-1.5 hover:bg-red-500/20 hover:text-red-400 flex items-center justify-between cursor-pointer"
               >
@@ -202,10 +241,10 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
                 Documentation
               </a>
               <div
-                onClick={() => alert('SV Browser Automate Editor v3.0.8-stable')}
+                onClick={() => setShowUpdateModal(true)}
                 className="px-3 py-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] cursor-pointer"
               >
-                About
+                About & Phiên bản
               </div>
             </div>
           )}

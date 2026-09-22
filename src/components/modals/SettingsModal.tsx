@@ -398,12 +398,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                 <Sparkles className="w-4 h-4 text-amber-500" />
                 <span>Phiên bản & Cập nhật (Version & Updates)</span>
               </div>
-              <span className="text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                v{updateInfo?.currentVersion || '3.0.9'}-stable
+              <span className={`text-[11px] font-mono font-semibold px-2 py-0.5 rounded-full ${
+                updateInfo && !updateInfo.hasUpdate
+                  ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-700'
+                  : 'bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+              }`}>
+                v{updateInfo?.currentVersion || '3.1.0'}-stable
               </span>
             </div>
 
-            <div className="flex items-center justify-between p-3 rounded-lg bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b]">
+            <div className={`flex items-center justify-between p-3 rounded-lg border ${
+              updateInfo && !updateInfo.hasUpdate
+                ? 'bg-emerald-50/40 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800/40'
+                : 'bg-white dark:bg-[#0f172a] border-[#e2e8f0] dark:border-[#1e293b]'
+            }`}>
               <div className="space-y-0.5 text-left">
                 <div className="text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9]">
                   {isCheckingUpdate ? (
@@ -411,6 +419,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                   ) : updateInfo?.hasUpdate ? (
                     <span className="text-amber-600 dark:text-amber-400 font-bold flex items-center space-x-1">
                       <span>🚀 Đã có bản mới: v{updateInfo.latestVersion}</span>
+                    </span>
+                  ) : updateInfo ? (
+                    <span className="text-emerald-600 dark:text-emerald-400 font-bold flex items-center space-x-1">
+                      <span>✅ Đã cài đặt bản mới nhất v{updateInfo.currentVersion} (Hợp lệ)</span>
                     </span>
                   ) : updateStatusText ? (
                     updateStatusText
@@ -436,20 +448,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose })
                     Cập nhật ngay
                   </button>
                 ) : (
-                  <button
-                    type="button"
-                    disabled={isCheckingUpdate}
-                    onClick={async () => {
-                      const res = await checkAppUpdate(true);
-                      if (res && !res.hasUpdate) {
-                        setUpdateStatusText('Bạn đang sử dụng phiên bản mới nhất!');
-                      }
-                    }}
-                    className="px-3 py-1.5 rounded-lg border border-[#cbd5e1] dark:border-[#334155] text-xs font-semibold text-[#1677ff] dark:text-[#38bdf8] hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer transition-colors flex items-center space-x-1.5 disabled:opacity-50"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
-                    <span>{isCheckingUpdate ? 'Đang kiểm tra...' : 'Kiểm tra cập nhật'}</span>
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        onClose();
+                        setShowUpdateModal(true);
+                      }}
+                      className="px-2.5 py-1.5 rounded-lg border border-[#cbd5e1] dark:border-[#334155] text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer transition-colors"
+                    >
+                      Chi tiết
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isCheckingUpdate}
+                      onClick={async () => {
+                        const res = await checkAppUpdate(true);
+                        if (res && !res.hasUpdate) {
+                          setUpdateStatusText('Đã kiểm tra: Bạn đang dùng phiên bản mới nhất!');
+                        }
+                      }}
+                      className="px-3 py-1.5 rounded-lg border border-[#cbd5e1] dark:border-[#334155] text-xs font-semibold text-[#1677ff] dark:text-[#38bdf8] hover:bg-blue-50 dark:hover:bg-blue-950/40 cursor-pointer transition-colors flex items-center space-x-1.5 disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isCheckingUpdate ? 'animate-spin' : ''}`} />
+                      <span>{isCheckingUpdate ? 'Đang kiểm tra...' : 'Kiểm tra'}</span>
+                    </button>
+                  </>
                 )}
               </div>
             </div>

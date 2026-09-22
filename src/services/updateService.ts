@@ -1,6 +1,6 @@
 import packageInfo from '../../package.json';
 
-export const CURRENT_APP_VERSION = packageInfo.version || '3.0.9';
+export const CURRENT_APP_VERSION = packageInfo.version || '3.1.0';
 export const GITHUB_REPO = 'thevien1/Automate-Editor';
 
 export interface UpdateInfo {

@@ -177,23 +177,50 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
       ? customClassInput
       : selectedBootstrapIcon;
 
-  const handleSave = () => {
+  const [saveModeStatus, setSaveModeStatus] = useState<string | null>(null);
+
+  const handleSave = async () => {
     const override: CustomIconOverride = {
       color: selectedColor,
       iconType: iconMode === 'svg' ? 'svg' : 'bootstrap',
       iconValue: currentIconValue,
     };
     saveCustomIconOverride(cleanKey, override);
+
+    // Tự động ghi vào file cấu hình mã nguồn src/config/customDefaultIcons.json để vĩnh viễn khi build
+    if ((window as any).electronAPI?.fileAction) {
+      try {
+        await (window as any).electronAPI.fileAction({
+          action: 'saveSourceDefaultIcons',
+          payload: { key: cleanKey, config: override },
+        });
+        setSaveModeStatus('Đã ghi vào mã nguồn thành công!');
+      } catch (err) {
+        console.warn('Lỗi khi ghi vào mã nguồn:', err);
+      }
+    }
+
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
+      setSaveModeStatus(null);
       onClose();
-    }, 800);
+    }, 1200);
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
     deleteCustomIconOverride(cleanKey);
     setSelectedColor(defaultConfig.color);
+
+    if ((window as any).electronAPI?.fileAction) {
+      try {
+        await (window as any).electronAPI.fileAction({
+          action: 'deleteSourceDefaultIcon',
+          payload: { key: cleanKey },
+        });
+      } catch {}
+    }
+
     setSavedSuccess(true);
     setTimeout(() => {
       setSavedSuccess(false);
@@ -475,8 +502,8 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
             <button
               type="button"
               onClick={handleReset}
-              className="px-2.5 py-1.5 rounded border border-[#cbd5e1] dark:border-[#334155] hover:bg-gray-100 dark:hover:bg-gray-800 text-[#64748b] hover:text-[#0f172a] transition-colors flex items-center space-x-1"
-              title="Khôi phục icon và màu mặc định"
+              className="px-2.5 py-1.5 rounded border border-[#cbd5e1] dark:border-[#334155] hover:bg-gray-100 dark:hover:bg-gray-800 text-[#64748b] hover:text-[#0f172a] transition-colors flex items-center space-x-1 cursor-pointer"
+              title="Khôi phục icon và màu mặc định gốc"
             >
               <RotateCcw className="w-3 h-3" />
               <span>Mặc định</span>
@@ -485,7 +512,7 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
             <button
               type="button"
               onClick={handleCopyCode}
-              className="px-2.5 py-1.5 rounded border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/40 hover:bg-blue-100 text-[#1677ff] dark:text-[#38bdf8] transition-colors flex items-center space-x-1"
+              className="px-2.5 py-1.5 rounded border border-blue-200 dark:border-blue-900 bg-blue-50/50 dark:bg-blue-950/40 hover:bg-blue-100 text-[#1677ff] dark:text-[#38bdf8] transition-colors flex items-center space-x-1 cursor-pointer"
               title="Sao chép đoạn mã TypeScript để dán trực tiếp vào file ActionIcon.tsx"
             >
               {copiedCode ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
@@ -497,17 +524,18 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-3 py-1.5 rounded border border-[#d9d9d9] dark:border-[#334155] hover:bg-gray-100 dark:hover:bg-gray-800 text-[#475569] dark:text-[#94a3b8] transition-colors"
+              className="px-3 py-1.5 rounded border border-[#d9d9d9] dark:border-[#334155] hover:bg-gray-100 dark:hover:bg-gray-800 text-[#475569] dark:text-[#94a3b8] transition-colors cursor-pointer"
             >
               Đóng
             </button>
             <button
               type="button"
               onClick={handleSave}
-              className="px-4 py-1.5 rounded bg-[#1677ff] hover:bg-[#4096ff] text-white font-medium shadow-xs transition-colors flex items-center space-x-1.5"
+              className="px-4 py-1.5 rounded bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-semibold shadow-xs transition-all flex items-center space-x-1.5 cursor-pointer active:scale-98"
+              title="Lưu trực tiếp vào file mã nguồn src/config/customDefaultIcons.json để khi build sẽ vĩnh viễn"
             >
               {savedSuccess ? <Check className="w-3.5 h-3.5 text-white animate-bounce" /> : null}
-              <span>{savedSuccess ? 'Đã lưu vĩnh viễn!' : 'Lưu áp dụng'}</span>
+              <span>{savedSuccess ? (saveModeStatus || 'Đã lưu vào mã nguồn!') : '💾 Lưu vĩnh viễn (Build Default)'}</span>
             </button>
           </div>
         </div>

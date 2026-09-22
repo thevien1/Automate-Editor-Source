@@ -41,7 +41,14 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: 'SV Browser Automate Editor v3.0.9-stable',
+    title: `SV Browser Automate Editor v${(() => {
+      try {
+        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf-8'));
+        return pkg.version || '3.1.0';
+      } catch {
+        return '3.1.0';
+      }
+    })()}-stable`,
   });
 
   if (resolvedIcon) {
@@ -245,32 +252,45 @@ const sendWs = (wsUrl: string, method: string, params: any = {}, timeoutMs: numb
       const reqId = ++nextWsId;
       const normalizedWsUrl = wsUrl.replace('//localhost:', '//127.0.0.1:');
       const ws = new WebSocket(normalizedWsUrl);
+      let settled = false;
+
+      const finish = (val: any) => {
+        if (!settled) {
+          settled = true;
+          clearTimeout(timer);
+          try { ws.close(); } catch (e) {}
+          resolve(val);
+        }
+      };
+
       const timer = setTimeout(() => {
-        try { ws.close(); } catch (e) {}
-        resolve({ success: false, error: 'WebSocket timeout' });
+        finish({ success: false, error: 'WebSocket timeout' });
       }, timeoutMs);
 
       ws.onopen = () => {
-        ws.send(JSON.stringify({ id: reqId, method, params }));
+        try {
+          ws.send(JSON.stringify({ id: reqId, method, params }));
+        } catch (e: any) {
+          finish({ success: false, error: e.message });
+        }
       };
       ws.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data.toString());
           if (data && data.id === reqId) {
-            clearTimeout(timer);
-            try { ws.close(); } catch (e) {}
             if (data.error) {
-              resolve({ success: false, error: data.error.message || JSON.stringify(data.error) });
+              finish({ success: false, error: data.error.message || JSON.stringify(data.error) });
             } else {
-              resolve({ success: true, result: data.result });
+              finish({ success: true, result: data.result });
             }
           }
         } catch (e) {}
       };
       ws.onerror = (err) => {
-        clearTimeout(timer);
-        try { ws.close(); } catch (e) {}
-        resolve({ success: false, error: String(err) });
+        finish({ success: false, error: String(err) });
+      };
+      ws.onclose = () => {
+        finish({ success: false, error: 'WebSocket connection closed' });
       };
     } catch (err: any) {
       resolve({ success: false, error: err.message });
@@ -304,6 +324,37 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
     if (action === 'delete') {
       if (fs.existsSync(payload.path)) {
         fs.unlinkSync(payload.path);
+      }
+      return { success: true };
+    }
+    if (action === 'saveSourceDefaultIcons') {
+      const configPath = path.join(__dirname, '../src/config/customDefaultIcons.json');
+      const configDir = path.dirname(configPath);
+      if (!fs.existsSync(configDir)) {
+        fs.mkdirSync(configDir, { recursive: true });
+      }
+      let current: Record<string, any> = {};
+      if (fs.existsSync(configPath)) {
+        try {
+          current = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+        } catch {}
+      }
+      if (payload?.key) {
+        current[payload.key.trim().toLowerCase()] = payload.config;
+      } else if (payload?.all) {
+        current = { ...current, ...payload.all };
+      }
+      fs.writeFileSync(configPath, JSON.stringify(current, null, 2), 'utf-8');
+      return { success: true, path: configPath };
+    }
+    if (action === 'deleteSourceDefaultIcon') {
+      const configPath = path.join(__dirname, '../src/config/customDefaultIcons.json');
+      if (fs.existsSync(configPath)) {
+        try {
+          const current = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+          delete current[payload.key.trim().toLowerCase()];
+          fs.writeFileSync(configPath, JSON.stringify(current, null, 2), 'utf-8');
+        } catch {}
       }
       return { success: true };
     }
@@ -838,7 +889,7 @@ const getAutomationProfileDir = () => {
 
 const launchChrome = (
   port: string | number = 43076,
-  targetUrl: string = 'https://google.com',
+  targetUrl: string = 'about:blank',
   profileName: string = 'ChromeAutomationProfile',
   windowSize?: { width: number; height: number },
   scale?: number,
@@ -1013,7 +1064,7 @@ ipcMain.handle('automation:launchBrowser', async (_, options?: {
 }) => {
   try {
     const port = options?.port || 43076;
-    const url = options?.url || 'https://google.com';
+    const url = options?.url || 'about:blank';
     const profile = options?.profileName || `ChromeProfile_${port}`;
     return launchChrome(port, url, profile, options?.windowSize, options?.scale, options?.proxy, options?.windowPosition);
   } catch (err: any) {
@@ -1484,22 +1535,35 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
 
     if (action === 'goToUrl') {
       let url = (payload?.url || '').trim();
-      const timeoutSec = parseInt(payload?.timeout, 10) || 60;
       if (!url || url === 'https://') {
         url = 'https://google.com';
       } else if (!url.startsWith('http://') && !url.startsWith('https://') && !url.startsWith('about:') && !url.startsWith('chrome://')) {
         url = `https://${url}`;
       }
 
-      const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
-      if (Array.isArray(list)) {
-        const page = list.find((t: any) => t.type === 'page');
+      const list = await httpGet(`http://127.0.0.1:${port}/json/list`).catch(() => null);
+      if (Array.isArray(list) && list.length > 0) {
+        let page = null;
+        if (payload?.targetId) {
+          page = list.find((t: any) => t.id === payload.targetId);
+        }
+        if (!page) {
+          page = list.find((t: any) => t.type === 'page');
+        }
+        if (!page) {
+          page = list[0];
+        }
+
         if (page && page.webSocketDebuggerUrl) {
-          const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url }, Math.max(15000, timeoutSec * 1000));
-          return wsRes.success ? wsRes : { success: true };
+          // 1. Send Page.navigate to navigate the current active tab in-place
+          await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url }, 4000).catch(() => null);
+          // Always return immediately: NEVER open a new tab if an existing tab is present!
+          return { success: true };
         }
       }
-      await httpPut(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`);
+
+      // ONLY if there are NO tabs at all in Chrome (empty browser), open the initial tab
+      await httpPut(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`).catch(() => {});
       return { success: true };
     }
 

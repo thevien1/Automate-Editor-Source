@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Trash2, CheckCircle2, Palette } from '../../common/Icons';
+import { Trash2, CheckCircle2, Palette, Code2 } from '../../common/Icons';
 import { ActionIcon, getEffectiveCustomOverride } from '../../common/ActionIcon';
 import { WorkflowNode, ActionNode } from '../../../types/gscript';
 import { ActionIconEditorModal } from '../../modals/ActionIconEditorModal';
+import { useProject } from '../../../context/ProjectContext';
 
 interface ActionHeaderProps {
   selectedNode: WorkflowNode;
@@ -15,6 +16,7 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
   deleteSelectedNode,
   headerIcon,
 }) => {
+  const { setShowJsonModal, setJsonModalMode } = useProject();
   const [isEditingIcon, setIsEditingIcon] = useState(false);
   const [, setVer] = useState(0);
 
@@ -108,6 +110,17 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
         </div>
 
         <div className="flex items-center space-x-1">
+          <button
+            onClick={() => {
+              setJsonModalMode('export');
+              setShowJsonModal(true);
+            }}
+            className="p-1.5 rounded text-[#6366f1] hover:bg-indigo-50 dark:hover:bg-indigo-950/30 transition-colors cursor-pointer"
+            title="Xem / Copy JSON của node này (Ctrl+C)"
+          >
+            <Code2 className="w-4 h-4" />
+          </button>
+
           <button
             onClick={() => setIsEditingIcon(true)}
             className="p-1.5 rounded text-amber-500 hover:bg-amber-50 dark:hover:bg-amber-500/20 transition-colors cursor-pointer"

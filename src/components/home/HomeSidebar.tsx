@@ -1,12 +1,17 @@
 import React from 'react';
-import { Folder, ShoppingBag, Settings } from '../common/Icons';
+import { Folder, ShoppingBag, Settings, CheckCircle2 } from '../common/Icons';
 import { AppLogo } from '../common/AppLogo';
+import { useProject } from '../../context/ProjectContext';
+import { CURRENT_APP_VERSION } from '../../services/updateService';
 
 interface HomeSidebarProps {
   onOpenSettings: () => void;
 }
 
 export const HomeSidebar: React.FC<HomeSidebarProps> = ({ onOpenSettings }) => {
+  const { updateInfo, setShowUpdateModal } = useProject();
+  const currentVersion = CURRENT_APP_VERSION;
+
   return (
     <div className="w-56 bg-white dark:bg-[#080d19] border-r border-[#e2e8f0] dark:border-[#162236] flex flex-col justify-between py-5 px-3 select-none text-left transition-colors duration-200">
       {/* Top Logo & Branding */}
@@ -17,9 +22,31 @@ export const HomeSidebar: React.FC<HomeSidebarProps> = ({ onOpenSettings }) => {
             <div className="text-sm font-bold text-[#1e293b] dark:text-[#f1f5f9] tracking-tight leading-none">
               SV Browser
             </div>
-            <div className="text-[11px] text-[#64748b] mt-1 font-normal">
-              3.0.9-stable
+            <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] mt-1 font-normal">
+              v{currentVersion}-stable
             </div>
+            {/* Clickable Version Status Badge */}
+            <button
+              type="button"
+              onClick={() => setShowUpdateModal(true)}
+              className="mt-1 flex items-center space-x-1 px-1.5 py-0.5 rounded text-[10px] font-medium transition-colors cursor-pointer text-left group"
+              title="Nhấp để xem thông tin phiên bản và kiểm tra cập nhật"
+            >
+              {updateInfo?.hasUpdate ? (
+                <span className="text-amber-600 dark:text-amber-400 font-semibold bg-amber-500/10 px-1.5 py-0.5 rounded border border-amber-500/20 group-hover:bg-amber-500/20 transition-colors">
+                  🚀 Có bản mới
+                </span>
+              ) : updateInfo ? (
+                <span className="text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-500/10 px-1.5 py-0.5 rounded border border-emerald-500/20 group-hover:bg-emerald-500/20 transition-colors flex items-center space-x-1">
+                  <CheckCircle2 className="w-2.5 h-2.5" />
+                  <span>Đã cài mới nhất</span>
+                </span>
+              ) : (
+                <span className="text-slate-500 bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 rounded group-hover:bg-slate-200 dark:group-hover:bg-slate-700 transition-colors">
+                  Kiểm tra phiên bản
+                </span>
+              )}
+            </button>
           </div>
         </div>
 

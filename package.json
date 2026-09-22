@@ -1,6 +1,6 @@
 {
   "name": "sv-browser-automate-editor",
-  "version": "3.0.9",
+  "version": "3.1.2",
   "description": "SV Browser Automate Editor - Visual workflow editor",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "electron:dev": "concurrently -k \"vite\" \"electron .\"",
     "build:electron": "tsc -p tsconfig.electron.json && javascript-obfuscator dist-electron/main.js --output dist-electron/main.js --compact true --control-flow-flattening true --string-array true --string-array-encoding base64",
-    "dist:win": "npm run build && npm run build:electron && electron-builder --win"
+    "dist:win": "node scripts/prepare-build.js && npm run build && npm run build:electron && electron-builder --win",
+    "dist:win:nobump": "node scripts/prepare-build.js --no-bump && npm run build && npm run build:electron && electron-builder --win"
   },
   "keywords": [
     "sv-browser",

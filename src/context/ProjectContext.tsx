@@ -3,6 +3,7 @@ import { ProjectData, ActionNode, BaseNode, NormalBlockNode, BlockNode, Workflow
 import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
 import { createDefaultProject, createDefaultNormalBlock, generateGuid, serializeRawInput } from '../utils/gpmUtils';
 import { UpdateInfo, checkForAppUpdates } from '../services/updateService';
+import { normalizeWorkflowNodes, nodesToJsonString } from '../utils/jsonWorkflowUtils';
 
 export const BROWSER_SYSTEM_VARIABLES = [
   'profileName',
@@ -132,6 +133,8 @@ interface ProjectContextType {
   setShowShortcuts: (show: boolean) => void;
   showSaveToast: boolean;
   setShowSaveToast: (show: boolean) => void;
+  toastInfo: { title: string; message: string } | null;
+  showToast: (title: string, message: string) => void;
   showTestModal: boolean;
   setShowTestModal: (show: boolean) => void;
   showRuntimeModal: boolean;
@@ -140,6 +143,11 @@ interface ProjectContextType {
   setShowSettingsModal: (show: boolean) => void;
   showUpdateModal: boolean;
   setShowUpdateModal: (show: boolean) => void;
+  showJsonModal: boolean;
+  setShowJsonModal: (show: boolean) => void;
+  jsonModalMode: 'export' | 'import';
+  setJsonModalMode: (mode: 'export' | 'import') => void;
+  insertNodesFromJson: (jsonStr: string, targetBlock?: 'before_init' | 'main_logic' | 'after_quit') => { success: boolean; count: number; error?: string };
   updateInfo: UpdateInfo | null;
   isCheckingUpdate: boolean;
   checkAppUpdate: (manual?: boolean) => Promise<UpdateInfo | null>;
@@ -248,10 +256,19 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [selectedBlockKey, setSelectedBlockKey] = useState<'before_init' | 'main_logic' | 'after_quit'>('main_logic');
   const [showShortcuts, setShowShortcuts] = useState<boolean>(false);
   const [showSaveToast, setShowSaveToast] = useState<boolean>(false);
+  const [toastInfo, setToastInfo] = useState<{ title: string; message: string } | null>(null);
+
+  const showToast = (title: string, message: string) => {
+    setToastInfo({ title, message });
+    setShowSaveToast(true);
+  };
+
   const [showTestModal, setShowTestModal] = useState<boolean>(false);
   const [showRuntimeModal, setShowRuntimeModal] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
+  const [showJsonModal, setShowJsonModal] = useState<boolean>(false);
+  const [jsonModalMode, setJsonModalMode] = useState<'export' | 'import'>('export');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
 
@@ -423,7 +440,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       await (window as any).electronAPI.saveProjectToDisk(currentProject);
     }
     localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(currentProject));
-    setShowSaveToast(true);
+    showToast('Save', 'Save Successful');
   };
 
   // Helper to get all nodes in flat array preserving tree order
@@ -837,7 +854,22 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSelectedNodeIds([]);
   };
 
-  const copySelectedNode = () => {
+  // Helper to filter out any node that is already a descendant of another selected node
+  const filterOutDescendants = (nodes: WorkflowNode[]): WorkflowNode[] => {
+    const descendantIds = new Set<string>();
+    const markDescendants = (n: any) => {
+      if (n && Array.isArray(n.nodes)) {
+        for (const ch of n.nodes) {
+          if (ch && ch.id) descendantIds.add(String(ch.id));
+          markDescendants(ch);
+        }
+      }
+    };
+    nodes.forEach(markDescendants);
+    return nodes.filter(n => !descendantIds.has(String(n.id)));
+  };
+
+  const copySelectedNode = async () => {
     if (!currentProject) return;
     const roots = [
       currentProject.script.before_init.id,
@@ -847,16 +879,43 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     const targetIds = selectedNodeIds.length > 0 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : []);
     const flat = getAllFlatNodes(currentProject);
-    const nodesToCopy = flat.filter(n => targetIds.includes(n.id) && !roots.includes(n.id));
+    let nodesToCopy = flat.filter(n => targetIds.includes(n.id) && !roots.includes(n.id));
+
+    // If a root block was selected, copy all its child nodes
+    if (nodesToCopy.length === 0 && targetIds.length > 0) {
+      const selectedRoot = [currentProject.script.before_init, currentProject.script.main_logic, currentProject.script.after_quit].find(r => targetIds.includes(r.id));
+      if (selectedRoot && selectedRoot.nodes.length > 0) {
+        nodesToCopy = [...selectedRoot.nodes];
+      }
+    }
+
+    // CRITICAL: Filter out any selected node that is already inside a selected block!
+    nodesToCopy = filterOutDescendants(nodesToCopy);
 
     if (nodesToCopy.length === 0) return;
 
-    const serializedArray = JSON.stringify(nodesToCopy);
-    sessionStorage.setItem('gpm_clipboard_nodes', serializedArray);
+    // Clean JSON with 2 spaces indent
+    const jsonOutput = nodesToJsonString(nodesToCopy, true);
+
+    // Save to localStorage & sessionStorage so it is shared across all windows and projects!
+    localStorage.setItem('gpm_clipboard_nodes', JSON.stringify(nodesToCopy));
+    localStorage.setItem('gpm_clipboard_node', JSON.stringify(nodesToCopy[0]));
+    sessionStorage.setItem('gpm_clipboard_nodes', JSON.stringify(nodesToCopy));
     sessionStorage.setItem('gpm_clipboard_node', JSON.stringify(nodesToCopy[0]));
+
+    // 1. Native Electron system clipboard (guaranteed to work across OS, windows & external apps)
+    if ((window as any).electronAPI?.fileAction) {
+      try {
+        await (window as any).electronAPI.fileAction({ action: 'setClipboard', payload: { text: jsonOutput } });
+      } catch (_) {}
+    }
+
+    // 2. Web clipboard API
     try {
-      navigator.clipboard.writeText(serializedArray);
+      await navigator.clipboard.writeText(jsonOutput);
     } catch (_) {}
+
+    showToast('Copy JSON', `Đã sao chép ${nodesToCopy.length} node vào clipboard!`);
   };
 
   const cutSelectedNode = () => {
@@ -864,27 +923,58 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     deleteSelectedNode();
   };
 
-  const pasteCopiedNode = () => {
+  const pasteCopiedNode = async (customJsonText?: string) => {
     if (!currentProject) return;
-    const rawList = sessionStorage.getItem('gpm_clipboard_nodes');
-    const rawSingle = sessionStorage.getItem('gpm_clipboard_node');
 
     let sourceNodes: WorkflowNode[] = [];
-    if (rawList) {
+
+    // 1. Try reading from customJsonText, native Electron clipboard, or navigator.clipboard
+    let clipboardText = (customJsonText || '').trim();
+    if (!clipboardText && (window as any).electronAPI?.fileAction) {
       try {
-        const parsed = JSON.parse(rawList);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        const res = await (window as any).electronAPI.fileAction({ action: 'getClipboard' });
+        if (res?.success && typeof res.text === 'string' && res.text.trim()) {
+          clipboardText = res.text.trim();
+        }
+      } catch (_) {}
+    }
+    if (!clipboardText) {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text && text.trim()) clipboardText = text.trim();
+      } catch (_) {}
+    }
+
+    if (clipboardText) {
+      try {
+        const parsed = normalizeWorkflowNodes(clipboardText);
+        if (parsed.length > 0) {
           sourceNodes = parsed;
         }
       } catch (_) {}
     }
-    if (sourceNodes.length === 0 && rawSingle) {
-      try {
-        const parsed = JSON.parse(rawSingle);
-        if (parsed && typeof parsed === 'object') {
-          sourceNodes = [parsed];
-        }
-      } catch (_) {}
+
+    // 2. Fallback to localStorage or sessionStorage if clipboard text was empty or not workflow JSON
+    if (sourceNodes.length === 0) {
+      const rawList = localStorage.getItem('gpm_clipboard_nodes') || sessionStorage.getItem('gpm_clipboard_nodes');
+      const rawSingle = localStorage.getItem('gpm_clipboard_node') || sessionStorage.getItem('gpm_clipboard_node');
+
+      if (rawList) {
+        try {
+          const parsed = JSON.parse(rawList);
+          if (Array.isArray(parsed) && parsed.length > 0) {
+            sourceNodes = normalizeWorkflowNodes(parsed);
+          }
+        } catch (_) {}
+      }
+      if (sourceNodes.length === 0 && rawSingle) {
+        try {
+          const parsed = JSON.parse(rawSingle);
+          if (parsed && typeof parsed === 'object') {
+            sourceNodes = normalizeWorkflowNodes([parsed]);
+          }
+        } catch (_) {}
+      }
     }
 
     if (sourceNodes.length === 0) return;
@@ -902,53 +992,55 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const anchorId = selectedNodeIds.length > 0 ? selectedNodeIds[selectedNodeIds.length - 1] : selectedNodeId;
 
     if (anchorId) {
-      // If anchor is a root block
+      // 1. If anchor is a root block
       const matchedRoot = rootBlocks.find(r => r.id === anchorId);
       if (matchedRoot) {
         matchedRoot.nodes.push(...newNodes);
         matchedRoot.expanded = true;
         inserted = true;
       } else {
-        // If anchor is inside a block -> insert immediately after it
-        const insertAfterChild = (arr: WorkflowNode[]): boolean => {
-          const idx = arr.findIndex(n => n.id === anchorId);
-          if (idx !== -1) {
-            arr.splice(idx + 1, 0, ...newNodes);
-            return true;
-          }
-          for (const ch of arr) {
-            if ('nodes' in ch && Array.isArray((ch as any).nodes)) {
-              if (insertAfterChild((ch as any).nodes)) return true;
+        // 2. Check if anchor is an empty block node -> if so, insert inside it!
+        const findAndInsertInEmptyBlock = (arr: WorkflowNode[]): boolean => {
+          for (const item of arr) {
+            if (item.id === anchorId && 'nodes' in item && Array.isArray((item as any).nodes)) {
+              if ((item as any).nodes.length === 0) {
+                (item as any).nodes.push(...newNodes);
+                (item as any).expanded = true;
+                return true;
+              }
+            }
+            if ('nodes' in item && Array.isArray((item as any).nodes)) {
+              if (findAndInsertInEmptyBlock((item as any).nodes)) return true;
             }
           }
           return false;
         };
 
         for (const root of rootBlocks) {
-          if (insertAfterChild(root.nodes)) {
+          if (findAndInsertInEmptyBlock(root.nodes)) {
             inserted = true;
             break;
           }
         }
 
-        // If not inserted after child, maybe anchor is a block -> append inside it
+        // 3. If not an empty block, insert immediately after the anchor child
         if (!inserted) {
-          const insertInBlock = (block: WorkflowNode): boolean => {
-            if (block.id === anchorId && 'nodes' in block && Array.isArray((block as any).nodes)) {
-              (block as any).nodes.push(...newNodes);
-              (block as any).expanded = true;
+          const insertAfterChild = (arr: WorkflowNode[]): boolean => {
+            const idx = arr.findIndex(n => n.id === anchorId);
+            if (idx !== -1) {
+              arr.splice(idx + 1, 0, ...newNodes);
               return true;
             }
-            if ('nodes' in block && Array.isArray((block as any).nodes)) {
-              for (const ch of (block as any).nodes) {
-                if (insertInBlock(ch)) return true;
+            for (const ch of arr) {
+              if ('nodes' in ch && Array.isArray((ch as any).nodes)) {
+                if (insertAfterChild((ch as any).nodes)) return true;
               }
             }
             return false;
           };
 
           for (const root of rootBlocks) {
-            if (insertInBlock(root)) {
+            if (insertAfterChild(root.nodes)) {
               inserted = true;
               break;
             }
@@ -965,6 +1057,36 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setCurrentProject({ ...currentProject, script: newScript });
     setSelectedNodeIds(newIds);
     setSelectedNodeId(newIds[newIds.length - 1]);
+    showToast('Paste JSON', `Đã dán ${newNodes.length} node vào workflow!`);
+  };
+
+  const insertNodesFromJson = (
+    jsonStr: string,
+    targetBlock: 'before_init' | 'main_logic' | 'after_quit' = selectedBlockKey || 'main_logic'
+  ): { success: boolean; count: number; error?: string } => {
+    if (!currentProject) return { success: false, count: 0, error: 'Chưa mở project' };
+    try {
+      const parsed = normalizeWorkflowNodes(jsonStr);
+      if (parsed.length === 0) {
+        return { success: false, count: 0, error: 'Không nhận diện được node hợp lệ trong chuỗi JSON' };
+      }
+
+      const newNodes = parsed.map(n => cloneNodeWithNewIds(n));
+      const newIds = newNodes.map(n => n.id);
+
+      const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
+      pushUndoSnapshot(currentProject.script);
+
+      newScript[targetBlock].nodes.push(...newNodes);
+      newScript[targetBlock].expanded = true;
+
+      setCurrentProject({ ...currentProject, script: newScript });
+      setSelectedNodeIds(newIds);
+      setSelectedNodeId(newIds[newIds.length - 1]);
+      return { success: true, count: newNodes.length };
+    } catch (err: any) {
+      return { success: false, count: 0, error: err.message || 'Lỗi xử lý JSON' };
+    }
   };
 
   const duplicateSelectedNode = () => {
@@ -982,7 +1104,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     pushUndoSnapshot(currentProject.script);
     const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
     const flat = getAllFlatNodes(currentProject);
-    const nodesToDuplicate = flat.filter(n => targetIds.includes(n.id) && !roots.includes(n.id));
+    let nodesToDuplicate = flat.filter(n => targetIds.includes(n.id) && !roots.includes(n.id));
+    nodesToDuplicate = filterOutDescendants(nodesToDuplicate);
     if (nodesToDuplicate.length === 0) return;
 
     const clonedNodes = nodesToDuplicate.map(n => cloneNodeWithNewIds(n));
@@ -1201,15 +1324,31 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return;
       }
 
+      // Ctrl+Shift+C: Open JSON Export Modal
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'c' || e.key === 'C')) {
+        e.preventDefault();
+        setJsonModalMode('export');
+        setShowJsonModal(true);
+        return;
+      }
+
+      // Ctrl+Shift+V: Open JSON Import Modal
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && (e.key === 'v' || e.key === 'V')) {
+        e.preventDefault();
+        setJsonModalMode('import');
+        setShowJsonModal(true);
+        return;
+      }
+
       // Ctrl+C: Copy selected node(s)
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'c' || e.key === 'C')) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'c' || e.key === 'C')) {
         e.preventDefault();
         copySelectedNode();
         return;
       }
 
       // Ctrl+V: Paste copied node(s)
-      if ((e.ctrlKey || e.metaKey) && (e.key === 'v' || e.key === 'V')) {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'v' || e.key === 'V')) {
         e.preventDefault();
         pasteCopiedNode();
         return;
@@ -1274,6 +1413,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setShowShortcuts,
         showSaveToast,
         setShowSaveToast,
+        toastInfo,
+        showToast,
         showTestModal,
         setShowTestModal,
         showRuntimeModal,
@@ -1282,6 +1423,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setShowSettingsModal,
         showUpdateModal,
         setShowUpdateModal,
+        showJsonModal,
+        setShowJsonModal,
+        jsonModalMode,
+        setJsonModalMode,
+        insertNodesFromJson,
         updateInfo,
         isCheckingUpdate,
         checkAppUpdate,

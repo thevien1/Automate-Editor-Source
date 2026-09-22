@@ -6,6 +6,7 @@ import { NewProjectModal } from './components/modals/NewProjectModal';
 import { OpenProjectModal } from './components/modals/OpenProjectModal';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { UpdateModal } from './components/modals/UpdateModal';
+import { JsonCodeModal } from './components/modals/JsonCodeModal';
 import { TestModal } from './components/modals/TestModal';
 import { RuntimeModal } from './components/modals/RuntimeModal';
 import { SaveToast } from './components/common/SaveToast';
@@ -23,6 +24,9 @@ export const App: React.FC = () => {
     setShowSettingsModal,
     showUpdateModal,
     setShowUpdateModal,
+    showJsonModal,
+    setShowJsonModal,
+    jsonModalMode,
     updateInfo,
   } = useProject();
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
@@ -66,6 +70,11 @@ export const App: React.FC = () => {
         isOpen={showUpdateModal}
         onClose={() => setShowUpdateModal(false)}
         updateInfo={updateInfo}
+      />
+      <JsonCodeModal
+        isOpen={showJsonModal}
+        onClose={() => setShowJsonModal(false)}
+        initialMode={jsonModalMode}
       />
       <TestModal
         isOpen={showTestModal}

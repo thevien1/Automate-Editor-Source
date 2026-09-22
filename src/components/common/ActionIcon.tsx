@@ -59,6 +59,7 @@ import {
   Window,
   WindowStack,
 } from './Icons';
+import sourceDefaultIcons from '../../config/customDefaultIcons.json';
 
 /**
  * =========================================================================
@@ -800,7 +801,11 @@ export const getEffectiveCustomOverride = (
   actionType?: number,
   blockType?: string
 ): CustomIconOverride | undefined => {
-  const overrides = getStoredCustomIcons();
+  const localOverrides = getStoredCustomIcons();
+  const overrides: Record<string, CustomIconOverride> = {
+    ...((sourceDefaultIcons as Record<string, CustomIconOverride>) || {}),
+    ...localOverrides,
+  };
   const n = (actionName || '').trim().toLowerCase();
 
   // 1. Khớp chính xác theo actionName
