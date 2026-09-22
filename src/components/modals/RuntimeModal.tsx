@@ -47,6 +47,7 @@ import {
   getVirtualMouseClickCoordsScript,
 } from '../../utils/virtualMouseScript';
 import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
+import { resolveVariableString } from '../../utils/variableResolver';
 
 interface RuntimeModalProps {
   isOpen: boolean;
@@ -1611,16 +1612,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     let wasStoppedByAction = false;
 
     const resolveLoopVar = (s: string) => {
-      if (!s) return '';
-      let r = s;
-      const sortedEntries = Object.entries(threadVars).sort((a, b) => b[0].length - a[0].length);
-      for (const [k, v] of sortedEntries) {
-        const cleanK = k.replace(/^\$/, '');
-        r = r.replace(new RegExp(`\\$\\{${cleanK}\\}`, 'g'), v);
-        r = r.replace(new RegExp(`\\{\\{${cleanK}\\}\\}`, 'g'), v);
-        r = r.replace(new RegExp(`\\$${cleanK}(?![a-zA-Z0-9_])`, 'g'), v);
-      }
-      return r;
+      return resolveVariableString(s, threadVars);
     };
 
     const checkXPathInChrome = async (xpath: string): Promise<boolean> => {
@@ -1869,16 +1861,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     const actName = (act.display_text || '').toLowerCase();
 
     const resolveStr = (s: string) => {
-      if (!s) return '';
-      let r = s;
-      const sortedEntries = Object.entries(vars).sort((a, b) => b[0].length - a[0].length);
-      for (const [k, v] of sortedEntries) {
-        const cleanK = k.replace(/^\$/, '');
-        r = r.replace(new RegExp(`\\$\\{${cleanK}\\}`, 'g'), v);
-        r = r.replace(new RegExp(`\\{\\{${cleanK}\\}\\}`, 'g'), v);
-        r = r.replace(new RegExp(`\\$${cleanK}(?![a-zA-Z0-9_])`, 'g'), v);
-      }
-      return r;
+      return resolveVariableString(s, vars);
     };
 
     const getRawVal = (key: string, fb: string = '') => {
@@ -3404,6 +3387,71 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       vars[varName.replace(/^\$/, '')] = val;
       updateThreadLog(threadId, 'success', `✔ Set variable › ${varName} = "${val}"`);
     }
+    // Increase variable (type 2)
+    else if (actType === 2 || actName.includes('increase')) {
+      const currentVar = getRawVal('CURRENT_VAL', '$x');
+      const incByStr = getRawVal('INCREASE_BY', '1');
+      const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+      const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
+      const addVal = parseFloat(resolveStr(incByStr)) || 1;
+      const newVal = String(oldVal + addVal);
+      vars[varName] = newVal;
+      vars[cleanName] = newVal;
+      vars[`$${cleanName}`] = newVal;
+      updateThreadLog(threadId, 'success', `✔ Increase variable › ${varName} = ${newVal}`);
+    }
+    // Decrease variable (type 3)
+    else if (actType === 3 || actName.includes('decrease')) {
+      const currentVar = getRawVal('CURRENT_VAL', '$x');
+      const decByStr = getRawVal('DESCREASE_BY', '1');
+      const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+      const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
+      const subVal = parseFloat(resolveStr(decByStr)) || 1;
+      const newVal = String(oldVal - subVal);
+      vars[varName] = newVal;
+      vars[cleanName] = newVal;
+      vars[`$${cleanName}`] = newVal;
+      updateThreadLog(threadId, 'success', `✔ Decrease variable › ${varName} = ${newVal}`);
+    }
+    // Count (type 4)
+    else if (actType === 4 || actName === 'count') {
+      const rawVar = act.output_variable_name || 'count';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+      const rawArray = getRawVal('INPUT_ARRAY', '');
+      const resolvedArrayStr = rawArray.startsWith('$')
+        ? (vars[rawArray] ?? vars[rawArray.replace(/^\$/, '')] ?? '')
+        : resolveStr(rawArray);
+
+      let count = 0;
+      if (resolvedArrayStr) {
+        const trimmed = resolvedArrayStr.trim();
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              count = parsed.length;
+            }
+          } catch {
+            const inner = trimmed.slice(1, -1).trim();
+            count = inner ? inner.split(/[\r\n,]+/).map((s) => s.trim()).filter(Boolean).length : 0;
+          }
+        } else if (trimmed.includes('\n')) {
+          count = trimmed.split(/\r?\n/).filter((line) => line.length > 0).length;
+        } else if (trimmed.includes(',')) {
+          count = trimmed.split(',').filter(Boolean).length;
+        } else if (trimmed.length > 0) {
+          count = 1;
+        }
+      }
+
+      vars[varName] = String(count);
+      vars[cleanName] = String(count);
+      vars[`$${cleanName}`] = String(count);
+      updateThreadLog(threadId, 'success', `✔ Count › ${varName} = ${count}`);
+    }
     // Delay (type 7)
     else if (actType === 7 || actName === 'delay') {
       const ms = parseInt(getRawVal('MIN', '1000'), 10) || 1000;
@@ -3638,8 +3686,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
     // File read all lines (type 18)
     else if (actType === 18 || actName === 'file read all lines') {
-      const filePath = resolveStr(getRawVal('FILE_PATH', ''));
-      const varName = act.output_variable_name || 'file_lines';
+      const rawPath = getRawVal('FILE_PATH', '') || getRawVal('PATH', '');
+      const filePath = resolveStr(rawPath).trim().replace(/^["']|["']$/g, '');
+      const rawVar = act.output_variable_name || 'file_lines';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+
       try {
         let lines: string[] = [];
         if ((window as any).electronAPI?.fileAction) {
@@ -3653,10 +3705,31 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             throw new Error(res?.error || 'Failed to read file');
           }
         }
-        const serialized = JSON.stringify(lines);
+
+        const cleanLines = lines.map((l: any) => String(l ?? '').replace(/\r$/, ''));
+        const serialized = JSON.stringify(cleanLines);
+
         vars[varName] = serialized;
-        vars[varName.replace(/^\$/, '')] = serialized;
-        updateThreadLog(threadId, 'success', `✔ File read all lines › ${filePath} (${lines.length} lines)`);
+        vars[cleanName] = serialized;
+        vars[`$${cleanName}`] = serialized;
+
+        cleanLines.forEach((l, idx) => {
+          vars[`${cleanName}[${idx}]`] = l;
+          vars[`$${cleanName}[${idx}]`] = l;
+          vars[`${cleanName}_${idx}`] = l;
+          vars[`$${cleanName}_${idx}`] = l;
+          vars[`${cleanName}_${idx + 1}`] = l;
+          vars[`$${cleanName}_${idx + 1}`] = l;
+        });
+
+        vars[`${cleanName}.length`] = String(cleanLines.length);
+        vars[`$${cleanName}.length`] = String(cleanLines.length);
+        vars[`${cleanName}.Count`] = String(cleanLines.length);
+        vars[`$${cleanName}.Count`] = String(cleanLines.length);
+        vars[`${cleanName}_count`] = String(cleanLines.length);
+        vars[`$${cleanName}_count`] = String(cleanLines.length);
+
+        updateThreadLog(threadId, 'success', `✔ File read all lines › ${filePath} (${cleanLines.length} lines)`);
       } catch (e: any) {
         const failRes = await handleActionFailure('File read all lines', e.message);
         if (failRes === 'ERROR_STOP') return 'ERROR_STOP';

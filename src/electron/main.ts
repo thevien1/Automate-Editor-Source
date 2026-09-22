@@ -372,7 +372,10 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       if (!targetPath || !fs.existsSync(targetPath)) {
         return { success: false, error: 'File does not exist: ' + targetPath };
       }
-      const raw = fs.readFileSync(targetPath, 'utf-8');
+      let raw = fs.readFileSync(targetPath, 'utf-8');
+      if (raw.charCodeAt(0) === 0xFEFF) {
+        raw = raw.slice(1);
+      }
       const lines = raw.split(/\r?\n/);
       return { success: true, lines };
     }

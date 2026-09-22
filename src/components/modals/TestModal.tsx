@@ -8,6 +8,7 @@ import {
   getVirtualMouseClickCoordsScript,
 } from '../../utils/virtualMouseScript';
 import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
+import { resolveVariableString } from '../../utils/variableResolver';
 
 interface TestLog {
   time: string;
@@ -293,66 +294,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const getTime = () => new Date().toLocaleTimeString('vi-VN', { hour12: false });
 
   const resolveVars = (str: string, varsMap: Record<string, string>): string => {
-    if (!str) return '';
-    let res = str;
-
-    // 1. Resolve array index access: $arr[$loopIndex], $arr[0], $arr[$index], arr[$loopIndex], etc.
-    res = res.replace(/\$?([a-zA-Z0-9_]+)\[([^\]]+)\]/g, (match, arrName, rawIdx) => {
-      let idxStr = rawIdx.trim();
-      if (idxStr.startsWith('$')) {
-        idxStr = varsMap[idxStr] ?? varsMap[idxStr.replace(/^\$/, '')] ?? idxStr;
-      } else if (varsMap[idxStr] !== undefined) {
-        idxStr = varsMap[idxStr];
-      } else if (varsMap[`$${idxStr}`] !== undefined) {
-        idxStr = varsMap[`$${idxStr}`];
-      }
-
-      const idx = parseInt(idxStr, 10);
-      if (isNaN(idx)) return match;
-
-      // Check if specific element is already stored directly in varsMap
-      const directKey1 = `${arrName}[${idx}]`;
-      const directKey2 = `$${arrName}[${idx}]`;
-      if (varsMap[directKey1] !== undefined) return varsMap[directKey1];
-      if (varsMap[directKey2] !== undefined) return varsMap[directKey2];
-
-      // Retrieve the array from varsMap
-      const rawArray = varsMap[`$${arrName}`] ?? varsMap[arrName];
-      if (rawArray !== undefined) {
-        if (Array.isArray(rawArray)) {
-          return rawArray[idx] !== undefined ? String(rawArray[idx]) : '';
-        }
-        if (typeof rawArray === 'string') {
-          const trimmed = rawArray.trim();
-          if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
-            try {
-              const parsed = JSON.parse(trimmed);
-              if (Array.isArray(parsed)) {
-                return parsed[idx] !== undefined ? String(parsed[idx]) : '';
-              }
-            } catch (e) {}
-          }
-          const lines = rawArray.split(/\r?\n/);
-          if (idx >= 0 && idx < lines.length) {
-            return lines[idx];
-          }
-        }
-      }
-
-      return '';
-    });
-
-    // 2. Resolve normal variable references: ${varName}, {{varName}} and $varName
-    const entries = Object.entries(varsMap).sort((a, b) => b[0].length - a[0].length);
-    for (const [k, v] of entries) {
-      if (k.includes('[') || k.includes(']')) continue;
-      const rawK = k.startsWith('$') ? k.slice(1) : k;
-      res = res.replace(new RegExp(`\\$\\{${rawK}\\}`, 'g'), v);
-      res = res.replace(new RegExp(`\\{\\{${rawK}\\}\\}`, 'g'), v);
-      res = res.replace(new RegExp(`\\$${rawK}(?![a-zA-Z0-9_])`, 'g'), v);
-    }
-
-    return res;
+    return resolveVariableString(str, varsMap);
   };
 
   const getRawInputValue = (raw: any, key: string, fallback: string = ''): string => {
@@ -1054,8 +996,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           }
           await sleep(30);
         } else if (actType === 18 || actName === 'file read all lines') {
-          const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', '');
-          const resolvedPath = resolveVars(rawPath, vars);
+          const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', '') || getRawInputValue(act.raw_input, 'PATH', '');
+          const resolvedPath = resolveVars(rawPath, vars).trim().replace(/^["']|["']$/g, '');
           const rawVar = act.output_variable_name || 'file_lines';
           const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
           const cleanName = varName.replace(/^\$/, '');
@@ -1075,15 +1017,30 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 throw new Error(res?.error || 'Failed to read file');
               }
             }
-            const serialized = JSON.stringify(lines);
+            const cleanLines = lines.map((l: any) => String(l ?? '').replace(/\r$/, ''));
+            const serialized = JSON.stringify(cleanLines);
             vars[varName] = serialized;
             vars[cleanName] = serialized;
-            lines.forEach((l, idx) => {
+            vars[`$${cleanName}`] = serialized;
+
+            cleanLines.forEach((l, idx) => {
               vars[`${cleanName}[${idx}]`] = l;
-              vars[`${varName}[${idx}]`] = l;
+              vars[`$${cleanName}[${idx}]`] = l;
+              vars[`${cleanName}_${idx}`] = l;
+              vars[`$${cleanName}_${idx}`] = l;
+              vars[`${cleanName}_${idx + 1}`] = l;
+              vars[`$${cleanName}_${idx + 1}`] = l;
             });
+
+            vars[`${cleanName}.length`] = String(cleanLines.length);
+            vars[`$${cleanName}.length`] = String(cleanLines.length);
+            vars[`${cleanName}.Count`] = String(cleanLines.length);
+            vars[`$${cleanName}.Count`] = String(cleanLines.length);
+            vars[`${cleanName}_count`] = String(cleanLines.length);
+            vars[`$${cleanName}_count`] = String(cleanLines.length);
+
             if (stopSignalRef.current) break;
-            logActionResult(act, resolvedPath, { name: varName, value: lines });
+            logActionResult(act, resolvedPath, { name: varName, value: cleanLines });
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {

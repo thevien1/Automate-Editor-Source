@@ -79,8 +79,58 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   // Restore string literals
   expr = expr.replace(/__STR_LITERAL_(\d+)__/g, (_, idx) => strings[Number(idx)]);
 
+  // Resolve array indexing in conditions: $arr[0], $arr[$i], $arr[$loopIndex], arr[0], etc.
+  expr = expr.replace(/\$?([a-zA-Z0-9_]+)\[([^\]]+)\]/g, (match, arrName, rawIdx) => {
+    let idxStr = rawIdx.trim();
+    if (idxStr.startsWith('$')) {
+      idxStr = vars[idxStr] ?? vars[idxStr.replace(/^\$/, '')] ?? idxStr;
+    } else if (vars[idxStr] !== undefined) {
+      idxStr = vars[idxStr];
+    } else if (vars[`$${idxStr}`] !== undefined) {
+      idxStr = vars[`$${idxStr}`];
+    }
+
+    const idx = parseInt(idxStr, 10);
+    if (isNaN(idx)) return match;
+
+    const directKey1 = `${arrName}[${idx}]`;
+    const directKey2 = `$${arrName}[${idx}]`;
+    let val: string | undefined = undefined;
+    if (vars[directKey1] !== undefined) val = vars[directKey1];
+    else if (vars[directKey2] !== undefined) val = vars[directKey2];
+    else {
+      const rawArray = vars[`$${arrName}`] ?? vars[arrName];
+      if (rawArray !== undefined) {
+        if (Array.isArray(rawArray)) {
+          val = rawArray[idx] !== undefined ? String(rawArray[idx]) : '';
+        } else if (typeof rawArray === 'string') {
+          const trimmed = rawArray.trim();
+          if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+            try {
+              const parsed = JSON.parse(trimmed);
+              if (Array.isArray(parsed)) {
+                val = parsed[idx] !== undefined ? String(parsed[idx]) : '';
+              }
+            } catch (e) {}
+          }
+          if (val === undefined) {
+            const lines = rawArray.split(/\r?\n/);
+            if (idx >= 0 && idx < lines.length) {
+              val = lines[idx];
+            }
+          }
+        }
+      }
+    }
+
+    if (val === undefined) return '""';
+    if (/^(true|false)$/i.test(val)) return val.toLowerCase() === 'true' ? 'true' : 'false';
+    if (/^-?\d+(\.\d+)?$/.test(val)) return val;
+    return JSON.stringify(val);
+  });
+
   // Replace variables: longest variable names first to avoid partial replacements
-  const keys = Object.keys(vars).sort((a, b) => b.length - a.length);
+  const keys = Object.keys(vars).filter((k) => !k.includes('[') && !k.includes(']')).sort((a, b) => b.length - a.length);
   for (const k of keys) {
     const rawK = k.startsWith('$') ? k.slice(1) : k;
     const val = (vars[k] ?? '').trim();
