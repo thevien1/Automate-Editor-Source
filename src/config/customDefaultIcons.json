@@ -1,1 +1,17 @@
-{}
+{
+  "if": {
+    "color": "#a855f7",
+    "iconType": "bootstrap",
+    "iconValue": "diagram-3"
+  },
+  "normal block": {
+    "color": "#0284c7",
+    "iconType": "bootstrap",
+    "iconValue": "box-seam"
+  },
+  "for": {
+    "color": "#f59e0b",
+    "iconType": "bootstrap",
+    "iconValue": "repeat"
+  }
+}
