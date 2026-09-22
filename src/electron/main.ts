@@ -4,6 +4,7 @@ import fs from 'fs';
 import { spawn } from 'child_process';
 import * as XLSX from 'xlsx';
 import http from 'http';
+import WebSocket from 'ws';
 
 // Set Windows AppUserModelId for Taskbar icon grouping and display
 app.setAppUserModelId('com.svbrowser.automateeditor');

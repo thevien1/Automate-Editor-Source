@@ -239,6 +239,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const [statusText, setStatusText] = useState('Ready');
   const [logs, setLogs] = useState<TestLog[]>([]);
   const [copied, setCopied] = useState(false);
+  const [detectingPort, setDetectingPort] = useState(false);
 
   const stopSignalRef = useRef<boolean>(false);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -247,11 +248,34 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const targetNode = selectedNode || currentProject?.script.before_init;
   const actionName = targetNode?.display_text || (targetNode && 'nodes' in targetNode ? 'Block' : 'Action');
 
+  const autoDetectPort = async (): Promise<string | null> => {
+    setDetectingPort(true);
+    try {
+      const resp = await fetch('http://127.0.0.1:8725/api/v1/profiles?per_page=100', { signal: AbortSignal.timeout(1500) }).catch(() => null);
+      if (resp && resp.ok) {
+        const json = await resp.json();
+        const list = json?.data?.data || json?.data?.profiles || (Array.isArray(json?.data) ? json.data : []);
+        const running = list.find((p: any) => (p.status === 'running' || p.port) && (p.port || p.remote_debugging_port));
+        const foundPort = running?.port || running?.remote_debugging_port;
+        if (foundPort) {
+          const portStr = String(foundPort);
+          setPort(portStr);
+          localStorage.setItem('gpm_debug_port', portStr);
+          setDetectingPort(false);
+          return portStr;
+        }
+      }
+    } catch (e) {}
+    setDetectingPort(false);
+    return null;
+  };
+
   useEffect(() => {
     if (isOpen) {
       const savedPort = localStorage.getItem('gpm_debug_port');
       if (savedPort) setPort(savedPort);
       stopSignalRef.current = false;
+      autoDetectPort();
     } else {
       stopSignalRef.current = true;
       setIsRunning(false);
@@ -3213,7 +3237,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   };
 
   const handleStart = async () => {
-    const cleanPort = port.trim() || '43076';
+    let cleanPort = port.trim() || '43076';
     localStorage.setItem('gpm_debug_port', cleanPort);
     stopSignalRef.current = false;
     setIsRunning(true);
@@ -3310,6 +3334,21 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         };
 
         result = await checkPort();
+
+        if (!result || !result.success) {
+          // Tự động kiểm tra xem SV Browser có Profile nào đang chạy trên cổng khác không
+          try {
+            const detectedPort = await autoDetectPort();
+            if (detectedPort && detectedPort !== cleanPort) {
+              cleanPort = detectedPort;
+              const retryResult = await checkPort();
+              if (retryResult && retryResult.success) {
+                result = retryResult;
+                addLog('info', `✔ Tự động kết nối Profile SV Browser trên cổng ${detectedPort}`);
+              }
+            }
+          } catch (e) {}
+        }
 
         if (!result || !result.success) {
           const errorMsg =
@@ -3547,15 +3586,29 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               </label>
 
               <div className="flex items-center space-x-2.5">
-                {/* Port Input */}
-                <input
-                  type="text"
-                  value={port}
-                  onChange={(e) => setPort(e.target.value)}
-                  placeholder="43076"
-                  disabled={isRunning}
-                  className="w-48 px-3 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none font-mono"
-                />
+                {/* Port Input with Auto-detect button */}
+                <div className="relative flex items-center">
+                  <input
+                    type="text"
+                    value={port}
+                    onChange={(e) => {
+                      setPort(e.target.value);
+                      localStorage.setItem('gpm_debug_port', e.target.value.trim());
+                    }}
+                    placeholder="43076"
+                    disabled={isRunning}
+                    className="w-48 pl-3 pr-8 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => autoDetectPort()}
+                    disabled={isRunning || detectingPort}
+                    title="Tự động dò cổng từ profile đang mở trên SV Browser"
+                    className={`absolute right-1.5 px-1 py-0.5 text-xs rounded text-slate-400 hover:text-blue-500 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors ${detectingPort ? 'animate-spin' : ''}`}
+                  >
+                    🔄
+                  </button>
+                </div>
 
                 {/* Engine Dropdown */}
                 <div className="relative flex-1">
