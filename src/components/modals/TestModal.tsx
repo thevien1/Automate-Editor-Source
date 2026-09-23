@@ -462,6 +462,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           if (condMet) {
             const res = await executeNodes(block.nodes, vars, addLog);
             if (res === 'STOP') return 'STOP';
+            if (res === 'BREAK_LOOP') return 'BREAK_LOOP';
+            if (res === 'NEXT_LOOP') return 'NEXT_LOOP';
           }
         } else if (bText.startsWith('else if') || block.$type?.includes('ElseIfBlockNode')) {
           const cond = block.condition || '';
@@ -473,6 +475,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               lastConditionBranchMet = true;
               const res = await executeNodes(block.nodes, vars, addLog);
               if (res === 'STOP') return 'STOP';
+              if (res === 'BREAK_LOOP') return 'BREAK_LOOP';
+              if (res === 'NEXT_LOOP') return 'NEXT_LOOP';
             }
           }
         } else if (bText.startsWith('else') || block.$type?.includes('ElseBlockNode')) {
@@ -482,6 +486,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             lastConditionBranchMet = true;
             const res = await executeNodes(block.nodes, vars, addLog);
             if (res === 'STOP') return 'STOP';
+            if (res === 'BREAK_LOOP') return 'BREAK_LOOP';
+            if (res === 'NEXT_LOOP') return 'NEXT_LOOP';
           }
         } else if (bText.startsWith('for') || block.$type?.includes('ForBlockNode')) {
           lastConditionBranchMet = false;
@@ -491,6 +497,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const start = parseInt(rawStart, 10) || 0;
           const end = parseInt(rawEnd, 10) || 0;
           const step = parseInt(rawStep, 10) || 1;
+
+          addLog('info', `🔁 Bắt đầu vòng lặp For (${start} ➔ ${end}, bước nhảy ${step})`);
 
           for (let iter = start; iter < end && !stopSignalRef.current; iter += step) {
             vars['$loopIndex'] = String(iter);
@@ -503,21 +511,49 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             vars['i'] = String(iter);
             const res = await executeNodes(block.nodes, vars, addLog);
             if (res === 'STOP') return 'STOP';
+            if (res === 'BREAK_LOOP') {
+              addLog('info', `🚪 Thoát khỏi vòng lặp For thành công (Exit loop) tại $loopIndex = ${iter}`);
+              break;
+            }
+            if (res === 'NEXT_LOOP') {
+              addLog('info', `⏭ Chuyển sang lượt lặp tiếp theo (Next loop)`);
+              continue;
+            }
           }
+          addLog('success', `✔ Hoàn thành vòng lặp For`);
         } else if (bText.startsWith('while') || block.$type?.includes('WhileBlockNode')) {
           lastConditionBranchMet = false;
           let count = 0;
-          while (await evaluateGpmConditionAsync(block.condition || '', vars, checkXPathInChromeTest) && count < 50 && !stopSignalRef.current) {
+          addLog('info', `🔁 Bắt đầu vòng lặp While [${block.condition || ''}]`);
+          while (await evaluateGpmConditionAsync(block.condition || '', vars, checkXPathInChromeTest) && count < 100 && !stopSignalRef.current) {
+            vars['$loopIndex'] = String(count);
+            vars['loopIndex'] = String(count);
+            vars['$loop_index'] = String(count);
+            vars['loop_index'] = String(count);
+            vars['$index'] = String(count);
+            vars['index'] = String(count);
+            vars['$i'] = String(count);
+            vars['i'] = String(count);
             count++;
             const res = await executeNodes(block.nodes, vars, addLog);
             if (res === 'STOP') return 'STOP';
+            if (res === 'BREAK_LOOP') {
+              addLog('info', `🚪 Thoát khỏi vòng lặp While thành công (Exit loop)`);
+              break;
+            }
+            if (res === 'NEXT_LOOP') {
+              addLog('info', `⏭ Chuyển sang lượt lặp tiếp theo (Next loop)`);
+              continue;
+            }
           }
-          addLog('success', `✔ While loop completed`);
+          addLog('success', `✔ Hoàn thành vòng lặp While`);
         } else {
           // Normal block
           lastConditionBranchMet = false;
           const res = await executeNodes(block.nodes, vars, addLog);
           if (res === 'STOP') return 'STOP';
+          if (res === 'BREAK_LOOP') return 'BREAK_LOOP';
+          if (res === 'NEXT_LOOP') return 'NEXT_LOOP';
           addLog('success', `✔ ${block.display_text || 'Block'}`);
         }
       } else {
@@ -532,6 +568,22 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           stopSignalRef.current = true;
           addLog('info', `⏹ Stop action: Gặp lệnh dừng, dừng toàn bộ kịch bản.`);
           return 'STOP';
+        }
+
+        // Exit loop (type 5)
+        if (actType === 5 || actName === 'exit loop') {
+          logActionStart(act, 'Exit loop');
+          addLog('info', `🚪 Exit loop › Kích hoạt lệnh thoát khỏi vòng lặp`);
+          logActionResult(act, 'Exit loop');
+          return 'BREAK_LOOP';
+        }
+
+        // Next loop (type 6)
+        if (actType === 6 || actName === 'next loop') {
+          logActionStart(act, 'Next loop');
+          addLog('info', `⏭ Next loop › Bỏ qua các lệnh còn lại, chuyển sang lượt lặp tiếp theo`);
+          logActionResult(act, 'Next loop');
+          return 'NEXT_LOOP';
         }
 
         if (actType === 1 || actName === 'set variable') {

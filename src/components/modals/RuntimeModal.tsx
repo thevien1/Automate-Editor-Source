@@ -1689,7 +1689,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       }
     };
 
-    const executeThreadNodes = async (nodesToRun: WorkflowNode[]): Promise<'STOP' | 'CONTINUE' | 'ERROR_STOP'> => {
+    const executeThreadNodes = async (nodesToRun: WorkflowNode[]): Promise<'STOP' | 'CONTINUE' | 'ERROR_STOP' | 'BREAK_LOOP' | 'NEXT_LOOP'> => {
       let lastConditionBranchMet = false;
 
       for (let i = 0; i < nodesToRun.length; i++) {
@@ -1709,7 +1709,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             lastConditionBranchMet = condMet;
             if (condMet) {
               const res = await executeThreadNodes(block.nodes);
-              if (res === 'STOP' || res === 'ERROR_STOP') return res;
+              if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
             }
           } else if (bText.startsWith('else if') || block.$type?.includes('ElseIfBlockNode')) {
             const cond = block.condition || '';
@@ -1720,7 +1720,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               if (condMet) {
                 lastConditionBranchMet = true;
                 const res = await executeThreadNodes(block.nodes);
-                if (res === 'STOP' || res === 'ERROR_STOP') return res;
+                if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
               }
             }
           } else if (bText.startsWith('else') || block.$type?.includes('ElseBlockNode')) {
@@ -1729,7 +1729,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               updateThreadLog(threadId, 'info', `🔍 Nhánh Else › Chạy khối lệnh Else`);
               lastConditionBranchMet = true;
               const res = await executeThreadNodes(block.nodes);
-              if (res === 'STOP' || res === 'ERROR_STOP') return res;
+              if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
             }
           } else if (bText.startsWith('for') || block.$type?.includes('ForBlockNode')) {
             lastConditionBranchMet = false;
@@ -1739,6 +1739,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             const start = parseInt(rawStart, 10) || 0;
             const end = parseInt(rawEnd, 10) || 0;
             const step = parseInt(rawStep, 10) || 1;
+
+            updateThreadLog(threadId, 'info', `🔁 Bắt đầu vòng lặp For (${start} ➔ ${end}, bước nhảy ${step})`);
 
             for (let iter = start; iter < end && !stopSignalRef.current; iter += step) {
               threadVars['$loopIndex'] = String(iter);
@@ -1751,25 +1753,44 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               threadVars['i'] = String(iter);
               const res = await executeThreadNodes(block.nodes);
               if (res === 'STOP' || res === 'ERROR_STOP') return res;
+              if (res === 'BREAK_LOOP') {
+                updateThreadLog(threadId, 'info', `🚪 Thoát khỏi vòng lặp For thành công (Exit loop) tại $loopIndex = ${iter}`);
+                break;
+              }
+              if (res === 'NEXT_LOOP') continue;
             }
           } else if (bText.startsWith('while') || block.$type?.includes('WhileBlockNode')) {
             lastConditionBranchMet = false;
             let count = 0;
+            updateThreadLog(threadId, 'info', `🔁 Bắt đầu vòng lặp While [${block.condition || ''}]`);
             while (await evaluateGpmConditionAsync(block.condition || '', threadVars, checkXPathInChrome) && count < 100 && !stopSignalRef.current) {
+              threadVars['$loopIndex'] = String(count);
+              threadVars['loopIndex'] = String(count);
+              threadVars['$loop_index'] = String(count);
+              threadVars['loop_index'] = String(count);
+              threadVars['$index'] = String(count);
+              threadVars['index'] = String(count);
+              threadVars['$i'] = String(count);
+              threadVars['i'] = String(count);
               count++;
               const res = await executeThreadNodes(block.nodes);
               if (res === 'STOP' || res === 'ERROR_STOP') return res;
+              if (res === 'BREAK_LOOP') {
+                updateThreadLog(threadId, 'info', `🚪 Thoát khỏi vòng lặp While thành công (Exit loop)`);
+                break;
+              }
+              if (res === 'NEXT_LOOP') continue;
             }
           } else {
             lastConditionBranchMet = false;
             const res = await executeThreadNodes(block.nodes);
-            if (res === 'STOP' || res === 'ERROR_STOP') return res;
+            if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
           }
         } else {
           lastConditionBranchMet = false;
           const act = n as ActionNode;
           const res = await executeThreadAction(threadId, activePort, act, threadVars);
-          if (res === 'STOP' || res === 'ERROR_STOP') return res;
+          if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
         }
       }
       return 'CONTINUE';
@@ -1918,6 +1939,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         await stopProfileApi(vars.$profileId);
       }
       return 'STOP';
+    }
+
+    // Exit loop (type 5)
+    if (actType === 5 || actName === 'exit loop') {
+      updateThreadLog(threadId, 'info', `🚪 Exit loop: Kích hoạt lệnh thoát khỏi vòng lặp hiện tại`, 'Exit loop');
+      return 'BREAK_LOOP';
+    }
+
+    // Next loop (type 6)
+    if (actType === 6 || actName === 'next loop') {
+      updateThreadLog(threadId, 'info', `⏭ Next loop: Chuyển sang lượt lặp tiếp theo`, 'Next loop');
+      return 'NEXT_LOOP';
     }
 
     // Go to URL (type 39)

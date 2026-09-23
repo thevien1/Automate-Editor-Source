@@ -9,7 +9,8 @@ const releaseDir = path.join(rootDir, 'release');
 // 1. Tự động đóng các tiến trình SV Browser Automate Editor đang chạy để không bị khóa file
 try {
   console.log('🔄 Đang kiểm tra và đóng các phiên bản cũ đang chạy...');
-  execSync('taskkill /F /IM "SV Browser Automate Editor.exe" 2>nul', { stdio: 'ignore' });
+  execSync('powershell -Command "Stop-Process -Name \\"SV Browser Automate Editor\\" -Force -ErrorAction SilentlyContinue"', { stdio: 'ignore' });
+  execSync('taskkill /F /IM "SV Browser Automate Editor.exe" /T', { stdio: 'ignore' });
 } catch {
   // Không có tiến trình nào đang chạy, bỏ qua
 }
