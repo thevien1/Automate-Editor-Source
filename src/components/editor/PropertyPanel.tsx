@@ -171,8 +171,14 @@ export const PropertyPanel: React.FC = () => {
       name === 'close tab' ||
       name === 'close all tab' ||
       name === 'go to url' ||
+      name === 'reload' ||
+      name === 'reload page' ||
+      name.includes('reload') ||
+      name === 'back url' ||
+      name === 'get url' ||
+      name === 'get current url' ||
       name.includes('wait url changed') ||
-      [36, 37, 38, 73, 39, 43].includes(type as number)
+      [36, 37, 38, 73, 39, 40, 41, 42, 43].includes(type as number)
     ) {
       return <NavigationProps {...commonProps} />;
     }

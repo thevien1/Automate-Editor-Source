@@ -174,5 +174,44 @@ export const NavigationProps: React.FC<ActionPropsCommon> = ({
     );
   }
 
+  // Reload (type 41)
+  if (name === 'reload' || name === 'reload page' || type === 41) {
+    return (
+      <div className="space-y-4">
+        <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />
+      </div>
+    );
+  }
+
+  // Back URL (type 40)
+  if (name === 'back url' || type === 40) {
+    return (
+      <div className="space-y-4">
+        <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />
+      </div>
+    );
+  }
+
+  // Get URL (type 42)
+  if (name === 'get url' || name === 'get current url' || type === 42) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
+            Output Variable Name
+          </label>
+          <input
+            type="text"
+            value={actionNode.output_variable_name || ''}
+            onChange={(e) => updateNode(actionNode.id, { output_variable_name: e.target.value })}
+            placeholder=""
+            className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
+          />
+        </div>
+        <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />
+      </div>
+    );
+  }
+
   return null;
 };

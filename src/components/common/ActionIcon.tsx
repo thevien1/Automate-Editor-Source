@@ -282,6 +282,12 @@ export const ACTION_ICON_CONFIG: Record<string, ActionConfigItem> = {
     icon: <RotateCw className="w-3.5 h-3.5" />,
     label: 'Reload page',
   },
+  'reload': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <RotateCw className="w-3.5 h-3.5" />,
+    label: 'Reload',
+  },
   'get current url': {
     color: '#1677ff',
     darkColor: '#38bdf8',
@@ -763,6 +769,9 @@ export const getActionIconConfig = (
     return cleanName.includes('export')
       ? ACTION_ICON_CONFIG['export cookie']
       : ACTION_ICON_CONFIG['import cookie'];
+  }
+  if (cleanName.includes('reload')) {
+    return ACTION_ICON_CONFIG['reload'];
   }
   if (cleanName.includes('image')) {
     return ACTION_ICON_CONFIG['image search'];

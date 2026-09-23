@@ -1632,25 +1632,21 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
     }
 
     if (action === 'reload') {
-      const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
-      if (Array.isArray(list)) {
-        const page = list.find((t: any) => t.type === 'page');
-        if (page && page.webSocketDebuggerUrl) {
-          await sendWs(page.webSocketDebuggerUrl, 'Page.reload');
-          return { success: true };
-        }
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        await sendWs(page.webSocketDebuggerUrl, 'Page.reload');
+        return { success: true };
       }
+      return { success: false, error: 'No active Chrome page found to reload' };
     }
 
     if (action === 'backUrl') {
-      const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
-      if (Array.isArray(list)) {
-        const page = list.find((t: any) => t.type === 'page');
-        if (page && page.webSocketDebuggerUrl) {
-          await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', { expression: 'window.history.back()' });
-          return { success: true };
-        }
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', { expression: 'window.history.back()' });
+        return { success: true };
       }
+      return { success: false, error: 'No active Chrome page found for back URL' };
     }
 
     if (action === 'setCookies') {

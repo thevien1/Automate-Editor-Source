@@ -2078,6 +2078,63 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       }
       await sleep(200);
     }
+    // Reload (type 41)
+    else if (actType === 41 || actName === 'reload' || actName === 'reload page') {
+      updateThreadLog(threadId, 'info', '▶ Reload › Tải lại trang web hiện tại', 'Reload');
+      if ((window as any).electronAPI?.cdpAction) {
+        await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'reload',
+        });
+      }
+      await sleep(600);
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: { expression: VIRTUAL_MOUSE_SCRIPT },
+          }).catch(() => {});
+        }
+      } catch (e) {}
+      updateThreadLog(threadId, 'success', '✔ Reload › Đã tải lại trang');
+      await sleep(100);
+    }
+    // Back URL (type 40)
+    else if (actType === 40 || actName === 'back url') {
+      updateThreadLog(threadId, 'info', '▶ Back URL › Quay lại trang trước', 'Back URL');
+      if ((window as any).electronAPI?.cdpAction) {
+        await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'backUrl',
+        });
+      }
+      await sleep(600);
+      updateThreadLog(threadId, 'success', '✔ Back URL › Đã quay lại trang trước');
+      await sleep(100);
+    }
+    // Get URL (type 42)
+    else if (actType === 42 || actName === 'get url' || actName === 'get current url') {
+      const rawVar = act.output_variable_name || 'current_url';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+      updateThreadLog(threadId, 'info', `▶ Get URL › Lấy địa chỉ trang hiện tại vào biến ${varName}`, 'Get URL');
+
+      let currentUrl = '';
+      if ((window as any).electronAPI?.cdpAction) {
+        const evalRes = await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: { expression: 'window.location.href' },
+        });
+        currentUrl = evalRes?.result?.value || '';
+      }
+
+      vars[varName] = currentUrl;
+      vars[cleanName] = currentUrl;
+      updateThreadLog(threadId, 'success', `✔ Get URL › ${varName} = "${currentUrl}"`);
+      await sleep(100);
+    }
     // Wait element (type 44)
     else if (actType === 44 || actName === 'wait element') {
       const xpath = resolveStr(act.element_xpath || '');

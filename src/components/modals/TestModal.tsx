@@ -3102,13 +3102,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           }
           await sleep(50);
           addLog('success', '✔ Back URL');
-        } else if (actType === 41 || actName === 'reload') {
+        } else if (actType === 41 || actName === 'reload' || actName === 'reload page') {
           if ((window as any).electronAPI?.cdpAction) {
             await (window as any).electronAPI.cdpAction({ port: port.trim() || '43076', action: 'reload' });
           }
           await sleep(50);
           addLog('success', '✔ Reload');
-        } else if (actType === 42 || actName === 'get url') {
+        } else if (actType === 42 || actName === 'get url' || actName === 'get current url') {
           const rawVar = act.output_variable_name || 'current_url';
           const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
           const cleanName = varName.replace(/^\$/, '');
