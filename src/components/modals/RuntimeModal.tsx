@@ -2689,10 +2689,26 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               action: 'getFrameTree',
               payload: { targetId: vars.$activePopupTargetId },
             });
-            const childFrames = treeRes?.result?.frameTree?.childFrames || [];
-            const matched = childFrames.find((cf: any) => {
-              const u = cf.frame?.url || '';
-              return frameInfo.src && (u === frameInfo.src || u.includes(frameInfo.src) || frameInfo.src.includes(u));
+            const collectFrames = (root: any): any[] => {
+              if (!root) return [];
+              const list: any[] = [];
+              if (root.frame) list.push(root);
+              const kids = root.childFrames || root.result?.frameTree?.childFrames || root.frameTree?.childFrames;
+              if (Array.isArray(kids)) {
+                for (const k of kids) list.push(...collectFrames(k));
+              }
+              return list;
+            };
+            const allFrames = collectFrames(treeRes?.result?.frameTree || treeRes?.frameTree);
+            const cleanSrc = (frameInfo.src || '').split('#')[0].split('?')[0].trim().toLowerCase();
+            const matched = allFrames.find((cf: any) => {
+              const u = (cf.frame?.url || '').trim().toLowerCase();
+              if (!u) return false;
+              const cleanU = u.split('#')[0].split('?')[0];
+              if (frameInfo.src && (u === frameInfo.src.toLowerCase() || u.includes(frameInfo.src.toLowerCase()) || frameInfo.src.toLowerCase().includes(u))) return true;
+              if (cleanSrc && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) return true;
+              if (frameInfo.name && cf.frame?.name && cf.frame.name === frameInfo.name) return true;
+              return false;
             });
             if (matched && matched.frame?.id) {
               const worldRes = await (window as any).electronAPI?.cdpAction({
@@ -2710,7 +2726,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             }
           } catch (e) {}
 
-          updateThreadLog(threadId, 'success', `✔ Switch to frame › Đã chuyển vào iframe: ${xpath}`);
+          if (vars.$currentFrameContextId) {
+            updateThreadLog(threadId, 'success', `✔ Switch to frame › Đã chuyển vào iframe: ${xpath} (Context ID: ${vars.$currentFrameContextId})`);
+          } else {
+            updateThreadLog(threadId, 'success', `✔ Switch to frame › Đã chuyển vào iframe: ${xpath}`);
+          }
         } else {
           const failRes = await handleActionFailure('Switch to frame', `Không tìm thấy iframe với XPath: ${xpath}`);
           if (failRes === 'ERROR_STOP') return 'ERROR_STOP';

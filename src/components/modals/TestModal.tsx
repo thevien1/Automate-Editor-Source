@@ -2021,9 +2021,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 if (!el) return { found: false };
                 const rect = el.getBoundingClientRect();
                 const src = el.src || el.getAttribute('src') || '';
+                const name = el.name || el.getAttribute('name') || el.id || '';
                 return {
                   found: true,
                   src,
+                  name,
                   left: Math.round(rect.left),
                   top: Math.round(rect.top),
                 };
@@ -2056,10 +2058,26 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     action: 'getFrameTree',
                     payload: { targetId: vars.$activePopupTargetId },
                   });
-                  const childFrames = treeRes?.result?.frameTree?.childFrames || [];
-                  const matched = childFrames.find((cf: any) => {
-                    const u = cf.frame?.url || '';
-                    return frameInfo.src && (u === frameInfo.src || u.includes(frameInfo.src) || frameInfo.src.includes(u));
+                  const collectFrames = (root: any): any[] => {
+                    if (!root) return [];
+                    const list: any[] = [];
+                    if (root.frame) list.push(root);
+                    const kids = root.childFrames || root.result?.frameTree?.childFrames || root.frameTree?.childFrames;
+                    if (Array.isArray(kids)) {
+                      for (const k of kids) list.push(...collectFrames(k));
+                    }
+                    return list;
+                  };
+                  const allFrames = collectFrames(treeRes?.result?.frameTree || treeRes?.frameTree);
+                  const cleanSrc = (frameInfo.src || '').split('#')[0].split('?')[0].trim().toLowerCase();
+                  const matched = allFrames.find((cf: any) => {
+                    const u = (cf.frame?.url || '').trim().toLowerCase();
+                    if (!u) return false;
+                    const cleanU = u.split('#')[0].split('?')[0];
+                    if (frameInfo.src && (u === frameInfo.src.toLowerCase() || u.includes(frameInfo.src.toLowerCase()) || frameInfo.src.toLowerCase().includes(u))) return true;
+                    if (cleanSrc && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) return true;
+                    if (frameInfo.name && cf.frame?.name && cf.frame.name === frameInfo.name) return true;
+                    return false;
                   });
                   if (matched && matched.frame?.id) {
                     const worldRes = await (window as any).electronAPI.cdpAction({
@@ -2078,7 +2096,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 }
               } catch (e) {}
 
-              addLog('success', `✔ Switch to frame › ${resolvedXPath}`);
+              if (vars.$currentFrameContextId) {
+                addLog('success', `✔ Switch to frame › ${resolvedXPath} (Context ID: ${vars.$currentFrameContextId})`);
+              } else {
+                addLog('success', `✔ Switch to frame › ${resolvedXPath}`);
+              }
             } else {
               if (contOnError) {
                 addLog('info', `⚠ Switch to frame › Frame not found (Continue on error)`);
