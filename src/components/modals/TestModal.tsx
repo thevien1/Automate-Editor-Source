@@ -2267,6 +2267,121 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             }
           }
           await sleep(40);
+        } else if (actType === 64 || actName === 'import cookie') {
+          const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', getRawInputValue(act.raw_input, 'COOKIE_FILE', ''));
+          const resolvedPath = resolveVars(rawPath, vars).trim();
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          logActionStart(act, resolvedPath || 'Import cookie');
+          addLog('info', `▶ Import cookie › File: "${resolvedPath || '(từ biến/mặc định)'}"`);
+
+          try {
+            let cookieData: any = resolvedPath;
+            if (resolvedPath && (window as any).electronAPI?.fileAction) {
+              const fileCheck = await (window as any).electronAPI.fileAction({
+                action: 'exists',
+                payload: { path: resolvedPath },
+              }).catch(() => null);
+
+              if (fileCheck?.exists) {
+                const readRes = await (window as any).electronAPI.fileAction({
+                  action: 'readText',
+                  payload: { path: resolvedPath },
+                }).catch(() => null);
+                if (readRes?.success && readRes.text) {
+                  cookieData = readRes.text;
+                }
+              }
+            }
+
+            if (!cookieData && (vars.$cookie || vars.cookie)) {
+              cookieData = vars.$cookie || vars.cookie;
+            }
+
+            if (!cookieData) {
+              if (contOnError) {
+                addLog('info', `⚠ Import cookie › File hoặc dữ liệu cookie trống (Continue on error)`);
+              } else {
+                addLog('error', `✕ Import cookie thất bại: Không tìm thấy file cookie hoặc dữ liệu cookie trống`);
+                break;
+              }
+            } else {
+              const cdpRes = await (window as any).electronAPI?.cdpAction({
+                port: port.trim() || '43076',
+                action: 'setCookies',
+                payload: { cookies: cookieData },
+              });
+
+              if (cdpRes?.success) {
+                addLog('success', `✔ Import cookie › Đã import thành công ${cdpRes.count ?? ''} cookies vào trình duyệt`);
+              } else {
+                if (contOnError) {
+                  addLog('info', `⚠ Import cookie › ${cdpRes?.error || 'Lỗi'} (Continue on error)`);
+                } else {
+                  addLog('error', `✕ Import cookie thất bại: ${cdpRes?.error || 'Lỗi khi nạp cookie'}`);
+                  break;
+                }
+              }
+            }
+          } catch (err: any) {
+            if (contOnError) {
+              addLog('info', `⚠ Import cookie error: ${err.message} (Continue on error)`);
+            } else {
+              addLog('error', `✕ Import cookie exception: ${err.message}`);
+              break;
+            }
+          }
+          await sleep(40);
+        } else if (actType === 65 || actName === 'export cookie') {
+          const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', getRawInputValue(act.raw_input, 'COOKIE_FILE', ''));
+          const resolvedPath = resolveVars(rawPath, vars).trim();
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          logActionStart(act, resolvedPath || 'Export cookie');
+          addLog('info', `▶ Export cookie › ${resolvedPath ? `Lưu vào: "${resolvedPath}"` : 'Lưu vào biến'}`);
+
+          try {
+            const cdpRes = await (window as any).electronAPI?.cdpAction({
+              port: port.trim() || '43076',
+              action: 'getCookies',
+            });
+
+            if (cdpRes?.success && Array.isArray(cdpRes.cookies)) {
+              const jsonStr = JSON.stringify(cdpRes.cookies, null, 2);
+              vars.$cookie = jsonStr;
+              vars.cookie = jsonStr;
+              if (act.output_variable_name) {
+                const rawVar = act.output_variable_name;
+                const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+                const cleanName = varName.replace(/^\$/, '');
+                vars[varName] = jsonStr;
+                vars[cleanName] = jsonStr;
+              }
+
+              if (resolvedPath && (window as any).electronAPI?.fileAction) {
+                await (window as any).electronAPI.fileAction({
+                  action: 'writeText',
+                  payload: { path: resolvedPath, text: jsonStr },
+                });
+                addLog('success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies ra file: ${resolvedPath}`);
+              } else {
+                addLog('success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies vào biến`);
+              }
+            } else {
+              if (contOnError) {
+                addLog('info', `⚠ Export cookie › ${cdpRes?.error || 'Lỗi'} (Continue on error)`);
+              } else {
+                addLog('error', `✕ Export cookie thất bại: ${cdpRes?.error || 'Lỗi khi lấy cookie'}`);
+                break;
+              }
+            }
+          } catch (err: any) {
+            if (contOnError) {
+              addLog('info', `⚠ Export cookie error: ${err.message} (Continue on error)`);
+            } else {
+              addLog('error', `✕ Export cookie exception: ${err.message}`);
+              break;
+            }
+          }
+          await sleep(40);
         } else if (actType === 39 || actName === 'go to url') {
           let urlVal = 'https://';
           let timeoutSec = 60;

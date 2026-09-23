@@ -58,6 +58,7 @@ import {
   Home,
   Window,
   WindowStack,
+  Cookie,
 } from './Icons';
 import sourceDefaultIcons from '../../config/customDefaultIcons.json';
 
@@ -617,6 +618,20 @@ export const ACTION_ICON_CONFIG: Record<string, ActionConfigItem> = {
     icon: <ListOrdered className="w-3.5 h-3.5" />,
     label: 'Count variable',
   },
+
+  // --- COOKIE ---
+  'import cookie': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <Cookie className="w-3.5 h-3.5" />,
+    label: 'Import cookie',
+  },
+  'export cookie': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <Cookie className="w-3.5 h-3.5" />,
+    label: 'Export cookie',
+  },
 };
 
 // Ánh xạ nhanh theo Action Type số (ID nguyên thủy của GScript)
@@ -671,6 +686,8 @@ export const ACTION_TYPE_MAP: Record<number, string> = {
   52: 'mouse release',
   53: 'mouse scroll',
   54: 'key press',
+  64: 'import cookie',
+  65: 'export cookie',
   71: 'append excel file',
   72: 'folder get file list',
   73: 'close all tab',
@@ -741,6 +758,11 @@ export const getActionIconConfig = (
   }
   if (cleanName.includes('variable')) {
     return ACTION_ICON_CONFIG['set variable'];
+  }
+  if (cleanName.includes('cookie')) {
+    return cleanName.includes('export')
+      ? ACTION_ICON_CONFIG['export cookie']
+      : ACTION_ICON_CONFIG['import cookie'];
   }
   if (cleanName.includes('image')) {
     return ACTION_ICON_CONFIG['image search'];

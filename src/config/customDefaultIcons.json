@@ -13,5 +13,15 @@
     "color": "#f59e0b",
     "iconType": "bootstrap",
     "iconValue": "repeat"
+  },
+  "import cookie": {
+    "color": "#1677ff",
+    "iconType": "bootstrap",
+    "iconValue": "cookie"
+  },
+  "export cookie": {
+    "color": "#1677ff",
+    "iconType": "bootstrap",
+    "iconValue": "cookie"
   }
 }

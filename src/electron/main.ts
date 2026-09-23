@@ -1653,6 +1653,81 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       }
     }
 
+    if (action === 'setCookies') {
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+      await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
+
+      let cookieList = payload?.cookies;
+      if (typeof cookieList === 'string') {
+        try {
+          cookieList = JSON.parse(cookieList);
+        } catch {
+          cookieList = cookieList.split(';').map((pair: string) => {
+            const idx = pair.indexOf('=');
+            if (idx === -1) return null;
+            return {
+              name: pair.substring(0, idx).trim(),
+              value: pair.substring(idx + 1).trim(),
+            };
+          }).filter(Boolean);
+        }
+      }
+
+      if (!Array.isArray(cookieList)) {
+        return { success: false, error: 'Invalid cookie data (expected JSON array or cookie string)' };
+      }
+
+      const fallbackUrl = (page.url && page.url.startsWith('http')) ? page.url : undefined;
+
+      const formattedCookies = cookieList.map((c: any) => {
+        if (!c || !c.name) return null;
+        const cookie: any = {
+          name: String(c.name),
+          value: String(c.value ?? ''),
+        };
+        if (c.domain) cookie.domain = String(c.domain);
+        if (c.path) cookie.path = String(c.path);
+        if (c.url) cookie.url = String(c.url);
+        if (!cookie.domain && !cookie.url && fallbackUrl) {
+          cookie.url = fallbackUrl;
+        }
+        if (typeof c.secure === 'boolean') cookie.secure = c.secure;
+        if (typeof c.httpOnly === 'boolean') cookie.httpOnly = c.httpOnly;
+        const expiresVal = c.expires ?? c.expirationDate;
+        if (typeof expiresVal === 'number' && expiresVal > 0) {
+          cookie.expires = Math.floor(expiresVal);
+        }
+        const ss = String(c.sameSite || '').toLowerCase();
+        if (ss === 'strict') cookie.sameSite = 'Strict';
+        else if (ss === 'lax') cookie.sameSite = 'Lax';
+        else if (ss === 'none' || ss === 'no_restriction') cookie.sameSite = 'None';
+
+        return cookie;
+      }).filter(Boolean);
+
+      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: formattedCookies });
+      if (res && res.success) {
+        return { success: true, count: formattedCookies.length };
+      }
+      return { success: false, error: res?.error || 'Failed to set cookies' };
+    }
+
+    if (action === 'getCookies') {
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+      await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
+      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', {});
+      if (res && res.success && res.result && Array.isArray(res.result.cookies)) {
+        return { success: true, cookies: res.result.cookies };
+      }
+      return { success: false, error: res?.error || 'Failed to get cookies' };
+    }
+
     return { success: false, error: 'Unknown action' };
   } catch (err: any) {
     return { success: false, error: err.message };

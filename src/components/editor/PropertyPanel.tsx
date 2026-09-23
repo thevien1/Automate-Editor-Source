@@ -32,6 +32,7 @@ import { TextProps } from './properties/text/TextProps';
 import { FileFolderExcelProps } from './properties/file/FileFolderExcelProps';
 import { HttpMailProps } from './properties/http/HttpMailProps';
 import { SwitchProps } from './properties/navigation/SwitchProps';
+import { CookieProps } from './properties/cookie/CookieProps';
 import { GenericActionProps } from './properties/GenericActionProps';
 import { VariablesPanel } from './VariablesPanel';
 
@@ -233,6 +234,15 @@ export const PropertyPanel: React.FC = () => {
       [61, 62, 63].includes(type as number)
     ) {
       return <SwitchProps {...commonProps} />;
+    }
+
+    // Cookie Actions (Import cookie, Export cookie)
+    if (
+      name.includes('import cookie') ||
+      name.includes('export cookie') ||
+      [64, 65].includes(type as number)
+    ) {
+      return <CookieProps {...commonProps} />;
     }
 
     // Fallback generic form
