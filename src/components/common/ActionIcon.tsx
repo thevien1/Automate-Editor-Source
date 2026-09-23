@@ -795,7 +795,20 @@ export const getStoredCustomIcons = (): Record<string, CustomIconOverride> => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return {};
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    let changed = false;
+    if (parsed['import cookie']?.iconValue?.includes('palette')) {
+      delete parsed['import cookie'];
+      changed = true;
+    }
+    if (parsed['export cookie']?.iconValue?.includes('palette')) {
+      delete parsed['export cookie'];
+      changed = true;
+    }
+    if (changed) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+    }
+    return parsed;
   } catch {
     return {};
   }

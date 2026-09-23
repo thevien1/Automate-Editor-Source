@@ -9,12 +9,11 @@ export const CookieProps: React.FC<ActionPropsCommon> = ({
   handleRawInputByKey,
   updateNode,
 }) => {
-  // Support both 'FILE_PATH' and 'COOKIE_FILE' keys
-  const cookieFileVal = getRawVal('FILE_PATH', getRawVal('COOKIE_FILE', ''));
+  // Read FILE_PATH (or fallback to COOKIE_FILE)
+  const cookieFileVal = getRawVal('FILE_PATH') || getRawVal('COOKIE_FILE') || '';
 
   const handleChange = (val: string) => {
     handleRawInputByKey('FILE_PATH', val);
-    handleRawInputByKey('COOKIE_FILE', val);
   };
 
   return (
