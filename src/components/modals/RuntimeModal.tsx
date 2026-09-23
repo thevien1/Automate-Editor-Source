@@ -2656,11 +2656,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   const src = el.src || el.getAttribute('src') || '';
                   const name = el.name || el.getAttribute('name') || '';
                   const id = el.id || el.getAttribute('id') || '';
+                  const title = el.title || el.getAttribute('title') || '';
                   return {
                     found: true,
                     src,
                     name,
                     id,
+                    title,
                     left: Math.round(rect.left),
                     top: Math.round(rect.top),
                   };
@@ -2674,7 +2676,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           if (val && val.found) {
             frameFound = true;
             frameInfo = val;
-            break;
+            if (val.src && val.src !== 'about:blank') {
+              break;
+            }
           }
           await sleep(350);
         }
@@ -2684,23 +2688,56 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           vars.$currentFrameOffset = `${frameInfo.left || 0},${frameInfo.top || 0}`;
 
           try {
-            // 1. First check if this frame is an OOPIF target in listTargets
-            const listRes = await (window as any).electronAPI?.cdpAction({
-              port,
-              action: 'listTargets',
-            });
-            const allTargets = listRes?.targets || [];
-            const iframeTargets = allTargets.filter((t: any) => t.type === 'iframe');
+            // 1. First check if this frame is an OOPIF target in listTargets with retry polling
+            // (In multi-threading, Chromium takes 500-2500ms under CPU load to spawn and register the cross-origin target)
+            let matchedTarget: any = null;
+            const targetPollStart = Date.now();
             const cleanSrc = (frameInfo.src || '').split('#')[0].split('?')[0].trim().toLowerCase();
+            const frameTitle = (frameInfo.title || '').trim().toLowerCase();
+            const isRecaptcha =
+              xpath.toLowerCase().includes('recaptcha') ||
+              cleanSrc.includes('recaptcha') ||
+              frameTitle.includes('recaptcha');
 
-            const matchedTarget = iframeTargets.find((t: any) => {
-              const u = (t.url || '').trim().toLowerCase();
-              if (!u) return false;
-              const cleanU = u.split('#')[0].split('?')[0];
-              if (frameInfo.src && (u === frameInfo.src.toLowerCase() || u.includes(frameInfo.src.toLowerCase()) || frameInfo.src.toLowerCase().includes(u))) return true;
-              if (cleanSrc && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) return true;
-              return false;
-            });
+            while (Date.now() - targetPollStart < 8000 && !stopSignalRef.current) {
+              const listRes = await (window as any).electronAPI?.cdpAction({
+                port,
+                action: 'listTargets',
+              });
+              const allTargets: any[] = listRes?.targets || [];
+
+              matchedTarget = allTargets.find((t: any) => {
+                if (t.id === vars.$mainPageTargetId) return false;
+                const u = (t.url || '').trim().toLowerCase();
+                const tTitle = (t.title || '').trim().toLowerCase();
+                const cleanU = u.split('#')[0].split('?')[0];
+
+                if (frameInfo.src) {
+                  const s = frameInfo.src.toLowerCase();
+                  if (u && (u === s || u.includes(s) || s.includes(u))) return true;
+                }
+                if (cleanSrc && cleanU && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) {
+                  return true;
+                }
+                if (frameTitle && tTitle && (tTitle === frameTitle || tTitle.includes(frameTitle) || frameTitle.includes(tTitle))) {
+                  return true;
+                }
+                if (isRecaptcha && (u.includes('recaptcha') || tTitle.includes('recaptcha'))) {
+                  return true;
+                }
+                return false;
+              });
+
+              if (matchedTarget && matchedTarget.id) {
+                break;
+              }
+
+              if (cleanSrc.startsWith('http') || isRecaptcha) {
+                await sleep(350);
+              } else {
+                break;
+              }
+            }
 
             if (matchedTarget && matchedTarget.id) {
               if (!vars.$mainPageTargetId) {
