@@ -106,7 +106,7 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
     }
 
     try {
-      const nodes = normalizeWorkflowNodes(importText.trim());
+      const nodes = normalizeWorkflowNodes(importText.trim(), true);
       if (nodes.length > 0) {
         setParsedNodes(nodes);
         setParseError(null);
@@ -383,8 +383,8 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
                       <span>Hợp lệ: Sẵn sàng thêm {parsedNodes.length} node</span>
                     </span>
                   ) : parseError ? (
-                    <span className="text-xs font-semibold text-amber-500 flex items-center space-x-1">
-                      <AlertTriangle className="w-3.5 h-3.5" />
+                    <span className="text-xs font-medium text-rose-500 dark:text-rose-400 flex items-center space-x-1.5 break-all max-w-full">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500" />
                       <span>{parseError}</span>
                     </span>
                   ) : (

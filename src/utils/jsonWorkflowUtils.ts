@@ -2,34 +2,13 @@ import { WorkflowNode, ActionNode, BaseNode, NormalBlockNode, IfBlockNode, ForBl
 import { generateGuid, serializeRawInput } from './gpmUtils';
 
 /**
- * Normalizes any raw JSON (single object, array, or partial object) into valid WorkflowNode array
+ * Repairs sliced or incomplete JSON (e.g. unclosed braces or array brackets)
  */
-export function normalizeWorkflowNodes(raw: any): WorkflowNode[] {
-  if (!raw) return [];
-
-  let data = raw;
-  if (typeof raw === 'string') {
-    let cleanStr = raw.replace(/^\uFEFF/, '').trim();
-    // If user pasted JS code like `const actionNodes = [ ... ];`, strip variable declaration
-    if (cleanStr.startsWith('//') || cleanStr.includes('=')) {
-      const eqIdx = cleanStr.indexOf('=');
-      if (eqIdx !== -1) {
-        const afterEq = cleanStr.substring(eqIdx + 1).trim();
-        const semiIdx = afterEq.lastIndexOf(';');
-        cleanStr = semiIdx !== -1 ? afterEq.substring(0, semiIdx).trim() : afterEq;
-      }
-    }
-
-    try {
-      data = JSON.parse(cleanStr);
-    } catch {
-      data = tryRepairJson(cleanStr);
-      if (!data) return [];
-    }
-  }
-
-function tryRepairJson(str: string): any {
+export function tryRepairJson(str: string): any {
   let s = str.trim();
+  if (s.endsWith(';')) s = s.slice(0, -1).trim();
+  if (s.endsWith(',')) s = s.slice(0, -1).trim();
+
   try { return JSON.parse(`[${s}]`); } catch {}
 
   if (!s.startsWith('{') && !s.startsWith('[')) {
@@ -62,6 +41,83 @@ function tryRepairJson(str: string): any {
   try { return JSON.parse(`[${repaired}]`); } catch {}
   return null;
 }
+
+/**
+ * Parses raw JSON string, handling Markdown code blocks, JS variable assignments,
+ * leading comments, and repairing sliced strings. Throws detailed error if invalid.
+ */
+export function cleanAndParseJson(raw: string): any {
+  let cleanStr = raw.replace(/^\uFEFF/, '').trim();
+  if (!cleanStr) return [];
+
+  // Strip Markdown code block wrapper if present
+  if (cleanStr.startsWith('```')) {
+    cleanStr = cleanStr.replace(/^```(?:json|javascript|js)?\s*/i, '').replace(/\s*```$/, '').trim();
+  }
+
+  // 1. Direct parse attempt first (never modify clean JSON)
+  try {
+    return JSON.parse(cleanStr);
+  } catch (directErr: any) {
+    // 2. Check if wrapped in JS variable declaration: e.g., `const nodes = [ ... ];`
+    const jsVarMatch = cleanStr.match(
+      /^(?:export\s+default\s+|export\s+const\s+\w+\s*=\s*|(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*)([\s\S]*)$/
+    );
+    if (jsVarMatch) {
+      let candidate = jsVarMatch[1].trim();
+      if (candidate.endsWith(';')) candidate = candidate.slice(0, -1).trim();
+      try {
+        return JSON.parse(candidate);
+      } catch {}
+    }
+
+    // 3. Leading comments (// or /* */) before JSON
+    if (cleanStr.startsWith('//') || cleanStr.startsWith('/*')) {
+      const firstBracket = cleanStr.search(/[\[{]/);
+      if (firstBracket !== -1) {
+        let candidate = cleanStr.substring(firstBracket).trim();
+        if (candidate.endsWith(';')) candidate = candidate.slice(0, -1).trim();
+        try {
+          return JSON.parse(candidate);
+        } catch {}
+      }
+    }
+
+    // 4. Try auto-repairing incomplete or sliced JSON
+    const repaired = tryRepairJson(cleanStr);
+    if (repaired !== null && repaired !== undefined) {
+      return repaired;
+    }
+
+    // 5. Build friendly error message with line and column numbers
+    let errMessage = directErr?.message || 'Cú pháp JSON không hợp lệ';
+    const posMatch = errMessage.match(/position\s+(\d+)/i);
+    if (posMatch) {
+      const pos = parseInt(posMatch[1], 10);
+      const lines = cleanStr.substring(0, pos).split('\n');
+      const line = lines.length;
+      const col = lines[lines.length - 1].length + 1;
+      errMessage = `Lỗi cú pháp JSON tại Dòng ${line}, Cột ${col}: ${errMessage}`;
+    }
+    throw new Error(errMessage);
+  }
+}
+
+/**
+ * Normalizes any raw JSON (single object, array, or partial object) into valid WorkflowNode array
+ */
+export function normalizeWorkflowNodes(raw: any, throwOnError: boolean = false): WorkflowNode[] {
+  if (!raw) return [];
+
+  let data = raw;
+  if (typeof raw === 'string') {
+    try {
+      data = cleanAndParseJson(raw);
+    } catch (err) {
+      if (throwOnError) throw err;
+      return [];
+    }
+  }
 
   // If user pasted a full script (EditorFile): extract nodes from blocks
   if (data && typeof data === 'object' && !Array.isArray(data)) {
@@ -178,6 +234,9 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
     }
 
     if (isForBlock) {
+      const startVal = String(node.start ?? node.from_number ?? '0');
+      const endVal = String(node.end ?? node.to_number ?? '10');
+      const stepVal = String(node.step ?? '1');
       const forNode: ForBlockNode = {
         $type: node.$type || 'GPMAutomateEditor.Models.ForBlockNode, GPMAutomateEditor.Models',
         id,
@@ -186,11 +245,13 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
         continue_on_error: continueOnError,
         expanded: node.expanded ?? true,
         nodes: childNodes,
-        start: String(node.start ?? node.from_number ?? '0'),
-        end: String(node.end ?? node.to_number ?? '10'),
-        step: String(node.step ?? '1'),
+        start: startVal,
+        end: endVal,
+        step: stepVal,
         raw_input: rawInput,
       };
+      (forNode as any).from_number = startVal;
+      (forNode as any).to_number = endVal;
       return forNode;
     }
 

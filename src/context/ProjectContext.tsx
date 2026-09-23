@@ -1066,7 +1066,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   ): { success: boolean; count: number; error?: string } => {
     if (!currentProject) return { success: false, count: 0, error: 'Chưa mở project' };
     try {
-      const parsed = normalizeWorkflowNodes(jsonStr);
+      const parsed = normalizeWorkflowNodes(jsonStr, true);
       if (parsed.length === 0) {
         return { success: false, count: 0, error: 'Không nhận diện được node hợp lệ trong chuỗi JSON' };
       }
