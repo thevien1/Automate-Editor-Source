@@ -2053,50 +2053,78 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
               try {
                 if ((window as any).electronAPI?.cdpAction) {
-                  const treeRes = await (window as any).electronAPI.cdpAction({
+                  // 1. First check if this frame is an OOPIF target in listTargets
+                  const listRes = await (window as any).electronAPI.cdpAction({
                     port: port.trim() || '43076',
-                    action: 'getFrameTree',
-                    payload: { targetId: vars.$activePopupTargetId },
+                    action: 'listTargets',
                   });
-                  const collectFrames = (root: any): any[] => {
-                    if (!root) return [];
-                    const list: any[] = [];
-                    if (root.frame) list.push(root);
-                    const kids = root.childFrames || root.result?.frameTree?.childFrames || root.frameTree?.childFrames;
-                    if (Array.isArray(kids)) {
-                      for (const k of kids) list.push(...collectFrames(k));
-                    }
-                    return list;
-                  };
-                  const allFrames = collectFrames(treeRes?.result?.frameTree || treeRes?.frameTree);
+                  const allTargets = listRes?.targets || [];
+                  const iframeTargets = allTargets.filter((t: any) => t.type === 'iframe');
                   const cleanSrc = (frameInfo.src || '').split('#')[0].split('?')[0].trim().toLowerCase();
-                  const matched = allFrames.find((cf: any) => {
-                    const u = (cf.frame?.url || '').trim().toLowerCase();
+
+                  const matchedTarget = iframeTargets.find((t: any) => {
+                    const u = (t.url || '').trim().toLowerCase();
                     if (!u) return false;
                     const cleanU = u.split('#')[0].split('?')[0];
                     if (frameInfo.src && (u === frameInfo.src.toLowerCase() || u.includes(frameInfo.src.toLowerCase()) || frameInfo.src.toLowerCase().includes(u))) return true;
                     if (cleanSrc && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) return true;
-                    if (frameInfo.name && cf.frame?.name && cf.frame.name === frameInfo.name) return true;
                     return false;
                   });
-                  if (matched && matched.frame?.id) {
-                    const worldRes = await (window as any).electronAPI.cdpAction({
+
+                  if (matchedTarget && matchedTarget.id) {
+                    if (!vars.$mainPageTargetId) {
+                      vars.$mainPageTargetId = vars.$activePopupTargetId || '';
+                    }
+                    vars.$activePopupTargetId = matchedTarget.id;
+                    vars.$currentFrameTargetId = matchedTarget.id;
+                  } else {
+                    // 2. Otherwise try Page.getFrameTree + createIsolatedWorld (for same-process frames)
+                    const treeRes = await (window as any).electronAPI.cdpAction({
                       port: port.trim() || '43076',
-                      action: 'createIsolatedWorld',
-                      payload: {
-                        targetId: vars.$activePopupTargetId,
-                        frameId: matched.frame.id,
-                        worldName: 'gpm_isolated_frame',
-                      },
+                      action: 'getFrameTree',
+                      payload: { targetId: vars.$activePopupTargetId },
                     });
-                    if (worldRes?.result?.executionContextId) {
-                      vars.$currentFrameContextId = String(worldRes.result.executionContextId);
+                    const collectFrames = (root: any): any[] => {
+                      if (!root) return [];
+                      const list: any[] = [];
+                      if (root.frame) list.push(root);
+                      const kids = root.childFrames || root.result?.frameTree?.childFrames || root.frameTree?.childFrames;
+                      if (Array.isArray(kids)) {
+                        for (const k of kids) list.push(...collectFrames(k));
+                      }
+                      return list;
+                    };
+                    const allFrames = collectFrames(treeRes?.result?.frameTree || treeRes?.frameTree);
+                    const matched = allFrames.find((cf: any) => {
+                      const u = (cf.frame?.url || '').trim().toLowerCase();
+                      if (!u) return false;
+                      const cleanU = u.split('#')[0].split('?')[0];
+                      if (frameInfo.src && (u === frameInfo.src.toLowerCase() || u.includes(frameInfo.src.toLowerCase()) || frameInfo.src.toLowerCase().includes(u))) return true;
+                      if (cleanSrc && (cleanU === cleanSrc || cleanU.includes(cleanSrc) || cleanSrc.includes(cleanU))) return true;
+                      if (frameInfo.name && cf.frame?.name && cf.frame.name === frameInfo.name) return true;
+                      return false;
+                    });
+                    if (matched && matched.frame?.id) {
+                      const worldRes = await (window as any).electronAPI.cdpAction({
+                        port: port.trim() || '43076',
+                        action: 'createIsolatedWorld',
+                        payload: {
+                          targetId: vars.$activePopupTargetId,
+                          frameId: matched.frame.id,
+                          worldName: 'gpm_isolated_frame',
+                        },
+                      });
+                      if (worldRes?.result?.executionContextId) {
+                        vars.$currentFrameContextId = String(worldRes.result.executionContextId);
+                      }
                     }
                   }
                 }
               } catch (e) {}
 
-              if (vars.$currentFrameContextId) {
+              if (vars.$currentFrameTargetId) {
+                addLog('success', `✔ Switch to frame › ${resolvedXPath} (OOPIF Target: ${vars.$currentFrameTargetId.slice(0, 8)}...)`);
+              } else if (vars.$currentFrameContextId) {
                 addLog('success', `✔ Switch to frame › ${resolvedXPath} (Context ID: ${vars.$currentFrameContextId})`);
               } else {
                 addLog('success', `✔ Switch to frame › ${resolvedXPath}`);
@@ -2117,8 +2145,12 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           delete vars.$currentFrameXPath;
           delete vars.$currentFrameContextId;
           delete vars.$currentFrameOffset;
+          delete vars.$currentFrameTargetId;
 
-          if (vars.$activePopupTargetId) {
+          if (vars.$mainPageTargetId) {
+            vars.$activePopupTargetId = vars.$mainPageTargetId;
+            delete vars.$mainPageTargetId;
+          } else {
             try {
               if ((window as any).electronAPI?.cdpAction) {
                 const listRes = await (window as any).electronAPI.cdpAction({
@@ -2127,17 +2159,12 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 });
                 const pages = (listRes?.targets || []).filter((t: any) => t.type === 'page');
                 if (pages.length > 0 && pages[0].id) {
-                  await (window as any).electronAPI.cdpAction({
-                    port: port.trim() || '43076',
-                    action: 'activateTarget',
-                    payload: { targetId: pages[0].id },
-                  });
+                  vars.$activePopupTargetId = pages[0].id;
                 }
               }
             } catch (e) {}
-            delete vars.$activePopupTargetId;
-            delete vars.$activePopupTitle;
           }
+          delete vars.$activePopupTitle;
 
           addLog('success', `✔ Switch to default › Khung trang chính đã được kích hoạt`);
           await sleep(40);

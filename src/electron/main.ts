@@ -1281,7 +1281,7 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
     if (action === 'listTargets') {
       const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
       if (Array.isArray(list)) {
-        const pages = list.filter((t: any) => t.type === 'page');
+        const pages = list.filter((t: any) => t.type === 'page' || t.type === 'iframe');
         return { success: true, targets: pages };
       }
       return { success: false, error: 'Failed to list targets' };
