@@ -23,9 +23,45 @@ export function normalizeWorkflowNodes(raw: any): WorkflowNode[] {
     try {
       data = JSON.parse(cleanStr);
     } catch {
-      return [];
+      data = tryRepairJson(cleanStr);
+      if (!data) return [];
     }
   }
+
+function tryRepairJson(str: string): any {
+  let s = str.trim();
+  try { return JSON.parse(`[${s}]`); } catch {}
+
+  if (!s.startsWith('{') && !s.startsWith('[')) {
+    if (/^"?([a-zA-Z0-9_$]+)"?\s*:/.test(s)) {
+      if (!s.startsWith('"')) s = `"${s}`;
+      s = `{\n${s}`;
+    }
+  }
+
+  try { return JSON.parse(s); } catch {}
+  try { return JSON.parse(`[${s}]`); } catch {}
+
+  let openBraces = 0, openBrackets = 0, inString = false, escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const char = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (char === '"') { inString = !inString; continue; }
+    if (!inString) {
+      if (char === '{') openBraces++;
+      else if (char === '}') openBraces = Math.max(0, openBraces - 1);
+      else if (char === '[') openBrackets++;
+      else if (char === ']') openBrackets = Math.max(0, openBrackets - 1);
+    }
+  }
+  let repaired = s;
+  while (openBraces > 0) { repaired += '\n}'; openBraces--; }
+  while (openBrackets > 0) { repaired += '\n]'; openBrackets--; }
+  try { return JSON.parse(repaired); } catch {}
+  try { return JSON.parse(`[${repaired}]`); } catch {}
+  return null;
+}
 
   // If user pasted a full script (EditorFile): extract nodes from blocks
   if (data && typeof data === 'object' && !Array.isArray(data)) {
