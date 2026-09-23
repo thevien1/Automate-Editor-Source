@@ -2382,6 +2382,41 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             }
           }
           await sleep(40);
+        } else if (actType === 185 || actName === 'clear cookie' || actName.includes('clear cookie')) {
+          const rawDomain = getRawInputValue(act.raw_input, 'DOMAIN', '');
+          const resolvedDomain = resolveVars(rawDomain, vars).trim();
+          const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+          logActionStart(act, resolvedDomain || 'Clear cookie');
+          addLog('info', `▶ Clear cookie › ${resolvedDomain ? `Domain: "${resolvedDomain}"` : 'Tất cả cookies'}`);
+
+          try {
+            const cdpRes = await (window as any).electronAPI?.cdpAction({
+              port: port.trim() || '43076',
+              action: 'clearCookies',
+              payload: { domain: resolvedDomain },
+            });
+
+            if (cdpRes?.success) {
+              vars.$cookie = '';
+              vars.cookie = '';
+              addLog('success', `✔ Clear cookie › Đã xóa sạch cookies ${resolvedDomain ? `cho domain "${resolvedDomain}"` : 'của trình duyệt'}`);
+            } else {
+              if (contOnError) {
+                addLog('info', `⚠ Clear cookie › ${cdpRes?.error || 'Lỗi'} (Continue on error)`);
+              } else {
+                addLog('error', `✕ Clear cookie thất bại: ${cdpRes?.error || 'Lỗi khi xóa cookies'}`);
+                break;
+              }
+            }
+          } catch (err: any) {
+            if (contOnError) {
+              addLog('info', `⚠ Clear cookie error: ${err.message} (Continue on error)`);
+            } else {
+              addLog('error', `✕ Clear cookie exception: ${err.message}`);
+              break;
+            }
+          }
+          await sleep(40);
         } else if (actType === 39 || actName === 'go to url') {
           let urlVal = 'https://';
           let timeoutSec = 60;

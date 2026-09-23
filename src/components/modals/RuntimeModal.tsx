@@ -3038,6 +3038,33 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       }
       await sleep(100);
     }
+    // Clear cookie (type 185)
+    else if (actType === 185 || actName === 'clear cookie' || actName.includes('clear cookie')) {
+      const rawDomain = getRawVal('DOMAIN', '');
+      const domain = resolveStr(rawDomain).trim();
+      updateThreadLog(threadId, 'info', `▶ Clear cookie › ${domain ? `Xóa cookie domain: "${domain}"` : 'Xóa toàn bộ cookies trình duyệt'}`, 'Clear cookie');
+
+      try {
+        const cdpRes = await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'clearCookies',
+          payload: { domain },
+        });
+
+        if (cdpRes?.success) {
+          vars.$cookie = '';
+          vars.cookie = '';
+          updateThreadLog(threadId, 'success', `✔ Clear cookie › Đã xóa sạch cookies ${domain ? `cho domain "${domain}"` : 'của trình duyệt'}`);
+        } else {
+          const failRes = await handleActionFailure('Clear cookie', cdpRes?.error || 'Lỗi khi xóa cookies');
+          if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+        }
+      } catch (err: any) {
+        const failRes = await handleActionFailure('Clear cookie', err.message);
+        if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+      }
+      await sleep(100);
+    }
     // Get element attribute (type 45)
     else if (actType === 45 || actName === 'get element attribute') {
       const xpath = resolveStr(getRawVal('XPATH', act.element_xpath || ''));

@@ -237,10 +237,11 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
   {
     id: 'browser_cookie',
     name: 'Browser - Cookie',
-    count: 2,
+    count: 3,
     actions: [
       { type: 64, name: 'Import cookie', category: 'Browser - Cookie', description: 'Import JSON cookies into browser', defaultRawInput: [{ Key: 'FILE_PATH', Value: '' }] },
       { type: 65, name: 'Export cookie', category: 'Browser - Cookie', description: 'Export browser cookies to file', defaultRawInput: [{ Key: 'FILE_PATH', Value: '' }] },
+      { type: 185, name: 'Clear cookie', category: 'Browser - Cookie', description: 'Clear all browser cookies or for domain', defaultRawInput: [{ Key: 'DOMAIN', Value: '' }] },
     ]
   },
   {

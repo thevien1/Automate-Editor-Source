@@ -638,6 +638,12 @@ export const ACTION_ICON_CONFIG: Record<string, ActionConfigItem> = {
     icon: <Cookie className="w-3.5 h-3.5" />,
     label: 'Export cookie',
   },
+  'clear cookie': {
+    color: '#ef4444',
+    darkColor: '#f87171',
+    icon: <Cookie className="w-3.5 h-3.5" />,
+    label: 'Clear cookie',
+  },
 };
 
 // Ánh xạ nhanh theo Action Type số (ID nguyên thủy của GScript)
@@ -711,6 +717,7 @@ export const ACTION_TYPE_MAP: Record<number, string> = {
   111: 'select dropdown',
   117: 'throw',
   184: 'file read random line',
+  185: 'clear cookie',
 };
 
 /**
@@ -766,6 +773,9 @@ export const getActionIconConfig = (
     return ACTION_ICON_CONFIG['set variable'];
   }
   if (cleanName.includes('cookie')) {
+    if (cleanName.includes('clear') || cleanName.includes('xóa')) {
+      return ACTION_ICON_CONFIG['clear cookie'];
+    }
     return cleanName.includes('export')
       ? ACTION_ICON_CONFIG['export cookie']
       : ACTION_ICON_CONFIG['import cookie'];

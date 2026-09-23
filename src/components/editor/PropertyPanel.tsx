@@ -242,11 +242,13 @@ export const PropertyPanel: React.FC = () => {
       return <SwitchProps {...commonProps} />;
     }
 
-    // Cookie Actions (Import cookie, Export cookie)
+    // Cookie Actions (Import cookie, Export cookie, Clear cookie)
     if (
       name.includes('import cookie') ||
       name.includes('export cookie') ||
-      [64, 65].includes(type as number)
+      name.includes('clear cookie') ||
+      name.includes('cookie') ||
+      [64, 65, 185].includes(type as number)
     ) {
       return <CookieProps {...commonProps} />;
     }

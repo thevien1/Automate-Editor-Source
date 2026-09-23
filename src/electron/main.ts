@@ -1724,6 +1724,36 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       return { success: false, error: res?.error || 'Failed to get cookies' };
     }
 
+    if (action === 'clearCookies') {
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+      await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
+      const domain = (payload?.domain || '').trim();
+      if (domain) {
+        const getRes = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', {});
+        if (getRes?.success && Array.isArray(getRes.result?.cookies)) {
+          const matched = getRes.result.cookies.filter((c: any) =>
+            (c.domain && c.domain.includes(domain)) || (domain.includes(c.domain))
+          );
+          for (const c of matched) {
+            await sendWs(page.webSocketDebuggerUrl, 'Network.deleteCookies', {
+              name: c.name,
+              domain: c.domain,
+              path: c.path,
+            }).catch(() => {});
+          }
+          return { success: true, count: matched.length };
+        }
+      }
+      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.clearBrowserCookies', {});
+      if (res && res.success) {
+        return { success: true };
+      }
+      return { success: false, error: res?.error || 'Failed to clear cookies' };
+    }
+
     return { success: false, error: 'Unknown action' };
   } catch (err: any) {
     return { success: false, error: err.message };
