@@ -246,52 +246,100 @@ const httpPut = (urlStr: string): Promise<any> => {
   });
 };
 
+interface WsEntry {
+  ws: WebSocket;
+  pending: Map<number, { resolve: (val: any) => void; timer: NodeJS.Timeout }>;
+}
+const wsPool = new Map<string, WsEntry>();
+
 let nextWsId = 100;
-const sendWs = (wsUrl: string, method: string, params: any = {}, timeoutMs: number = 10000): Promise<any> => {
+const sendWs = (wsUrl: string, method: string, params: any = {}, timeoutMs: number = 6000): Promise<any> => {
   return new Promise((resolve) => {
     try {
-      const reqId = ++nextWsId;
       const normalizedWsUrl = wsUrl.replace('//localhost:', '//127.0.0.1:');
-      const ws = new WebSocket(normalizedWsUrl);
-      let settled = false;
+      const reqId = ++nextWsId;
 
-      const finish = (val: any) => {
-        if (!settled) {
-          settled = true;
-          clearTimeout(timer);
-          try { ws.close(); } catch (e) {}
-          resolve(val);
-        }
-      };
+      let entry = wsPool.get(normalizedWsUrl);
 
-      const timer = setTimeout(() => {
-        finish({ success: false, error: 'WebSocket timeout' });
-      }, timeoutMs);
+      const sendOnSocket = (targetWs: WebSocket, targetPending: Map<number, any>) => {
+        const timer = setTimeout(() => {
+          targetPending.delete(reqId);
+          resolve({ success: false, error: 'WebSocket timeout' });
+        }, timeoutMs);
 
-      ws.onopen = () => {
+        targetPending.set(reqId, { resolve, timer });
         try {
-          ws.send(JSON.stringify({ id: reqId, method, params }));
+          targetWs.send(JSON.stringify({ id: reqId, method, params }));
         } catch (e: any) {
-          finish({ success: false, error: e.message });
+          clearTimeout(timer);
+          targetPending.delete(reqId);
+          resolve({ success: false, error: e.message });
         }
       };
+
+      if (entry && entry.ws.readyState === WebSocket.OPEN) {
+        sendOnSocket(entry.ws, entry.pending);
+        return;
+      }
+
+      if (entry && entry.ws.readyState === WebSocket.CONNECTING) {
+        entry.ws.addEventListener('open', () => {
+          sendOnSocket(entry!.ws, entry!.pending);
+        }, { once: true });
+        entry.ws.addEventListener('error', (err) => {
+          resolve({ success: false, error: String(err) });
+        }, { once: true });
+        return;
+      }
+
+      if (entry) {
+        try { entry.ws.close(); } catch (e) {}
+        wsPool.delete(normalizedWsUrl);
+      }
+
+      const pendingMap = new Map<number, { resolve: (val: any) => void; timer: NodeJS.Timeout }>();
+      const ws = new WebSocket(normalizedWsUrl);
+      const newEntry: WsEntry = { ws, pending: pendingMap };
+      wsPool.set(normalizedWsUrl, newEntry);
+
       ws.onmessage = (evt) => {
         try {
           const data = JSON.parse(evt.data.toString());
-          if (data && data.id === reqId) {
-            if (data.error) {
-              finish({ success: false, error: data.error.message || JSON.stringify(data.error) });
-            } else {
-              finish({ success: true, result: data.result });
+          if (data && data.id) {
+            const req = pendingMap.get(data.id);
+            if (req) {
+              clearTimeout(req.timer);
+              pendingMap.delete(data.id);
+              if (data.error) {
+                req.resolve({ success: false, error: data.error.message || JSON.stringify(data.error) });
+              } else {
+                req.resolve({ success: true, result: data.result });
+              }
             }
           }
         } catch (e) {}
       };
+
       ws.onerror = (err) => {
-        finish({ success: false, error: String(err) });
+        wsPool.delete(normalizedWsUrl);
+        for (const [id, req] of pendingMap.entries()) {
+          clearTimeout(req.timer);
+          req.resolve({ success: false, error: String(err) });
+        }
+        pendingMap.clear();
       };
+
       ws.onclose = () => {
-        finish({ success: false, error: 'WebSocket connection closed' });
+        wsPool.delete(normalizedWsUrl);
+        for (const [id, req] of pendingMap.entries()) {
+          clearTimeout(req.timer);
+          req.resolve({ success: false, error: 'WebSocket connection closed' });
+        }
+        pendingMap.clear();
+      };
+
+      ws.onopen = () => {
+        sendOnSocket(ws, pendingMap);
       };
     } catch (err: any) {
       resolve({ success: false, error: err.message });
@@ -1215,14 +1263,16 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
   const { port, action, payload } = req;
 
   const getPageTarget = async () => {
-    const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
+    const list = await httpGet(`http://127.0.0.1:${port}/json/list`).catch(() => null);
     if (Array.isArray(list)) {
       if (payload?.targetId) {
         const found = list.find((t: any) => t.id === payload.targetId);
         if (found) return found;
       }
-      const page = list.find((t: any) => t.type === 'page');
-      return page || list[0];
+      const pages = list.filter((t: any) => t.type === 'page');
+      // Prioritize active web pages (not about:blank or internal chrome:// pages)
+      const activeWebPage = pages.find((p: any) => p.url && !p.url.startsWith('about:blank') && !p.url.startsWith('chrome://'));
+      return activeWebPage || pages[pages.length - 1] || pages[0] || list[0];
     }
     return null;
   };

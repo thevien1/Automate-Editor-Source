@@ -252,19 +252,37 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const autoDetectPort = async (): Promise<string | null> => {
     setDetectingPort(true);
     try {
-      const resp = await fetch('http://127.0.0.1:8725/api/v1/profiles?per_page=100', { signal: AbortSignal.timeout(1500) }).catch(() => null);
-      if (resp && resp.ok) {
-        const json = await resp.json();
-        const list = json?.data?.data || json?.data?.profiles || (Array.isArray(json?.data) ? json.data : []);
-        const running = list.find((p: any) => (p.status === 'running' || p.port) && (p.port || p.remote_debugging_port));
-        const foundPort = running?.port || running?.remote_debugging_port;
-        if (foundPort) {
-          const portStr = String(foundPort);
-          setPort(portStr);
-          localStorage.setItem('gpm_debug_port', portStr);
-          setDetectingPort(false);
-          return portStr;
-        }
+      const endpoints = [
+        'http://127.0.0.1:8725/api/v1/profiles?per_page=100',
+        'http://localhost:8725/api/v1/profiles?per_page=100',
+        'http://127.0.0.1:8725/api/v3/profiles?per_page=100',
+        'http://localhost:8725/api/v3/profiles?per_page=100',
+      ];
+      for (const ep of endpoints) {
+        try {
+          const resp = await fetch(ep, { signal: AbortSignal.timeout(1500) }).catch(() => null);
+          if (resp && resp.ok) {
+            const json = await resp.json();
+            const list = json?.data?.data || json?.data?.profiles || (Array.isArray(json?.data) ? json.data : []);
+            const running = list.find((p: any) =>
+              (p.status === 'running' || p.port || p.remote_debugging_port || p.remote_debugging_address) &&
+              (p.port || p.remote_debugging_port || p.remote_debugging_address)
+            );
+            const candidate = running?.port || running?.remote_debugging_port || running?.remote_debugging_address;
+            if (candidate) {
+              let portStr = String(candidate).trim();
+              if (portStr.includes(':')) {
+                portStr = portStr.split(':').pop() || portStr;
+              }
+              if (portStr && portStr !== '8725') {
+                setPort(portStr);
+                localStorage.setItem('gpm_debug_port', portStr);
+                setDetectingPort(false);
+                return portStr;
+              }
+            }
+          }
+        } catch (e) {}
       }
     } catch (e) {}
     setDetectingPort(false);
@@ -3629,7 +3647,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     }}
                     placeholder="43076"
                     disabled={isRunning}
-                    className="w-48 pl-3 pr-8 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none font-mono"
+                    className={`w-48 pl-3 pr-8 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border ${port.trim() === '8725' ? 'border-amber-500 bg-amber-50 dark:bg-amber-950/20' : 'border-[#d9d9d9] dark:border-[#1e293b]'} rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none font-mono`}
                   />
                   <button
                     type="button"
@@ -3678,6 +3696,17 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   </button>
                 )}
               </div>
+
+              {port.trim() === '8725' && (
+                <div className="mt-2 text-[11px] text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 rounded-md p-2 flex items-start space-x-2">
+                  <span className="text-sm leading-none mt-0.5">⚠</span>
+                  <div>
+                    <strong>Cổng 8725 là API quản lý của SV Browser / GPMLogin</strong> (dùng để mở/tắt profile), <u>không phải</u> Remote Debugging Port của Chrome!
+                    <br />
+                    Khi profile mở, Chrome sẽ được cấp một cổng ngẫu nhiên riêng (ví dụ 54123, 60124...). Hãy <strong>mở profile lên trước</strong> rồi bấm nút <strong>🔄</strong> để phần mềm tự động điền đúng cổng Chrome!
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
