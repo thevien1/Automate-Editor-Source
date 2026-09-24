@@ -171,10 +171,10 @@ ipcMain.handle('dialog:saveFile', async (event, options?: { title?: string; defa
   return null;
 });
 
-// Save Project according to SKILL.md format: info.gpmsln + src.gscript
+// Save Project according to SKILL.md format: info.gpmsln + src.gscript + runtime.json
 ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
   try {
-    const { folderPath, info, script } = projectData;
+    const { folderPath, info, script, runtimeConfig } = projectData;
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
@@ -184,6 +184,11 @@ ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
 
     fs.writeFileSync(infoPath, JSON.stringify(info, null, 2), 'utf-8');
     fs.writeFileSync(scriptPath, JSON.stringify(script, null, 2), 'utf-8');
+
+    if (runtimeConfig) {
+      const runtimePath = path.join(folderPath, 'runtime.json');
+      fs.writeFileSync(runtimePath, JSON.stringify(runtimeConfig, null, 2), 'utf-8');
+    }
 
     return { success: true };
   } catch (err: any) {
@@ -204,7 +209,33 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
     const script = JSON.parse(fs.readFileSync(scriptPath, 'utf-8'));
 
-    return { success: true, project: { folderPath, info, script } };
+    let runtimeConfig: any = undefined;
+    const runtimePath = path.join(folderPath, 'runtime.json');
+    if (fs.existsSync(runtimePath)) {
+      try {
+        runtimeConfig = JSON.parse(fs.readFileSync(runtimePath, 'utf-8'));
+      } catch (e) {
+        // ignore parse error
+      }
+    }
+
+    return { success: true, project: { folderPath, info, script, runtimeConfig } };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Save Runtime Config directly to runtime.json in project folder
+ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; runtimeConfig: any }) => {
+  try {
+    const { folderPath, runtimeConfig } = data;
+    if (!folderPath) return { success: false, error: 'No folderPath provided' };
+    if (!fs.existsSync(folderPath)) {
+      fs.mkdirSync(folderPath, { recursive: true });
+    }
+    const runtimePath = path.join(folderPath, 'runtime.json');
+    fs.writeFileSync(runtimePath, JSON.stringify(runtimeConfig, null, 2), 'utf-8');
+    return { success: true };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

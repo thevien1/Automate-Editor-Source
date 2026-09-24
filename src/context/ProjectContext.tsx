@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { ProjectData, ActionNode, BaseNode, NormalBlockNode, BlockNode, WorkflowNode, ForBlockNode, IfBlockNode, WhileBlockNode, EditorFile } from '../types/gscript';
+import { ProjectData, ProjectRuntimeConfig, ActionNode, BaseNode, NormalBlockNode, BlockNode, WorkflowNode, ForBlockNode, IfBlockNode, WhileBlockNode, EditorFile } from '../types/gscript';
 import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
 import { createDefaultProject, createDefaultNormalBlock, generateGuid, serializeRawInput } from '../utils/gpmUtils';
 import { UpdateInfo, checkForAppUpdates } from '../services/updateService';
@@ -159,6 +159,7 @@ interface ProjectContextType {
   clearRecentProjects: () => void;
   closeProject: () => void;
   saveProject: () => Promise<void>;
+  updateRuntimeConfig: (config: Partial<ProjectRuntimeConfig>) => void;
   selectNode: (id: string | null, blockKey?: 'before_init' | 'main_logic' | 'after_quit', isMulti?: boolean, isRange?: boolean) => void;
   selectAllNodes: () => void;
   updateNode: (id: string, updates: Partial<any>) => void;
@@ -415,6 +416,16 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       proj = createDefaultProject(projName, path);
     }
 
+    // Try restoring runtimeConfig from scoped localStorage if not yet set
+    if (proj && !proj.runtimeConfig) {
+      try {
+        const localCfg = localStorage.getItem(`gpm_runtime_config_${proj.folderPath || proj.info?.id || proj.info?.name}`);
+        if (localCfg) {
+          proj.runtimeConfig = JSON.parse(localCfg);
+        }
+      } catch {}
+    }
+
     setCurrentProject(proj);
     setScreen('editor');
     setUndoStack([]);
@@ -441,6 +452,30 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
     localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(currentProject));
     showToast('Save', 'Save Successful');
+  };
+
+  const updateRuntimeConfig = (cfg: Partial<ProjectRuntimeConfig>) => {
+    setCurrentProject((prev) => {
+      if (!prev) return prev;
+      const updatedConfig: ProjectRuntimeConfig = { ...(prev.runtimeConfig || {}), ...cfg };
+      const updatedProject: ProjectData = { ...prev, runtimeConfig: updatedConfig };
+
+      try {
+        const projectKey = prev.folderPath || prev.info?.id || prev.info?.name;
+        if (projectKey) {
+          localStorage.setItem(`gpm_runtime_config_${projectKey}`, JSON.stringify(updatedConfig));
+        }
+        if (prev.folderPath) {
+          localStorage.setItem(`gpm_project_${prev.folderPath}`, JSON.stringify(updatedProject));
+        }
+      } catch (e) {}
+
+      if (prev.folderPath && (window as any).electronAPI?.saveRuntimeConfig) {
+        (window as any).electronAPI.saveRuntimeConfig({ folderPath: prev.folderPath, runtimeConfig: updatedConfig }).catch(() => {});
+      }
+
+      return updatedProject;
+    });
   };
 
   // Helper to get all nodes in flat array preserving tree order
@@ -1439,6 +1474,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         clearRecentProjects,
         closeProject,
         saveProject,
+        updateRuntimeConfig,
         selectNode,
         selectAllNodes,
         updateNode,

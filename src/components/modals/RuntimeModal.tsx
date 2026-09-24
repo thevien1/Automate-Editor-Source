@@ -40,7 +40,7 @@ import {
   Layout,
 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
-import { WorkflowNode, ActionNode } from '../../types/gscript';
+import { WorkflowNode, ActionNode, ProjectRuntimeConfig } from '../../types/gscript';
 import {
   VIRTUAL_MOUSE_SCRIPT,
   getVirtualMouseClickXPathScript,
@@ -138,7 +138,7 @@ async function generateTOTP(secret: string): Promise<string> {
 }
 
 export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) => {
-  const { currentProject } = useProject();
+  const { currentProject, updateRuntimeConfig } = useProject();
 
   // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Running
   // Always starts at Step 1 (Select app) when user clicks Run
@@ -793,21 +793,6 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchProfiles();
-      // When clicking Run, MUST always start on Step 1 (Select app) and profiles are not pre-selected
-      if (!isExecuting) {
-        setStep(1);
-        setSelectedProfileIds([]);
-        try {
-          localStorage.removeItem('sv_selected_profile_ids');
-        } catch {}
-      }
-      setSelectedLogThreadId(null);
-    }
-  }, [isOpen]);
-
   // Schedule configuration (Image 5 - Auto-saved)
   const [useSchedule, setUseSchedule] = useState<boolean>(() => {
     return localStorage.getItem('sv_use_schedule') === 'true';
@@ -815,6 +800,247 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   useEffect(() => {
     localStorage.setItem('sv_use_schedule', String(useSchedule));
   }, [useSchedule]);
+
+  const isInitialLoadingRef = useRef<boolean>(true);
+  const loadedProjectKeyRef = useRef<string>('');
+
+  const getCurrentRuntimeConfig = (): ProjectRuntimeConfig => ({
+    // Window & Screen
+    windowSizeMode,
+    autoTileWindows,
+    tilePreset,
+    percentWidth,
+    percentHeight,
+    windowWidth,
+    windowHeight,
+    windowScale,
+    screenTarget,
+
+    // Excel Input
+    useInputExcel,
+    excelFilePath,
+    excelSheetId,
+    excelMapMode,
+    excelMapColA,
+    excelWriteOk,
+    excelOkCol,
+    excelSkipIfHasText,
+    skipStatusKeywords,
+
+    // TXT Input
+    useInputTxt,
+    txtFilePath,
+    txtMapMode,
+    txtSkipKeywords,
+    txtWriteOk,
+
+    // Session Configuration
+    sessionName,
+    numThreads,
+    threadDelay,
+    skipProxyCheck,
+    doNotCloseOnError,
+    closeBrowserOnDone,
+    performanceLimit,
+    hideWindowWhenDone,
+    useVirtualMouse,
+    restartOnError,
+    retryCount,
+
+    // Schedule
+    useSchedule,
+
+    // Selected Profiles & Engine
+    selectedProfileIds,
+    selectedEngine,
+    selectedProvider,
+  });
+
+  const saveConfigForCurrentProject = (customConfig?: Partial<ProjectRuntimeConfig>) => {
+    if (!currentProject) return;
+    const projectKey = currentProject.folderPath || currentProject.info?.id || currentProject.info?.name;
+    if (!projectKey) return;
+
+    const cfg: ProjectRuntimeConfig = {
+      ...getCurrentRuntimeConfig(),
+      ...(customConfig || {}),
+    };
+
+    try {
+      localStorage.setItem(`gpm_runtime_config_${projectKey}`, JSON.stringify(cfg));
+    } catch {}
+
+    updateRuntimeConfig(cfg);
+
+    if (currentProject.folderPath) {
+      if ((window as any).electronAPI?.saveRuntimeConfig) {
+        (window as any).electronAPI.saveRuntimeConfig({
+          folderPath: currentProject.folderPath,
+          runtimeConfig: cfg,
+        }).catch(() => {});
+      } else if ((window as any).electronAPI?.fileAction) {
+        const cleanPath = `${currentProject.folderPath.replace(/[/\\]+$/, '')}/runtime.json`;
+        (window as any).electronAPI.fileAction({
+          action: 'writeText',
+          payload: { path: cleanPath, text: JSON.stringify(cfg, null, 2) },
+        }).catch(() => {});
+      }
+    }
+  };
+
+  const loadConfigForProject = async (proj: any) => {
+    if (!proj) return;
+    const projectKey = proj.folderPath || proj.info?.id || proj.info?.name;
+    if (!projectKey) return;
+
+    isInitialLoadingRef.current = true;
+    loadedProjectKeyRef.current = projectKey;
+
+    let savedCfg: ProjectRuntimeConfig | null = proj.runtimeConfig || null;
+
+    // 1. If not in memory, try reading from disk runtime.json directly
+    if (!savedCfg && proj.folderPath && (window as any).electronAPI?.fileAction) {
+      try {
+        const cleanPath = `${String(proj.folderPath).replace(/[/\\]+$/, '')}/runtime.json`;
+        const res = await (window as any).electronAPI.fileAction({
+          action: 'readText',
+          payload: { path: cleanPath },
+        });
+        if (res && res.success && res.text) {
+          savedCfg = JSON.parse(res.text);
+        }
+      } catch {}
+    }
+
+    // 2. Fallback: check localStorage by project key
+    if (!savedCfg) {
+      try {
+        const local = localStorage.getItem(`gpm_runtime_config_${projectKey}`);
+        if (local) savedCfg = JSON.parse(local);
+      } catch {}
+    }
+
+    if (savedCfg) {
+      // Window & Screen
+      if (savedCfg.windowSizeMode !== undefined) setWindowSizeMode(savedCfg.windowSizeMode);
+      if (savedCfg.autoTileWindows !== undefined) setAutoTileWindows(savedCfg.autoTileWindows);
+      if (savedCfg.tilePreset !== undefined) setTilePreset(savedCfg.tilePreset);
+      if (savedCfg.percentWidth !== undefined) setPercentWidth(savedCfg.percentWidth);
+      if (savedCfg.percentHeight !== undefined) setPercentHeight(savedCfg.percentHeight);
+      if (savedCfg.windowWidth !== undefined) setWindowWidth(savedCfg.windowWidth);
+      if (savedCfg.windowHeight !== undefined) setWindowHeight(savedCfg.windowHeight);
+      if (savedCfg.windowScale !== undefined) setWindowScale(savedCfg.windowScale);
+      if (savedCfg.screenTarget !== undefined) setScreenTarget(savedCfg.screenTarget);
+
+      // Excel
+      if (savedCfg.useInputExcel !== undefined) setUseInputExcel(savedCfg.useInputExcel);
+      if (savedCfg.excelFilePath !== undefined) setExcelFilePath(savedCfg.excelFilePath);
+      if (savedCfg.excelSheetId !== undefined) setExcelSheetId(savedCfg.excelSheetId);
+      if (savedCfg.excelMapMode !== undefined) setExcelMapMode(savedCfg.excelMapMode);
+      if (savedCfg.excelMapColA !== undefined) setExcelMapColA(savedCfg.excelMapColA);
+      if (savedCfg.excelWriteOk !== undefined) setExcelWriteOk(savedCfg.excelWriteOk);
+      if (savedCfg.excelOkCol !== undefined) setExcelOkCol(savedCfg.excelOkCol);
+      if (savedCfg.excelSkipIfHasText !== undefined) setExcelSkipIfHasText(savedCfg.excelSkipIfHasText);
+      if (savedCfg.skipStatusKeywords !== undefined) setSkipStatusKeywords(savedCfg.skipStatusKeywords);
+
+      // TXT
+      if (savedCfg.useInputTxt !== undefined) setUseInputTxt(savedCfg.useInputTxt);
+      if (savedCfg.txtFilePath !== undefined) setTxtFilePath(savedCfg.txtFilePath);
+      if (savedCfg.txtMapMode !== undefined) setTxtMapMode(savedCfg.txtMapMode);
+      if (savedCfg.txtSkipKeywords !== undefined) setTxtSkipKeywords(savedCfg.txtSkipKeywords);
+      if (savedCfg.txtWriteOk !== undefined) setTxtWriteOk(savedCfg.txtWriteOk);
+
+      // Session
+      if (savedCfg.numThreads !== undefined) setNumThreads(savedCfg.numThreads);
+      if (savedCfg.threadDelay !== undefined) setThreadDelay(savedCfg.threadDelay);
+      if (savedCfg.skipProxyCheck !== undefined) setSkipProxyCheck(savedCfg.skipProxyCheck);
+      if (savedCfg.doNotCloseOnError !== undefined) setDoNotCloseOnError(savedCfg.doNotCloseOnError);
+      if (savedCfg.closeBrowserOnDone !== undefined) setCloseBrowserOnDone(savedCfg.closeBrowserOnDone);
+      if (savedCfg.performanceLimit !== undefined) setPerformanceLimit(savedCfg.performanceLimit);
+      if (savedCfg.hideWindowWhenDone !== undefined) setHideWindowWhenDone(savedCfg.hideWindowWhenDone);
+      if (savedCfg.useVirtualMouse !== undefined) setUseVirtualMouse(savedCfg.useVirtualMouse);
+      if (savedCfg.restartOnError !== undefined) setRestartOnError(savedCfg.restartOnError);
+      if (savedCfg.retryCount !== undefined) setRetryCount(savedCfg.retryCount);
+
+      // Schedule
+      if (savedCfg.useSchedule !== undefined) setUseSchedule(savedCfg.useSchedule);
+
+      // Engine & Provider
+      if (savedCfg.selectedEngine !== undefined) setSelectedEngine(savedCfg.selectedEngine);
+      if (savedCfg.selectedProvider !== undefined) setSelectedProvider(savedCfg.selectedProvider);
+
+      // Selected Profiles: restore saved profiles for this project
+      if (Array.isArray(savedCfg.selectedProfileIds) && savedCfg.selectedProfileIds.length > 0) {
+        setSelectedProfileIds(savedCfg.selectedProfileIds);
+      }
+    }
+
+    setTimeout(() => {
+      isInitialLoadingRef.current = false;
+    }, 250);
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchProfiles();
+      if (!isExecuting) {
+        setStep(1);
+      }
+      setSelectedLogThreadId(null);
+      loadConfigForProject(currentProject);
+    }
+  }, [isOpen, currentProject?.folderPath, currentProject?.info?.id]);
+
+  // Debounced auto-save when any configuration value changes in Step 2
+  useEffect(() => {
+    if (isInitialLoadingRef.current) return;
+    if (!currentProject) return;
+
+    const timer = setTimeout(() => {
+      saveConfigForCurrentProject();
+    }, 400);
+
+    return () => clearTimeout(timer);
+  }, [
+    currentProject?.folderPath,
+    currentProject?.info?.id,
+    windowWidth,
+    windowHeight,
+    windowScale,
+    screenTarget,
+    windowSizeMode,
+    autoTileWindows,
+    tilePreset,
+    percentWidth,
+    percentHeight,
+    useInputExcel,
+    excelFilePath,
+    excelSheetId,
+    excelMapMode,
+    excelMapColA,
+    excelWriteOk,
+    excelOkCol,
+    excelSkipIfHasText,
+    skipStatusKeywords,
+    useInputTxt,
+    txtFilePath,
+    txtMapMode,
+    txtSkipKeywords,
+    txtWriteOk,
+    numThreads,
+    threadDelay,
+    skipProxyCheck,
+    doNotCloseOnError,
+    closeBrowserOnDone,
+    performanceLimit,
+    hideWindowWhenDone,
+    useVirtualMouse,
+    restartOnError,
+    retryCount,
+    useSchedule,
+    selectedEngine,
+    selectedProvider,
+  ]);
 
   // Step 4: Running Multi-Thread State
   const [threads, setThreads] = useState<ThreadState[]>([]);
@@ -852,9 +1078,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     if (step === 1) {
       setStep(2);
     } else if (step === 2) {
+      saveConfigForCurrentProject();
       setStep(3);
     } else if (step === 3) {
       if (selectedProfileIds.length === 0) return;
+      saveConfigForCurrentProject();
       setStep(4);
       startMultiThreadExecution();
     }
@@ -885,6 +1113,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   // Multi-thread automation runner
   const startMultiThreadExecution = async () => {
+    saveConfigForCurrentProject();
     stopSignalRef.current = false;
     setIsExecuting(true);
     setElapsedSeconds(0);
@@ -4654,6 +4883,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     try {
       localStorage.setItem('sv_selected_profile_ids', JSON.stringify(newIds));
     } catch {}
+    saveConfigForCurrentProject({ selectedProfileIds: newIds });
   };
 
   const toggleSelectAll = () => {

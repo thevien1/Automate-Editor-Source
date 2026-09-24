@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFileDialog: (options?: any) => ipcRenderer.invoke('dialog:openFile', options),
   saveFileDialog: (options?: any) => ipcRenderer.invoke('dialog:saveFile', options),
   saveProjectToDisk: (projectData: any) => ipcRenderer.invoke('fs:saveProject', projectData),
+  saveRuntimeConfig: (data: { folderPath: string; runtimeConfig: any }) => ipcRenderer.invoke('fs:saveRuntimeConfig', data),
   readProjectFromDisk: (folderPath: string) => ipcRenderer.invoke('fs:readProject', folderPath),
   runWorkflow: (projectData: any) => ipcRenderer.invoke('automation:run', projectData),
   launchBrowser: (options?: { port?: string | number; url?: string; profileName?: string; windowSize?: any; windowPosition?: any; scale?: number; proxy?: string }) => ipcRenderer.invoke('automation:launchBrowser', options),

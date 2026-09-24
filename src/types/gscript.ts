@@ -86,8 +86,62 @@ export interface ProjectInfo {
   created_at: string;
 }
 
+export interface ProjectRuntimeConfig {
+  // Window & Screen
+  windowSizeMode?: 'percent' | 'custom';
+  autoTileWindows?: boolean;
+  tilePreset?: string;
+  percentWidth?: number;
+  percentHeight?: number;
+  windowWidth?: number;
+  windowHeight?: number;
+  windowScale?: number;
+  screenTarget?: string;
+
+  // Excel Input
+  useInputExcel?: boolean;
+  excelFilePath?: string;
+  excelSheetId?: number;
+  excelMapMode?: 'all' | 'one';
+  excelMapColA?: boolean;
+  excelWriteOk?: boolean;
+  excelOkCol?: string;
+  excelSkipIfHasText?: boolean;
+  skipStatusKeywords?: string;
+
+  // TXT Input
+  useInputTxt?: boolean;
+  txtFilePath?: string;
+  txtMapMode?: 'all' | 'one';
+  txtSkipKeywords?: string;
+  txtWriteOk?: boolean;
+
+  // Session Configuration
+  sessionName?: string;
+  numThreads?: number;
+  threadDelay?: number;
+  skipProxyCheck?: boolean;
+  doNotCloseOnError?: boolean;
+  closeBrowserOnDone?: boolean;
+  performanceLimit?: boolean;
+  hideWindowWhenDone?: boolean;
+  useVirtualMouse?: boolean;
+  restartOnError?: boolean;
+  retryCount?: number;
+
+  // Schedule
+  useSchedule?: boolean;
+
+  // Selected Profiles & Engine
+  selectedProfileIds?: string[];
+  selectedEngine?: string;
+  selectedProvider?: string;
+}
+
 export interface ProjectData {
   folderPath: string;
   info: ProjectInfo;
   script: EditorFile;
+  runtimeConfig?: ProjectRuntimeConfig;
 }
+
