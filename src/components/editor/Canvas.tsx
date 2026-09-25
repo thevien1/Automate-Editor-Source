@@ -8,16 +8,31 @@ import { ActionDefinition } from '../../types/ui';
 import { WorkflowNode } from '../../types/gscript';
 
 export const Canvas: React.FC = () => {
-  const { currentProject, insertActionOrBlock, showShortcuts, setShowShortcuts, selectNode } = useProject();
+  const {
+    currentProject,
+    activeWorkflowTab,
+    activeScript,
+    insertActionOrBlock,
+    showShortcuts,
+    setShowShortcuts,
+    selectNode,
+  } = useProject();
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
 
   if (!currentProject) return null;
 
-  const roots = [
-    { key: 'before_init', node: currentProject.script.before_init },
-    { key: 'main_logic', node: currentProject.script.main_logic },
-    { key: 'after_quit', node: currentProject.script.after_quit },
-  ];
+  const script = activeScript || currentProject.script;
+  const isMain = activeWorkflowTab === 'main';
+
+  const roots = isMain
+    ? [
+        { key: 'before_init', node: script.before_init },
+        { key: 'main_logic', node: script.main_logic },
+        { key: 'after_quit', node: script.after_quit },
+      ]
+    : [
+        { key: 'main_logic', node: script.main_logic },
+      ];
 
   // Compute sequential step numbers across all nodes
   let globalStepCounter = 1;

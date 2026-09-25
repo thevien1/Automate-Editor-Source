@@ -33,6 +33,7 @@ import { FileFolderExcelProps } from './properties/file/FileFolderExcelProps';
 import { HttpMailProps } from './properties/http/HttpMailProps';
 import { SwitchProps } from './properties/navigation/SwitchProps';
 import { CookieProps } from './properties/cookie/CookieProps';
+import { CallWorkflowProps } from './properties/workflow/CallWorkflowProps';
 import { GenericActionProps } from './properties/GenericActionProps';
 import { VariablesPanel } from './VariablesPanel';
 
@@ -162,6 +163,11 @@ export const PropertyPanel: React.FC = () => {
       [5, 6, 76, 117, 7].includes(type as number)
     ) {
       return <FlowProps {...commonProps} />;
+    }
+
+    // Call Workflow Reference Action
+    if (name === 'call workflow' || name.includes('call workflow') || type === 120) {
+      return <CallWorkflowProps {...commonProps} />;
     }
 
     // Navigation Actions

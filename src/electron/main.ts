@@ -171,10 +171,10 @@ ipcMain.handle('dialog:saveFile', async (event, options?: { title?: string; defa
   return null;
 });
 
-// Save Project according to SKILL.md format: info.gpmsln + src.gscript + runtime.json
+// Save Project according to SKILL.md format: info.gpmsln + src.gscript + runtime.json + sub-workflows
 ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
   try {
-    const { folderPath, info, script, runtimeConfig } = projectData;
+    const { folderPath, info, script, runtimeConfig, subWorkflows } = projectData;
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
     }
@@ -184,6 +184,30 @@ ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
 
     fs.writeFileSync(infoPath, JSON.stringify(info, null, 2), 'utf-8');
     fs.writeFileSync(scriptPath, JSON.stringify(script, null, 2), 'utf-8');
+
+    // Save sub-workflows
+    if (subWorkflows && typeof subWorkflows === 'object') {
+      for (const [subName, subScript] of Object.entries(subWorkflows)) {
+        if (!subName || subName === 'main' || subName === 'src') continue;
+        const subPath = path.join(folderPath, `${subName}.gscript`);
+        fs.writeFileSync(subPath, JSON.stringify(subScript, null, 2), 'utf-8');
+      }
+    }
+
+    // Clean up any deleted .gscript files on disk
+    try {
+      const diskFiles = fs.readdirSync(folderPath);
+      for (const f of diskFiles) {
+        if (f.endsWith('.gscript') && f !== 'src.gscript') {
+          const baseName = path.basename(f, '.gscript');
+          if (!subWorkflows || !subWorkflows[baseName]) {
+            try {
+              fs.unlinkSync(path.join(folderPath, f));
+            } catch {}
+          }
+        }
+      }
+    } catch {}
 
     if (runtimeConfig) {
       const runtimePath = path.join(folderPath, 'runtime.json');
@@ -209,6 +233,21 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
     const script = JSON.parse(fs.readFileSync(scriptPath, 'utf-8'));
 
+    // Read all other .gscript files in the folder as sub-workflows
+    const subWorkflows: Record<string, any> = {};
+    try {
+      const diskFiles = fs.readdirSync(folderPath);
+      for (const f of diskFiles) {
+        if (f.endsWith('.gscript') && f !== 'src.gscript') {
+          const baseName = path.basename(f, '.gscript');
+          try {
+            const subContent = fs.readFileSync(path.join(folderPath, f), 'utf-8');
+            subWorkflows[baseName] = JSON.parse(subContent);
+          } catch {}
+        }
+      }
+    } catch {}
+
     let runtimeConfig: any = undefined;
     const runtimePath = path.join(folderPath, 'runtime.json');
     if (fs.existsSync(runtimePath)) {
@@ -219,7 +258,7 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
       }
     }
 
-    return { success: true, project: { folderPath, info, script, runtimeConfig } };
+    return { success: true, project: { folderPath, info, script, subWorkflows, runtimeConfig } };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -388,6 +427,10 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
     if (action === 'exists') {
       const exists = fs.existsSync(payload.path) && fs.statSync(payload.path).isFile();
       return { success: true, exists };
+    }
+    if (action === 'read' || action === 'readText') {
+      const content = fs.readFileSync(payload.path, 'utf-8');
+      return { success: true, content };
     }
     if (action === 'copy') {
       const destDir = path.dirname(payload.dest);

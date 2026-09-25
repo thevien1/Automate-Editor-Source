@@ -41,7 +41,7 @@ import {
   Layout,
 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
-import { WorkflowNode, ActionNode, ProjectRuntimeConfig } from '../../types/gscript';
+import { WorkflowNode, ActionNode, ProjectRuntimeConfig, EditorFile } from '../../types/gscript';
 import {
   VIRTUAL_MOUSE_SCRIPT,
   getVirtualMouseClickXPathScript,
@@ -2057,6 +2057,79 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         } else {
           lastConditionBranchMet = false;
           const act = n as ActionNode;
+          const actName = (act.display_text || '').toLowerCase();
+          const actType = act.type;
+
+          if (actType === 120 || actName === 'call workflow' || actName.includes('call workflow')) {
+            let refFile = '';
+            try {
+              const p = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
+              if (Array.isArray(p)) {
+                const item = p.find((x: any) => x.Key === 'REFERENCE_FILE' || x.Key === 'WORKFLOW_NAME');
+                if (item && item.Value) refFile = item.Value.trim();
+              }
+            } catch (e) {}
+
+            refFile = resolveVariableString(refFile, threadVars);
+
+            if (!refFile) {
+              const isContinue = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+              if (isContinue) {
+                updateThreadLog(threadId, 'info', `⚠ Call workflow › Chưa cấu hình Reference file (Continue on error: Bỏ qua)`);
+                continue;
+              } else {
+                updateThreadLog(threadId, 'error', `✕ Call workflow thất bại: Chưa cấu hình Reference file`);
+                return 'ERROR_STOP';
+              }
+            }
+
+            // Look up sub-workflow script
+            let targetScript: EditorFile | null = currentProject?.subWorkflows?.[refFile] || null;
+
+            // If not found in memory, try loading from disk if in Electron
+            if (!targetScript && currentProject?.folderPath && (window as any).electronAPI?.fileAction) {
+              try {
+                const subPath = `${currentProject.folderPath}/${refFile}.gscript`;
+                const fileRes = await (window as any).electronAPI.fileAction({ action: 'read', payload: { path: subPath } });
+                if (fileRes?.success && fileRes.content) {
+                  targetScript = JSON.parse(fileRes.content);
+                }
+              } catch (e) {}
+            }
+
+            if (!targetScript) {
+              const isContinue = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+              if (isContinue) {
+                updateThreadLog(threadId, 'info', `⚠ Call workflow › Không tìm thấy workflow file "${refFile}" (Continue on error: Bỏ qua)`);
+                continue;
+              } else {
+                updateThreadLog(threadId, 'error', `✕ Call workflow thất bại: Không tìm thấy file workflow "${refFile}"`);
+                return 'ERROR_STOP';
+              }
+            }
+
+            const childNodes: WorkflowNode[] = [
+              ...(targetScript.before_init?.nodes || []),
+              ...(targetScript.main_logic?.nodes || []),
+              ...(targetScript.after_quit?.nodes || []),
+            ];
+
+            updateThreadLog(threadId, 'info', `▶ Call workflow ▸ Bắt đầu thực thi sub-workflow "${refFile}" (${childNodes.length} actions)`);
+
+            const childRes = await executeThreadNodes(childNodes);
+            if (childRes === 'STOP' || childRes === 'ERROR_STOP') return childRes;
+
+            // Alias variables modified in child workflow with prefix $refFile_varName
+            for (const [k, v] of Object.entries(threadVars)) {
+              const cleanK = k.startsWith('$') ? k.substring(1) : k;
+              threadVars[`$${refFile}_${cleanK}`] = v;
+              threadVars[`${refFile}_${cleanK}`] = v;
+            }
+
+            updateThreadLog(threadId, 'success', `✓ Call workflow ▸ Hoàn tất thực thi sub-workflow "${refFile}"`);
+            continue;
+          }
+
           const res = await executeThreadAction(threadId, activePort, act, threadVars);
           if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
         }

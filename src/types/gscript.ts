@@ -144,6 +144,7 @@ export interface ProjectData {
   folderPath: string;
   info: ProjectInfo;
   script: EditorFile;
+  subWorkflows?: Record<string, EditorFile>;
   runtimeConfig?: ProjectRuntimeConfig;
 }
 

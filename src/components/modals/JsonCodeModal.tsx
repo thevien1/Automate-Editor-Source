@@ -17,6 +17,7 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
 }) => {
   const {
     currentProject,
+    activeScript,
     selectedNodeId,
     selectedNodeIds,
     selectedBlockKey,
@@ -47,6 +48,7 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
   // Compute export code based on scope
   const getExportData = () => {
     if (!currentProject) return '';
+    const script = activeScript || currentProject.script;
 
     let targetNodes: WorkflowNode[] = [];
 
@@ -62,30 +64,31 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
             for (const ch of (node as any).nodes) traverse(ch);
           }
         };
-        if (currentProject.script.before_init) traverse(currentProject.script.before_init);
-        if (currentProject.script.main_logic) traverse(currentProject.script.main_logic);
-        if (currentProject.script.after_quit) traverse(currentProject.script.after_quit);
+        if (script.before_init) traverse(script.before_init);
+        if (script.main_logic) traverse(script.main_logic);
+        if (script.after_quit) traverse(script.after_quit);
 
         const roots = [
-          currentProject.script.before_init.id,
-          currentProject.script.main_logic.id,
-          currentProject.script.after_quit.id,
-        ];
+          script.before_init?.id,
+          script.main_logic?.id,
+          script.after_quit?.id,
+        ].filter(Boolean);
         const matched = all.filter((n) => selectedNodeIds.includes(n.id) && !roots.includes(n.id));
         targetNodes = filterOutDescendants(matched);
       } else if (selected) {
         targetNodes = [selected];
       } else {
-        targetNodes = currentProject.script[selectedBlockKey].nodes;
+        const targetBk = script[selectedBlockKey] ? selectedBlockKey : 'main_logic';
+        targetNodes = script[targetBk]?.nodes || [];
       }
     } else if (exportScope === 'main_logic') {
-      targetNodes = currentProject.script.main_logic.nodes;
+      targetNodes = script.main_logic?.nodes || [];
     } else if (exportScope === 'before_init') {
-      targetNodes = currentProject.script.before_init.nodes;
+      targetNodes = script.before_init?.nodes || [];
     } else if (exportScope === 'after_quit') {
-      targetNodes = currentProject.script.after_quit.nodes;
+      targetNodes = script.after_quit?.nodes || [];
     } else if (exportScope === 'full') {
-      return JSON.stringify(currentProject.script, null, 2);
+      return JSON.stringify(script, null, 2);
     }
 
     if (exportFormat === 'code') {

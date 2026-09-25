@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { X, Play, Square, FlaskConical, Copy, Trash2, Check } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
-import { WorkflowNode, ActionNode } from '../../types/gscript';
+import { WorkflowNode, ActionNode, EditorFile } from '../../types/gscript';
 import {
   VIRTUAL_MOUSE_SCRIPT,
   getVirtualMouseClickXPathScript,
@@ -584,6 +584,72 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           addLog('info', `⏭ Next loop › Bỏ qua các lệnh còn lại, chuyển sang lượt lặp tiếp theo`);
           logActionResult(act, 'Next loop');
           return 'NEXT_LOOP';
+        }
+
+        // Call workflow (type 120)
+        if (actType === 120 || actName === 'call workflow' || actName.includes('call workflow')) {
+          logActionStart(act, 'Call workflow');
+          let refFile = '';
+          try {
+            const p = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
+            if (Array.isArray(p)) {
+              const item = p.find((x: any) => x.Key === 'REFERENCE_FILE' || x.Key === 'WORKFLOW_NAME');
+              if (item && item.Value) refFile = item.Value.trim();
+            }
+          } catch (e) {}
+
+          refFile = resolveVariableString(refFile, vars);
+
+          if (!refFile) {
+            if (act.continue_on_error) {
+              addLog('info', `⚠ Call workflow › Chưa cấu hình Reference file (Continue on error: Bỏ qua)`);
+              continue;
+            } else {
+              addLog('error', `✕ Call workflow thất bại: Chưa cấu hình Reference file`);
+              return 'STOP';
+            }
+          }
+
+          let targetScript: EditorFile | null = currentProject?.subWorkflows?.[refFile] || null;
+          if (!targetScript && currentProject?.folderPath && (window as any).electronAPI?.fileAction) {
+            try {
+              const subPath = `${currentProject.folderPath}/${refFile}.gscript`;
+              const fileRes = await (window as any).electronAPI.fileAction({ action: 'read', payload: { path: subPath } });
+              if (fileRes?.success && fileRes.content) {
+                targetScript = JSON.parse(fileRes.content);
+              }
+            } catch (e) {}
+          }
+
+          if (!targetScript) {
+            if (act.continue_on_error) {
+              addLog('info', `⚠ Call workflow › Không tìm thấy workflow file "${refFile}" (Continue on error: Bỏ qua)`);
+              continue;
+            } else {
+              addLog('error', `✕ Call workflow thất bại: Không tìm thấy file workflow "${refFile}"`);
+              return 'STOP';
+            }
+          }
+
+          const childNodes: WorkflowNode[] = [
+            ...(targetScript.before_init?.nodes || []),
+            ...(targetScript.main_logic?.nodes || []),
+            ...(targetScript.after_quit?.nodes || []),
+          ];
+
+          addLog('info', `▶ Call workflow ▸ Bắt đầu thực thi sub-workflow "${refFile}" (${childNodes.length} actions)`);
+
+          const childRes = await executeNodes(childNodes, vars, addLog);
+          if (childRes === 'STOP') return 'STOP';
+
+          for (const [k, v] of Object.entries(vars)) {
+            const cleanK = k.startsWith('$') ? k.substring(1) : k;
+            vars[`$${refFile}_${cleanK}`] = v;
+            vars[`${refFile}_${cleanK}`] = v;
+          }
+
+          logActionResult(act, `Call workflow ▸ ${refFile}`);
+          continue;
         }
 
         if (actType === 1 || actName === 'set variable') {

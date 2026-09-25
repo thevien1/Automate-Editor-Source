@@ -88,7 +88,7 @@ export const extractProjectOutputVariables = (project: ProjectData | null): stri
   if (!project || !project.script) return [];
   const vars = new Set<string>();
 
-  const traverse = (node: WorkflowNode) => {
+  const traverse = (node: WorkflowNode, prefix?: string) => {
     if (!node) return;
     if ('output_variable_name' in node && (node as ActionNode).output_variable_name) {
       const name = (node as ActionNode).output_variable_name?.trim();
@@ -97,13 +97,18 @@ export const extractProjectOutputVariables = (project: ProjectData | null): stri
         const parts = name.split(',').map((s) => s.trim()).filter(Boolean);
         for (const p of parts) {
           const clean = p.startsWith('$') ? p.substring(1) : p;
-          if (clean) vars.add(clean);
+          if (clean) {
+            vars.add(clean);
+            if (prefix) {
+              vars.add(`${prefix}_${clean}`);
+            }
+          }
         }
       }
     }
     if ('nodes' in node && Array.isArray((node as any).nodes)) {
       for (const child of (node as any).nodes) {
-        traverse(child);
+        traverse(child, prefix);
       }
     }
   };
@@ -111,6 +116,14 @@ export const extractProjectOutputVariables = (project: ProjectData | null): stri
   if (project.script.before_init) traverse(project.script.before_init);
   if (project.script.main_logic) traverse(project.script.main_logic);
   if (project.script.after_quit) traverse(project.script.after_quit);
+
+  if (project.subWorkflows) {
+    for (const [subName, subScript] of Object.entries(project.subWorkflows)) {
+      if (subScript.before_init) traverse(subScript.before_init, subName);
+      if (subScript.main_logic) traverse(subScript.main_logic, subName);
+      if (subScript.after_quit) traverse(subScript.after_quit, subName);
+    }
+  }
 
   return Array.from(vars);
 };
@@ -126,6 +139,12 @@ interface ProjectContextType {
   setAccentColor: (color: string) => void;
   currentProject: ProjectData | null;
   recentProjects: RecentProject[];
+  activeWorkflowTab: string;
+  setActiveWorkflowTab: (tab: string) => void;
+  activeScript: EditorFile | null;
+  createSubWorkflow: (name: string) => Promise<{ success: boolean; error?: string }>;
+  deleteSubWorkflow: (name: string) => Promise<void>;
+  importSubWorkflow: (name: string, scriptData: any) => Promise<{ success: boolean; error?: string }>;
   selectedNodeId: string | null;
   selectedNodeIds: string[];
   selectedBlockKey: 'before_init' | 'main_logic' | 'after_quit';
@@ -255,6 +274,206 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
   const [selectedBlockKey, setSelectedBlockKey] = useState<'before_init' | 'main_logic' | 'after_quit'>('main_logic');
+  const [activeWorkflowTab, setActiveWorkflowTabState] = useState<string>('main');
+
+  const getActiveScript = (proj: ProjectData | null = currentProject, tab: string = activeWorkflowTab): EditorFile | null => {
+    if (!proj) return null;
+    if (tab === 'main') return proj.script;
+    return proj.subWorkflows?.[tab] || null;
+  };
+
+  const activeScript = getActiveScript();
+
+  const applyScriptUpdate = (newScript: EditorFile) => {
+    setCurrentProject((prev) => {
+      if (!prev) return prev;
+      if (activeWorkflowTab === 'main') {
+        return { ...prev, script: newScript };
+      }
+      return {
+        ...prev,
+        subWorkflows: {
+          ...(prev.subWorkflows || {}),
+          [activeWorkflowTab]: newScript,
+        },
+      };
+    });
+  };
+
+  const setActiveWorkflowTab = (tab: string) => {
+    setActiveWorkflowTabState(tab);
+    setUndoStack([]);
+    setRedoStack([]);
+    const script = tab === 'main' ? currentProject?.script : currentProject?.subWorkflows?.[tab];
+    const defaultNodeId = script?.main_logic?.id || script?.before_init?.id || null;
+    setSelectedNodeId(defaultNodeId);
+    setSelectedNodeIds(defaultNodeId ? [defaultNodeId] : []);
+    setSelectedBlockKey('main_logic');
+  };
+
+  const createSubWorkflow = async (name: string): Promise<{ success: boolean; error?: string }> => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return { success: false, error: 'File name cannot be empty' };
+    }
+    if (!/^[a-zA-Z0-9_\-\s]+$/.test(trimmed)) {
+      return { success: false, error: 'Invalid characters in file name' };
+    }
+    if (trimmed.toLowerCase() === 'main' || trimmed.toLowerCase() === 'src') {
+      return { success: false, error: 'Cannot use reserved name "main" or "src"' };
+    }
+    if (currentProject?.subWorkflows && currentProject.subWorkflows[trimmed]) {
+      return { success: false, error: `Workflow "${trimmed}" already exists` };
+    }
+
+    const newSubScript: EditorFile = {
+      $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+      before_init: createDefaultNormalBlock('Before browser opened'),
+      main_logic: createDefaultNormalBlock('Normal block'),
+      after_quit: createDefaultNormalBlock('After browser closed'),
+      name: trimmed,
+    };
+
+    const updatedSubWorkflows = {
+      ...(currentProject?.subWorkflows || {}),
+      [trimmed]: newSubScript,
+    };
+
+    const updatedProject: ProjectData = {
+      ...currentProject!,
+      subWorkflows: updatedSubWorkflows,
+    };
+
+    setCurrentProject(updatedProject);
+    setActiveWorkflowTabState(trimmed);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSelectedNodeId(newSubScript.main_logic.id);
+    setSelectedNodeIds([newSubScript.main_logic.id]);
+    setSelectedBlockKey('main_logic');
+
+    if ((window as any).electronAPI?.saveProjectToDisk) {
+      await (window as any).electronAPI.saveProjectToDisk(updatedProject);
+    }
+    if (updatedProject.folderPath) {
+      localStorage.setItem(`gpm_project_${updatedProject.folderPath}`, JSON.stringify(updatedProject));
+    }
+
+    showToast('Created', `Created workflow file ${trimmed}.gscript`);
+    return { success: true };
+  };
+
+  const deleteSubWorkflow = async (name: string) => {
+    if (!currentProject || !currentProject.subWorkflows || !currentProject.subWorkflows[name]) return;
+
+    const nextSubWorkflows = { ...currentProject.subWorkflows };
+    delete nextSubWorkflows[name];
+
+    const updatedProject: ProjectData = {
+      ...currentProject,
+      subWorkflows: nextSubWorkflows,
+    };
+
+    setCurrentProject(updatedProject);
+
+    if (activeWorkflowTab === name) {
+      setActiveWorkflowTabState('main');
+      const defaultNodeId = updatedProject.script?.main_logic?.id || null;
+      setSelectedNodeId(defaultNodeId);
+      setSelectedNodeIds(defaultNodeId ? [defaultNodeId] : []);
+      setSelectedBlockKey('main_logic');
+    }
+
+    if ((window as any).electronAPI?.saveProjectToDisk) {
+      await (window as any).electronAPI.saveProjectToDisk(updatedProject);
+    }
+    if (updatedProject.folderPath) {
+      localStorage.setItem(`gpm_project_${updatedProject.folderPath}`, JSON.stringify(updatedProject));
+    }
+
+    showToast('Deleted', `Deleted workflow ${name}`);
+  };
+
+  const importSubWorkflow = async (name: string, scriptData: any): Promise<{ success: boolean; error?: string }> => {
+    if (!currentProject) return { success: false, error: 'No active project' };
+    let baseName = name.replace(/\.gscript$/i, '').replace(/\.json$/i, '').trim();
+    if (!baseName || baseName.toLowerCase() === 'main' || baseName.toLowerCase() === 'src') {
+      baseName = `imported_${Date.now()}`;
+    }
+
+    let finalName = baseName;
+    let counter = 1;
+    while (currentProject.subWorkflows && currentProject.subWorkflows[finalName]) {
+      finalName = `${baseName}_${counter++}`;
+    }
+
+    let parsed: any;
+    try {
+      parsed = typeof scriptData === 'string' ? JSON.parse(scriptData) : scriptData;
+      if (!parsed.main_logic) {
+        if (Array.isArray(parsed)) {
+          parsed = {
+            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            before_init: createDefaultNormalBlock('Before browser opened'),
+            main_logic: {
+              ...createDefaultNormalBlock('Normal block'),
+              nodes: parsed,
+            },
+            after_quit: createDefaultNormalBlock('After browser closed'),
+            name: finalName,
+          };
+        } else if ('nodes' in parsed) {
+          parsed = {
+            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            before_init: createDefaultNormalBlock('Before browser opened'),
+            main_logic: parsed,
+            after_quit: createDefaultNormalBlock('After browser closed'),
+            name: finalName,
+          };
+        } else {
+          parsed = {
+            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            before_init: createDefaultNormalBlock('Before browser opened'),
+            main_logic: createDefaultNormalBlock('Normal block'),
+            after_quit: createDefaultNormalBlock('After browser closed'),
+            name: finalName,
+          };
+        }
+      }
+      parsed.name = finalName;
+    } catch (err: any) {
+      return { success: false, error: `Invalid script format: ${err.message}` };
+    }
+
+    const updatedSubWorkflows = {
+      ...(currentProject.subWorkflows || {}),
+      [finalName]: parsed,
+    };
+
+    const updatedProject: ProjectData = {
+      ...currentProject,
+      subWorkflows: updatedSubWorkflows,
+    };
+
+    setCurrentProject(updatedProject);
+    setActiveWorkflowTabState(finalName);
+    setUndoStack([]);
+    setRedoStack([]);
+    setSelectedNodeId(parsed.main_logic?.id || null);
+    setSelectedNodeIds(parsed.main_logic?.id ? [parsed.main_logic.id] : []);
+    setSelectedBlockKey('main_logic');
+
+    if ((window as any).electronAPI?.saveProjectToDisk) {
+      await (window as any).electronAPI.saveProjectToDisk(updatedProject);
+    }
+    if (updatedProject.folderPath) {
+      localStorage.setItem(`gpm_project_${updatedProject.folderPath}`, JSON.stringify(updatedProject));
+    }
+
+    showToast('Imported', `Imported workflow file ${finalName}.gscript`);
+    return { success: true };
+  };
+
   const [showShortcuts, setShowShortcuts] = useState<boolean>(false);
   const [showSaveToast, setShowSaveToast] = useState<boolean>(false);
   const [toastInfo, setToastInfo] = useState<{ title: string; message: string } | null>(null);
@@ -386,6 +605,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     ]);
 
     setScreen('editor');
+    setActiveWorkflowTabState('main');
     setUndoStack([]);
     setRedoStack([]);
     // Default select main logic block
@@ -428,6 +648,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     setCurrentProject(proj);
     setScreen('editor');
+    setActiveWorkflowTabState('main');
     setUndoStack([]);
     setRedoStack([]);
     const defaultNodeId = proj.script?.main_logic?.id || proj.script?.before_init?.id || null;
@@ -439,6 +660,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const closeProject = () => {
     setCurrentProject(null);
     setScreen('home');
+    setActiveWorkflowTabState('main');
     setSelectedNodeId(null);
     setSelectedNodeIds([]);
     setUndoStack([]);
@@ -480,7 +702,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   // Helper to get all nodes in flat array preserving tree order
   const getAllFlatNodes = (project: ProjectData | null): WorkflowNode[] => {
-    if (!project || !project.script) return [];
+    if (!project) return [];
+    const script = getActiveScript(project, activeWorkflowTab);
+    if (!script) return [];
     const list: WorkflowNode[] = [];
     const traverse = (node: WorkflowNode) => {
       if (!node) return;
@@ -491,9 +715,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       }
     };
-    if (project.script.before_init) traverse(project.script.before_init);
-    if (project.script.main_logic) traverse(project.script.main_logic);
-    if (project.script.after_quit) traverse(project.script.after_quit);
+    if (script.before_init) traverse(script.before_init);
+    if (script.main_logic) traverse(script.main_logic);
+    if (script.after_quit) traverse(script.after_quit);
     return list;
   };
 
@@ -545,12 +769,14 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const selectAllNodes = () => {
     if (!currentProject) return;
+    const script = getActiveScript();
+    if (!script) return;
     const flat = getAllFlatNodes(currentProject);
     const rootIds = [
-      currentProject.script.before_init.id,
-      currentProject.script.main_logic.id,
-      currentProject.script.after_quit.id,
-    ];
+      script.before_init?.id,
+      script.main_logic?.id,
+      script.after_quit?.id,
+    ].filter(Boolean);
     const selectable = flat.filter(n => !rootIds.includes(n.id)).map(n => n.id);
     if (selectable.length > 0) {
       setSelectedNodeIds(selectable);
@@ -572,7 +798,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const getSelectedNode = (): WorkflowNode | null => {
     if (!currentProject || !selectedNodeId) return null;
-    const roots = [currentProject.script.before_init, currentProject.script.main_logic, currentProject.script.after_quit];
+    const script = getActiveScript();
+    if (!script) return null;
+    const roots = [script.before_init, script.main_logic, script.after_quit].filter(Boolean);
     for (const r of roots) {
       if (r.id === selectedNodeId) return r;
       const found = findNodeRecursive(r.nodes, selectedNodeId);
@@ -635,45 +863,49 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     if (!currentProject || undoStack.length === 0) return;
     const prevScript = undoStack[undoStack.length - 1];
     const newUndoStack = undoStack.slice(0, -1);
-    const currentSnapshot = JSON.parse(JSON.stringify(currentProject.script));
+    const activeScr = getActiveScript() || currentProject.script;
+    const currentSnapshot = JSON.parse(JSON.stringify(activeScr));
 
     setRedoStack(prev => [...prev, currentSnapshot]);
     setUndoStack(newUndoStack);
-    setCurrentProject({ ...currentProject, script: prevScript });
+    applyScriptUpdate(prevScript);
   };
 
   const redo = () => {
     if (!currentProject || redoStack.length === 0) return;
     const nextScript = redoStack[redoStack.length - 1];
     const newRedoStack = redoStack.slice(0, -1);
-    const currentSnapshot = JSON.parse(JSON.stringify(currentProject.script));
+    const activeScr = getActiveScript() || currentProject.script;
+    const currentSnapshot = JSON.parse(JSON.stringify(activeScr));
 
     setUndoStack(prev => [...prev, currentSnapshot]);
     setRedoStack(newRedoStack);
-    setCurrentProject({ ...currentProject, script: nextScript });
+    applyScriptUpdate(nextScript);
   };
 
   const updateNode = (id: string, updates: Partial<any>) => {
     if (!currentProject) return;
+    const script = getActiveScript() || currentProject.script;
     const now = Date.now();
     if (lastUpdateNodeIdRef.current !== id || now - lastUpdateTimeRef.current > 800) {
-      pushUndoSnapshot(currentProject.script);
+      pushUndoSnapshot(script);
       lastUpdateNodeIdRef.current = id;
     }
     lastUpdateTimeRef.current = now;
 
-    const newScript = { ...currentProject.script };
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
     const roots: ('before_init' | 'main_logic' | 'after_quit')[] = ['before_init', 'main_logic', 'after_quit'];
 
     for (const bk of roots) {
       const r = newScript[bk];
+      if (!r) continue;
       if (r.id === id) {
         newScript[bk] = { ...r, ...updates };
-        setCurrentProject({ ...currentProject, script: newScript });
+        applyScriptUpdate(newScript);
         return;
       }
       if (updateNodeRecursive(r.nodes, id, updates)) {
-        setCurrentProject({ ...currentProject, script: newScript });
+        applyScriptUpdate(newScript);
         return;
       }
     }
@@ -681,14 +913,16 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const toggleBlockExpand = (blockId: string) => {
     if (!currentProject) return;
-    const newScript = { ...currentProject.script };
+    const script = getActiveScript() || currentProject.script;
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
     const roots: ('before_init' | 'main_logic' | 'after_quit')[] = ['before_init', 'main_logic', 'after_quit'];
 
     for (const bk of roots) {
       const r = newScript[bk];
+      if (!r) continue;
       if (r.id === blockId) {
         r.expanded = !r.expanded;
-        setCurrentProject({ ...currentProject, script: newScript });
+        applyScriptUpdate(newScript);
         return;
       }
       const findAndToggle = (nodes: WorkflowNode[]): boolean => {
@@ -704,7 +938,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         return false;
       };
       if (findAndToggle(r.nodes)) {
-        setCurrentProject({ ...currentProject, script: newScript });
+        applyScriptUpdate(newScript);
         return;
       }
     }
@@ -717,10 +951,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     position: 'before' | 'after' | 'inside' = 'after'
   ) => {
     if (!currentProject) return;
-    pushUndoSnapshot(currentProject.script);
+    const script = getActiveScript() || currentProject.script;
+    pushUndoSnapshot(script);
 
-    const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-    const roots = [newScript.before_init, newScript.main_logic, newScript.after_quit];
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+    const roots = [newScript.before_init, newScript.main_logic, newScript.after_quit].filter(Boolean);
 
     // Determine target ID
     const targetId = explicitTargetId || selectedNodeId;
@@ -844,30 +1079,32 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Default fallback if no target or target not found
     if (!inserted) {
-      newScript[selectedBlockKey].nodes.push(newNode);
-      newScript[selectedBlockKey].expanded = true;
+      const targetBk = newScript[selectedBlockKey] ? selectedBlockKey : 'main_logic';
+      newScript[targetBk].nodes.push(newNode);
+      newScript[targetBk].expanded = true;
     }
 
-    setCurrentProject({ ...currentProject, script: newScript });
+    applyScriptUpdate(newScript);
     setSelectedNodeId(newNode.id);
     setSelectedNodeIds([newNode.id]);
   };
 
   const deleteSelectedNode = () => {
     if (!currentProject) return;
+    const script = getActiveScript() || currentProject.script;
     const roots = [
-      currentProject.script.before_init.id,
-      currentProject.script.main_logic.id,
-      currentProject.script.after_quit.id,
-    ];
+      script.before_init?.id,
+      script.main_logic?.id,
+      script.after_quit?.id,
+    ].filter(Boolean);
     const targetIds = (selectedNodeIds.length > 0 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : []))
       .filter(id => !roots.includes(id));
 
     if (targetIds.length === 0) return;
 
-    pushUndoSnapshot(currentProject.script);
-    const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit];
+    pushUndoSnapshot(script);
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit].filter(Boolean);
     const targetSet = new Set(targetIds);
 
     const deleteRecursive = (arr: WorkflowNode[]) => {
@@ -884,7 +1121,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       deleteRecursive(r.nodes);
     }
 
-    setCurrentProject({ ...currentProject, script: newScript });
+    applyScriptUpdate(newScript);
     setSelectedNodeId(null);
     setSelectedNodeIds([]);
   };
@@ -906,11 +1143,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const copySelectedNode = async () => {
     if (!currentProject) return;
+    const script = getActiveScript() || currentProject.script;
     const roots = [
-      currentProject.script.before_init.id,
-      currentProject.script.main_logic.id,
-      currentProject.script.after_quit.id,
-    ];
+      script.before_init?.id,
+      script.main_logic?.id,
+      script.after_quit?.id,
+    ].filter(Boolean);
 
     const targetIds = selectedNodeIds.length > 0 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : []);
     const flat = getAllFlatNodes(currentProject);
@@ -918,7 +1156,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // If a root block was selected, copy all its child nodes
     if (nodesToCopy.length === 0 && targetIds.length > 0) {
-      const selectedRoot = [currentProject.script.before_init, currentProject.script.main_logic, currentProject.script.after_quit].find(r => targetIds.includes(r.id));
+      const selectedRoot = [script.before_init, script.main_logic, script.after_quit].filter(Boolean).find(r => targetIds.includes(r.id));
       if (selectedRoot && selectedRoot.nodes.length > 0) {
         nodesToCopy = [...selectedRoot.nodes];
       }
@@ -1017,10 +1255,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const newNodes = sourceNodes.map(n => cloneNodeWithNewIds(n));
     const newIds = newNodes.map(n => n.id);
 
-    const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-    pushUndoSnapshot(currentProject.script);
+    const script = getActiveScript() || currentProject.script;
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+    pushUndoSnapshot(script);
 
-    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit];
+    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit].filter(Boolean);
     let inserted = false;
 
     // Anchor at the last selected node or single selected node
@@ -1085,11 +1324,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if (!inserted) {
-      newScript[selectedBlockKey].nodes.push(...newNodes);
-      newScript[selectedBlockKey].expanded = true;
+      const targetBk = newScript[selectedBlockKey] ? selectedBlockKey : 'main_logic';
+      newScript[targetBk].nodes.push(...newNodes);
+      newScript[targetBk].expanded = true;
     }
 
-    setCurrentProject({ ...currentProject, script: newScript });
+    applyScriptUpdate(newScript);
     setSelectedNodeIds(newIds);
     setSelectedNodeId(newIds[newIds.length - 1]);
     showToast('Paste JSON', `Đã dán ${newNodes.length} node vào workflow!`);
@@ -1109,13 +1349,15 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       const newNodes = parsed.map(n => cloneNodeWithNewIds(n));
       const newIds = newNodes.map(n => n.id);
 
-      const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-      pushUndoSnapshot(currentProject.script);
+      const script = getActiveScript() || currentProject.script;
+      const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+      pushUndoSnapshot(script);
 
-      newScript[targetBlock].nodes.push(...newNodes);
-      newScript[targetBlock].expanded = true;
+      const targetBk = newScript[targetBlock] ? targetBlock : 'main_logic';
+      newScript[targetBk].nodes.push(...newNodes);
+      newScript[targetBk].expanded = true;
 
-      setCurrentProject({ ...currentProject, script: newScript });
+      applyScriptUpdate(newScript);
       setSelectedNodeIds(newIds);
       setSelectedNodeId(newIds[newIds.length - 1]);
       return { success: true, count: newNodes.length };
@@ -1126,18 +1368,19 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const duplicateSelectedNode = () => {
     if (!currentProject) return;
+    const script = getActiveScript() || currentProject.script;
     const roots = [
-      currentProject.script.before_init.id,
-      currentProject.script.main_logic.id,
-      currentProject.script.after_quit.id,
-    ];
+      script.before_init?.id,
+      script.main_logic?.id,
+      script.after_quit?.id,
+    ].filter(Boolean);
     const targetIds = (selectedNodeIds.length > 0 ? selectedNodeIds : (selectedNodeId ? [selectedNodeId] : []))
       .filter(id => !roots.includes(id));
 
     if (targetIds.length === 0) return;
 
-    pushUndoSnapshot(currentProject.script);
-    const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
+    pushUndoSnapshot(script);
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
     const flat = getAllFlatNodes(currentProject);
     let nodesToDuplicate = flat.filter(n => targetIds.includes(n.id) && !roots.includes(n.id));
     nodesToDuplicate = filterOutDescendants(nodesToDuplicate);
@@ -1148,7 +1391,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     // Insert after the last selected node
     const lastTargetId = targetIds[targetIds.length - 1];
-    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit];
+    const rootBlocks = [newScript.before_init, newScript.main_logic, newScript.after_quit].filter(Boolean);
 
     let inserted = false;
     const insertAfterChild = (arr: WorkflowNode[]): boolean => {
@@ -1173,10 +1416,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if (!inserted) {
-      newScript[selectedBlockKey].nodes.push(...clonedNodes);
+      const targetBk = newScript[selectedBlockKey] ? selectedBlockKey : 'main_logic';
+      newScript[targetBk].nodes.push(...clonedNodes);
     }
 
-    setCurrentProject({ ...currentProject, script: newScript });
+    applyScriptUpdate(newScript);
     setSelectedNodeIds(newIds);
     setSelectedNodeId(newIds[newIds.length - 1]);
   };
@@ -1184,10 +1428,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const clearWorkflow = () => {
     if (!currentProject) return;
     if (confirm('Are you sure you want to clear all nodes in the current workflow?')) {
-      pushUndoSnapshot(currentProject.script);
-      const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-      newScript[selectedBlockKey].nodes = [];
-      setCurrentProject({ ...currentProject, script: newScript });
+      const script = getActiveScript() || currentProject.script;
+      pushUndoSnapshot(script);
+      const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+      const targetBk = newScript[selectedBlockKey] ? selectedBlockKey : 'main_logic';
+      newScript[targetBk].nodes = [];
+      applyScriptUpdate(newScript);
       setSelectedNodeId(null);
       setSelectedNodeIds([]);
     }
@@ -1199,9 +1445,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     position: 'before' | 'after' | 'inside' | number = 'after'
   ) => {
     if (!currentProject || draggedId === targetId) return;
-    pushUndoSnapshot(currentProject.script);
-    const newScript = JSON.parse(JSON.stringify(currentProject.script)) as EditorFile;
-    const roots = [newScript.before_init, newScript.main_logic, newScript.after_quit];
+    const script = getActiveScript() || currentProject.script;
+    pushUndoSnapshot(script);
+    const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
+    const roots = [newScript.before_init, newScript.main_logic, newScript.after_quit].filter(Boolean);
 
     // 1. Remove dragged node from the tree
     let extracted: WorkflowNode | null = null;
@@ -1298,7 +1545,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if (inserted) {
-      setCurrentProject({ ...currentProject, script: newScript });
+      applyScriptUpdate(newScript);
       setSelectedNodeId(draggedId);
       setSelectedNodeIds([draggedId]);
     }
@@ -1441,6 +1688,12 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setAccentColor,
         currentProject,
         recentProjects,
+        activeWorkflowTab,
+        setActiveWorkflowTab,
+        activeScript,
+        createSubWorkflow,
+        deleteSubWorkflow,
+        importSubWorkflow,
         selectedNodeId,
         selectedNodeIds,
         selectedBlockKey,

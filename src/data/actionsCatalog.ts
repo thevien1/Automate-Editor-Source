@@ -78,6 +78,21 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
     ]
   },
   {
+    id: 'references',
+    name: 'References',
+    count: 1,
+    actions: [
+      {
+        type: 120,
+        name: 'Call workflow',
+        category: 'References',
+        description: 'Call and execute another sub-workflow module in this project',
+        defaultDelay: '0,0',
+        defaultRawInput: [{ Key: 'REFERENCE_FILE', Value: '' }],
+      },
+    ],
+  },
+  {
     id: 'text_number',
     name: 'Text & Number',
     count: 7,

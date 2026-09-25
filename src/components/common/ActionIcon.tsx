@@ -644,6 +644,16 @@ export const ACTION_ICON_CONFIG: Record<string, ActionConfigItem> = {
     icon: <Cookie className="w-3.5 h-3.5" />,
     label: 'Clear cookie',
   },
+  'call workflow': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: (
+      <svg className="w-3.5 h-3.5" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M2.5 1A1.5 1.5 0 0 0 1 2.5v11A1.5 1.5 0 0 0 2.5 15h11a1.5 1.5 0 0 0 1.5-1.5v-11A1.5 1.5 0 0 0 13.5 1h-11zm8.354 4.854-4.5 4.5a.5.5 0 0 1-.708 0l-2-2a.5.5 0 1 1 .708-.708L6 9.293l4.146-4.147a.5.5 0 0 1 .708.708z" />
+      </svg>
+    ),
+    label: 'Call workflow',
+  },
 };
 
 // Ánh xạ nhanh theo Action Type số (ID nguyên thủy của GScript)
@@ -716,6 +726,7 @@ export const ACTION_TYPE_MAP: Record<number, string> = {
   110: 'image to base64',
   111: 'select dropdown',
   117: 'throw',
+  120: 'call workflow',
   184: 'file read random line',
   185: 'clear cookie',
 };
