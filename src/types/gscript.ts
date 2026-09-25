@@ -136,6 +136,8 @@ export interface ProjectRuntimeConfig {
   selectedProfileIds?: string[];
   selectedEngine?: string;
   selectedProvider?: string;
+  profilesSortOrder?: string;
+  profilesPerPage?: number;
 }
 
 export interface ProjectData {

@@ -9,6 +9,7 @@ import {
   Check,
   ChevronDown,
   ChevronUp,
+  ChevronLeft,
   FolderOpen,
   Plus,
   Shield,
@@ -690,7 +691,26 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [apiStatus, setApiStatus] = useState<'connected' | 'error' | 'idle'>('idle');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
-  const [sortOrder, setSortOrder] = useState<'default' | 'asc' | 'desc'>('default');
+  const [sortOrder, setSortOrder] = useState<string>(() => {
+    return localStorage.getItem('sv_profiles_sort_order') || 'default';
+  });
+  useEffect(() => {
+    localStorage.setItem('sv_profiles_sort_order', sortOrder);
+  }, [sortOrder]);
+
+  const [profilesPerPage, setProfilesPerPage] = useState<number>(() => {
+    const saved = localStorage.getItem('sv_profiles_per_page');
+    return saved ? Math.max(1, parseInt(saved, 10)) || 20 : 20;
+  });
+  useEffect(() => {
+    localStorage.setItem('sv_profiles_per_page', String(profilesPerPage));
+  }, [profilesPerPage]);
+
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [customPerPageInput, setCustomPerPageInput] = useState<string>(() => {
+    const saved = localStorage.getItem('sv_profiles_per_page');
+    return saved ? String(Math.max(1, parseInt(saved, 10)) || 20) : '20';
+  });
   const [selectedEngine, setSelectedEngine] = useState<string>('Selenium enhanced engine');
   const [selectedProvider, setSelectedProvider] = useState<string>('SV Browser');
 
@@ -854,6 +874,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     selectedProfileIds,
     selectedEngine,
     selectedProvider,
+    profilesSortOrder: sortOrder,
+    profilesPerPage,
   });
 
   const saveConfigForCurrentProject = (customConfig?: Partial<ProjectRuntimeConfig>) => {
@@ -969,6 +991,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       if (savedCfg.selectedEngine !== undefined) setSelectedEngine(savedCfg.selectedEngine);
       if (savedCfg.selectedProvider !== undefined) setSelectedProvider(savedCfg.selectedProvider);
 
+      if (savedCfg.profilesSortOrder !== undefined) setSortOrder(savedCfg.profilesSortOrder);
+      if (savedCfg.profilesPerPage !== undefined) {
+        setProfilesPerPage(savedCfg.profilesPerPage);
+        setCustomPerPageInput(String(savedCfg.profilesPerPage));
+      }
+
       // Selected Profiles: restore saved profiles for this project
       if (Array.isArray(savedCfg.selectedProfileIds) && savedCfg.selectedProfileIds.length > 0) {
         setSelectedProfileIds(savedCfg.selectedProfileIds);
@@ -1040,6 +1068,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     useSchedule,
     selectedEngine,
     selectedProvider,
+    sortOrder,
+    profilesPerPage,
   ]);
 
   // Step 4: Running Multi-Thread State
@@ -1586,10 +1616,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
     // 3. Launch Profile via SV Browser API or Standalone Chrome
     if (t.profileId) {
+      const isIncognitoMode = Boolean(hideWindowWhenDone);
+      const actionPath = isIncognitoMode ? 'start-incognito' : 'start';
       updateThreadLog(
         threadId,
         'info',
-        `🚀 Opening SV Browser profile "${t.profileName}" (Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
+        `🚀 Opening SV Browser profile ${isIncognitoMode ? '(Incognito / Ẩn danh)' : ''} "${t.profileName}" (Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
         'Open Profile'
       );
       try {
@@ -1597,11 +1629,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         const scaleVal = (windowScale / 100).toFixed(2);
         const queryParams = `win_pos=${pos.x},${pos.y}&window_pos=${pos.x},${pos.y}&win_position=${pos.x},${pos.y}&window_position=${pos.x},${pos.y}&win_size=${pos.width},${pos.height}&window_size=${pos.width},${pos.height}&window_scale=${scaleVal}&win_scale=${scaleVal}&skip_proxy_check=${skipProxyCheck}`;
         const startUrls = [
-          `http://localhost:8725/api/v1/profiles/start/${t.profileId}?${queryParams}`,
-          `http://127.0.0.1:8725/api/v1/profiles/start/${t.profileId}?${queryParams}`,
-          `http://localhost:8725/api/v3/profiles/start/${t.profileId}?${queryParams}`,
-          `http://127.0.0.1:8725/api/v3/profiles/start/${t.profileId}?${queryParams}`,
-          `http://localhost:9495/api/v1/profiles/start/${t.profileId}?${queryParams}`,
+          `http://127.0.0.1:8725/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
+          `http://localhost:8725/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
+          `http://127.0.0.1:8725/api/v3/profiles/${actionPath}/${t.profileId}?${queryParams}`,
+          `http://localhost:8725/api/v3/profiles/${actionPath}/${t.profileId}?${queryParams}`,
+          `http://localhost:9495/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
         ];
 
         for (const url of startUrls) {
@@ -4866,17 +4898,77 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     })
     .sort((a, b) => {
       if (sortOrder === 'asc') {
-        return (a?.name || '').localeCompare(b?.name || '');
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
       }
       if (sortOrder === 'desc') {
-        return (b?.name || '').localeCompare(a?.name || '');
+        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (sortOrder === 'id_asc') {
+        const numA = parseInt(String(a.id), 10);
+        const numB = parseInt(String(b.id), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+      }
+      if (sortOrder === 'id_desc') {
+        const numA = parseInt(String(a.id), 10);
+        const numB = parseInt(String(b.id), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numB - numA;
+        return String(b.id).localeCompare(String(a.id), undefined, { numeric: true });
+      }
+      if (sortOrder === 'group_asc') {
+        const grpA = a?.group_name || a?.group_id || '';
+        const grpB = b?.group_name || b?.group_id || '';
+        const cmp = grpA.localeCompare(grpB, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (sortOrder === 'group_desc') {
+        const grpA = a?.group_name || a?.group_id || '';
+        const grpB = b?.group_name || b?.group_id || '';
+        const cmp = grpB.localeCompare(grpA, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (sortOrder === 'selected_first') {
+        const selA = selectedProfileIds.includes(String(a.id)) ? 0 : 1;
+        const selB = selectedProfileIds.includes(String(b.id)) ? 0 : 1;
+        if (selA !== selB) return selA - selB;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (sortOrder === 'unselected_first') {
+        const selA = selectedProfileIds.includes(String(a.id)) ? 1 : 0;
+        const selB = selectedProfileIds.includes(String(b.id)) ? 1 : 0;
+        if (selA !== selB) return selA - selB;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
       }
       return 0;
     });
 
+  // Pagination calculation
+  const totalPages = Math.max(1, Math.ceil(filteredProfiles.length / profilesPerPage));
+  const safeCurrentPage = Math.min(Math.max(1, currentPage), totalPages);
+  const startIndex = (safeCurrentPage - 1) * profilesPerPage;
+  const endIndex = Math.min(startIndex + profilesPerPage, filteredProfiles.length);
+  const paginatedProfiles = filteredProfiles.slice(startIndex, endIndex);
+
   const isAllSelected =
     filteredProfiles.length > 0 &&
     filteredProfiles.every((p) => selectedProfileIds.includes(String(p.id)));
+
+  const isCurrentPageAllSelected =
+    paginatedProfiles.length > 0 &&
+    paginatedProfiles.every((p) => selectedProfileIds.includes(String(p.id)));
+
+  const toggleSelectCurrentPage = () => {
+    const pageIds = paginatedProfiles.map((p) => String(p.id));
+    if (isCurrentPageAllSelected) {
+      const pageIdSet = new Set(pageIds);
+      updateSelectedProfiles(selectedProfileIds.filter((id) => !pageIdSet.has(id)));
+    } else {
+      const newIds = Array.from(new Set([...selectedProfileIds, ...pageIds]));
+      updateSelectedProfiles(newIds);
+    }
+  };
 
   const updateSelectedProfiles = (newIds: string[]) => {
     setSelectedProfileIds(newIds);
@@ -6029,7 +6121,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                             />
                             <EyeOff className="w-3.5 h-3.5 text-[#64748b]" />
                             <span className="text-xs text-[#334155] dark:text-[#cbd5e1]">
-                              Hide window when done and active when process resume
+                              Hide window when done and active when process resume (Mở Chrome ẩn danh - start-incognito)
                             </span>
                           </label>
 
@@ -6174,6 +6266,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           </span>
                         </div>
                         <div className="flex justify-between">
+                          <span className="text-[#64748b]">Incognito (Ẩn danh)</span>
+                          <span className={`font-semibold ${hideWindowWhenDone ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>
+                            {hideWindowWhenDone ? 'True' : 'False'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
                           <span className="text-[#64748b]">Check IP/Proxy</span>
                           <span className={`font-semibold ${skipProxyCheck ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                             {skipProxyCheck ? 'Skipped' : 'Enabled (Check)'}
@@ -6269,15 +6367,22 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </div>
 
                     {/* Sort Dropdown */}
-                    <div className="relative min-w-[150px]">
+                    <div className="relative min-w-[170px]">
                       <select
                         value={sortOrder}
-                        onChange={(e) => setSortOrder(e.target.value as any)}
-                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                        onChange={(e) => setSortOrder(e.target.value)}
+                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer"
+                        title="Lựa chọn sắp xếp danh sách profile"
                       >
-                        <option value="default">Default Order</option>
-                        <option value="asc">Name (A-Z)</option>
-                        <option value="desc">Name (Z-A)</option>
+                        <option value="default">Mặc định (Default Order)</option>
+                        <option value="asc">Tên (A → Z)</option>
+                        <option value="desc">Tên (Z → A)</option>
+                        <option value="id_desc">Mới nhất trước (Newest First)</option>
+                        <option value="id_asc">Cũ nhất trước (Oldest First)</option>
+                        <option value="group_asc">Nhóm (A → Z)</option>
+                        <option value="group_desc">Nhóm (Z → A)</option>
+                        <option value="selected_first">Đã chọn lên đầu (Selected First)</option>
+                        <option value="unselected_first">Chưa chọn lên đầu (Unselected First)</option>
                       </select>
                       <ChevronDown className="w-3.5 h-3.5 text-[#94a3b8] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
@@ -6363,19 +6468,32 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       <div className="col-span-1 flex items-center">
                         <input
                           type="checkbox"
-                          checked={isAllSelected}
-                          onChange={toggleSelectAll}
+                          checked={isCurrentPageAllSelected}
+                          onChange={toggleSelectCurrentPage}
                           className="w-4 h-4 rounded text-[#1677ff] focus:ring-0 cursor-pointer"
+                          title={isCurrentPageAllSelected ? "Bỏ chọn tất cả trên trang này" : "Chọn tất cả trên trang này"}
                         />
                       </div>
-                      <div className="col-span-6 font-medium text-[#475569] dark:text-[#cbd5e1]">
-                        Profile Name
+                      <div
+                        onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
+                        className="col-span-6 font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
+                        title="Click để đổi thứ tự sắp xếp theo tên"
+                      >
+                        <span>Profile Name</span>
+                        {sortOrder === 'asc' && <span className="text-[#1677ff] font-bold">↑</span>}
+                        {sortOrder === 'desc' && <span className="text-[#1677ff] font-bold">↓</span>}
                       </div>
                       <div className="col-span-2 text-center font-medium text-[#475569] dark:text-[#cbd5e1]">
                         Core
                       </div>
-                      <div className="col-span-3 text-right font-medium text-[#475569] dark:text-[#cbd5e1]">
-                        Group
+                      <div
+                        onClick={() => setSortOrder(sortOrder === 'group_asc' ? 'group_desc' : 'group_asc')}
+                        className="col-span-3 text-right font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center justify-end space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
+                        title="Click để đổi thứ tự sắp xếp theo nhóm"
+                      >
+                        <span>Group</span>
+                        {sortOrder === 'group_asc' && <span className="text-[#1677ff] font-bold">↑</span>}
+                        {sortOrder === 'group_desc' && <span className="text-[#1677ff] font-bold">↓</span>}
                       </div>
                     </div>
 
@@ -6396,18 +6514,19 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           )}
                         </div>
                       ) : (
-                        filteredProfiles.map((p, index) => {
+                        paginatedProfiles.map((p, index) => {
                           const isSelected = selectedProfileIds.includes(String(p.id));
                           const coreName =
                             p.browser?.name === 'chrome'
                               ? 'Chromium'
                               : p.browser?.name || 'Chromium';
                           const groupName = p.group_name || p.group_id || 'Default group';
+                          const globalIdx = startIndex + index;
 
                           return (
                             <div
                               key={p.id}
-                              onClick={(e) => toggleProfileSelect(p.id, index, e.shiftKey)}
+                              onClick={(e) => toggleProfileSelect(p.id, globalIdx, e.shiftKey)}
                               className={`grid grid-cols-12 gap-2 px-4 py-2.5 items-center text-xs transition-colors cursor-pointer select-none ${
                                 isSelected
                                   ? 'bg-blue-50/70 dark:bg-blue-950/40'
@@ -6421,7 +6540,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                                 <input
                                   type="checkbox"
                                   checked={isSelected}
-                                  onChange={(e) => toggleProfileSelect(p.id, index, false)}
+                                  onChange={(e) => toggleProfileSelect(p.id, globalIdx, false)}
                                   className="w-4 h-4 rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                                 />
                               </div>
@@ -6438,6 +6557,154 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           );
                         })
                       )}
+                    </div>
+
+                    {/* Pagination Bar with Per-Page Input & Page Navigator */}
+                    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-[#f8fafc] dark:bg-[#0a0f1d] border-t border-[#e2e8f0] dark:border-[#1e293b] text-xs select-none">
+                      {/* Left: Info */}
+                      <div className="flex items-center space-x-1.5 text-[#64748b] dark:text-[#94a3b8]">
+                        <span>Hiển thị</span>
+                        <span className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
+                          {filteredProfiles.length > 0 ? startIndex + 1 : 0} - {endIndex}
+                        </span>
+                        <span>/ tổng số</span>
+                        <span className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
+                          {filteredProfiles.length}
+                        </span>
+                        <span>bản ghi</span>
+                        {selectedProfileIds.length > 0 && (
+                          <span className="ml-1 text-[#1677ff] dark:text-[#38bdf8] font-medium">
+                            • {selectedProfileIds.length} đã chọn
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Right: Per-page input + page navigation */}
+                      <div className="flex items-center space-x-3">
+                        {/* Input số bản ghi mỗi trang */}
+                        <div className="flex items-center space-x-1.5 text-[#64748b] dark:text-[#94a3b8]">
+                          <span>Bản ghi / trang:</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="1000"
+                            value={customPerPageInput}
+                            onChange={(e) => {
+                              setCustomPerPageInput(e.target.value);
+                              const val = parseInt(e.target.value, 10);
+                              if (!isNaN(val) && val > 0 && val <= 1000) {
+                                setProfilesPerPage(val);
+                                setCurrentPage(1);
+                              }
+                            }}
+                            onBlur={() => {
+                              const val = parseInt(customPerPageInput, 10);
+                              if (isNaN(val) || val <= 0) {
+                                setCustomPerPageInput(String(profilesPerPage));
+                              } else {
+                                const finalVal = Math.min(1000, Math.max(1, val));
+                                setProfilesPerPage(finalVal);
+                                setCustomPerPageInput(String(finalVal));
+                                setCurrentPage(1);
+                              }
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                const val = parseInt(customPerPageInput, 10);
+                                if (!isNaN(val) && val > 0) {
+                                  const finalVal = Math.min(1000, Math.max(1, val));
+                                  setProfilesPerPage(finalVal);
+                                  setCustomPerPageInput(String(finalVal));
+                                  setCurrentPage(1);
+                                  (e.target as HTMLInputElement).blur();
+                                }
+                              }
+                            }}
+                            className="w-14 px-1.5 py-1 text-center bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md font-semibold text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] shadow-2xs"
+                            title="Nhập số lượng bản ghi hiển thị trên mỗi trang (Enter để xác nhận)"
+                          />
+
+                          {/* Preset select */}
+                          <select
+                            value={profilesPerPage}
+                            onChange={(e) => {
+                              const val = parseInt(e.target.value, 10);
+                              setProfilesPerPage(val);
+                              setCustomPerPageInput(String(val));
+                              setCurrentPage(1);
+                            }}
+                            className="px-2 py-1 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] shadow-2xs cursor-pointer"
+                            title="Chọn nhanh số bản ghi mỗi trang"
+                          >
+                            <option value={10}>10</option>
+                            <option value={20}>20</option>
+                            <option value={30}>30</option>
+                            <option value={50}>50</option>
+                            <option value={100}>100</option>
+                            <option value={200}>200</option>
+                            <option value={500}>500</option>
+                          </select>
+                        </div>
+
+                        {/* Navigation buttons: << < Page > >> */}
+                        <div className="flex items-center space-x-1">
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(1)}
+                            disabled={safeCurrentPage <= 1}
+                            className="px-2 py-1 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded text-xs text-[#64748b] hover:text-[#1677ff] hover:border-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            title="Trang đầu"
+                          >
+                            &laquo;
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                            disabled={safeCurrentPage <= 1}
+                            className="px-2 py-1 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded text-xs text-[#64748b] hover:text-[#1677ff] hover:border-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            title="Trang trước"
+                          >
+                            &lsaquo;
+                          </button>
+
+                          <div className="flex items-center space-x-1 px-1 text-xs">
+                            <span className="text-[#64748b]">Trang</span>
+                            <input
+                              type="number"
+                              min="1"
+                              max={totalPages}
+                              value={safeCurrentPage}
+                              onChange={(e) => {
+                                const val = parseInt(e.target.value, 10);
+                                if (!isNaN(val) && val >= 1 && val <= totalPages) {
+                                  setCurrentPage(val);
+                                }
+                              }}
+                              className="w-12 px-1 py-0.5 text-center bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded font-semibold text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                            />
+                            <span className="text-[#64748b]">/ {totalPages}</span>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                            disabled={safeCurrentPage >= totalPages}
+                            className="px-2 py-1 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded text-xs text-[#64748b] hover:text-[#1677ff] hover:border-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            title="Trang sau"
+                          >
+                            &rsaquo;
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setCurrentPage(totalPages)}
+                            disabled={safeCurrentPage >= totalPages}
+                            className="px-2 py-1 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded text-xs text-[#64748b] hover:text-[#1677ff] hover:border-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                            title="Trang cuối"
+                          >
+                            &raquo;
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>

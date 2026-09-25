@@ -24,6 +24,7 @@ export const GripVertical = createIcon('grip-vertical');
 // Navigation & Chevrons
 export const ChevronDown = createIcon('chevron-down');
 export const ChevronUp = createIcon('chevron-up');
+export const ChevronLeft = createIcon('chevron-left');
 export const ChevronRight = createIcon('chevron-right');
 export const ArrowLeft = createIcon('arrow-left');
 export const ArrowRight = createIcon('arrow-right');
