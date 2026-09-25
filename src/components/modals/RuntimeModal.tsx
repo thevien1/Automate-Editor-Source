@@ -2587,13 +2587,6 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           `Clicking: [${x}, ${y}]`
         );
 
-        if ((window as any).electronAPI?.fileAction) {
-          await (window as any).electronAPI.fileAction({
-            action: 'osClick',
-            payload: { x, y },
-          }).catch(() => {});
-        }
-
         if (useVirtualMouse) {
           // Move virtual red cursor smoothly and click with ripple!
           await (window as any).electronAPI?.cdpAction({
@@ -2676,8 +2669,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   if (typeof el.scrollIntoView === 'function') {
                     try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
                   }
-                  el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
-                  if (typeof el.click === 'function') el.click();
+                  if (typeof el.click === 'function') {
+                    el.click();
+                  } else {
+                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                  }
                   return true;
                 } catch(e) { return false; }
               })()`;

@@ -2980,18 +2980,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
 
-            if ((window as any).electronAPI?.fileAction) {
-              await (window as any).electronAPI.fileAction({
-                action: 'osClick',
-                payload: { x, y },
-              }).catch(() => {});
-            }
-
             const evalRes = await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
             if (evalRes.success) {
               addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
             } else {
-              addLog('success', `✔ Clicked coordinates [${x}, ${y}] (OS Mouse)`);
+              addLog('error', `✕ Clicked coordinates [${x}, ${y}] failed`);
             }
           } else if (isCurrentPos) {
             await evaluateInChrome(`(async () => {
@@ -3038,9 +3031,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     if (typeof el.scrollIntoView === 'function') {
                       try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
                     }
-                    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                     if (typeof el.click === 'function') {
-                      try { el.click(); } catch(e) {}
+                      el.click();
+                    } else {
+                      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                     }
                     return { success: true };
                   } catch(e) {
@@ -3090,12 +3084,6 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const [xStr, yStr] = resolvedPos.split(',');
               const x = parseFloat(xStr) || 0;
               const y = parseFloat(yStr) || 0;
-              if ((window as any).electronAPI?.fileAction) {
-                await (window as any).electronAPI.fileAction({
-                  action: 'osClick',
-                  payload: { x, y },
-                }).catch(() => {});
-              }
               await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
             } else if (isCurrentPos) {
               await evaluateInChrome(`(async () => {
@@ -3118,9 +3106,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                       if (typeof el.scrollIntoView === 'function') {
                         try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
                       }
-                      el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                       if (typeof el.click === 'function') {
-                        try { el.click(); } catch(e) {}
+                        el.click();
+                      } else {
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
                       }
                     }
                   } catch(e) {}

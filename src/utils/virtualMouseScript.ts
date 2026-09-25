@@ -150,7 +150,7 @@ export const VIRTUAL_MOUSE_SCRIPT = `
     });
   }
 
-  async function clickAt(x, y) {
+  async function clickAt(x, y, explicitEl = null) {
     setPos(x, y);
     const c = ensureCursor();
     if (c) {
@@ -158,16 +158,91 @@ export const VIRTUAL_MOUSE_SCRIPT = `
     }
     createRipple(x, y);
 
-    const el = document.elementFromPoint(x, y);
+    const hitEl = document.elementFromPoint(x, y);
+    const el = (explicitEl && hitEl && explicitEl.contains(hitEl)) ? hitEl : (explicitEl || hitEl);
     if (el) {
-      const opts = { bubbles: true, cancelable: true, view: window, clientX: x, clientY: y };
-      el.dispatchEvent(new MouseEvent('mouseover', opts));
-      el.dispatchEvent(new MouseEvent('mousedown', opts));
-      await new Promise(r => setTimeout(r, 60));
-      el.dispatchEvent(new MouseEvent('mouseup', opts));
-      el.dispatchEvent(new MouseEvent('click', opts));
-      if (typeof el.click === 'function') {
-        try { el.click(); } catch(e) {}
+      const opts = {
+        bubbles: true,
+        cancelable: true,
+        composed: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+        screenX: x + (window.screenX || 0),
+        screenY: y + (window.screenY || 0),
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+      };
+
+      if (typeof el.focus === 'function') {
+        try { el.focus(); } catch(e) {}
+      }
+
+      // 1. Mouseover / Pointerover
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          el.dispatchEvent(new PointerEvent('pointerover', opts));
+          el.dispatchEvent(new PointerEvent('pointerenter', opts));
+        }
+        el.dispatchEvent(new MouseEvent('mouseover', opts));
+        el.dispatchEvent(new MouseEvent('mouseenter', opts));
+      } catch(e) {}
+
+      // 2. Mousedown / Pointerdown
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          el.dispatchEvent(new PointerEvent('pointerdown', opts));
+        }
+        el.dispatchEvent(new MouseEvent('mousedown', opts));
+      } catch(e) {}
+
+      await new Promise(r => setTimeout(r, 50));
+
+      // 3. Mouseup / Pointerup
+      const upOpts = { ...opts, buttons: 0 };
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          el.dispatchEvent(new PointerEvent('pointerup', upOpts));
+        }
+        el.dispatchEvent(new MouseEvent('mouseup', upOpts));
+      } catch(e) {}
+
+      // 4. Click event - EXACTLY 1 TIME ONLY!
+      let clickEvt;
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          clickEvt = new PointerEvent('click', upOpts);
+        } else {
+          clickEvt = new MouseEvent('click', upOpts);
+        }
+      } catch(e) {
+        clickEvt = new MouseEvent('click', upOpts);
+      }
+      const notCancelled = el.dispatchEvent(clickEvt);
+
+      // 5. Native browser default actions for standard elements if not prevented
+      if (notCancelled) {
+        const link = el.closest ? el.closest('a[href]') : null;
+        if (link && link.href && !link.href.startsWith('javascript:')) {
+          const target = link.getAttribute('target');
+          if (target === '_blank') {
+            window.open(link.href, '_blank');
+          } else {
+            window.location.href = link.href;
+          }
+        } else if (el.tagName === 'INPUT') {
+          const t = (el.type || '').toLowerCase();
+          if (t === 'checkbox') {
+            el.checked = !el.checked;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          } else if (t === 'radio') {
+            el.checked = true;
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+          }
+        }
       }
     }
 
@@ -211,21 +286,15 @@ export const VIRTUAL_MOUSE_SCRIPT = `
       }
 
       const rect = el.getBoundingClientRect();
-      const targetX = Math.round(rect.left + rect.width / 2 + offsetX + (Math.random() - 0.5) * Math.min(10, rect.width * 0.3));
-      const targetY = Math.round(rect.top + rect.height / 2 + offsetY + (Math.random() - 0.5) * Math.min(10, rect.height * 0.3));
+      const targetX = Math.round(rect.left + rect.width / 2 + offsetX);
+      const targetY = Math.round(rect.top + rect.height / 2 + offsetY);
 
       try {
         await moveSmooth(targetX, targetY, 400);
       } catch(e) {}
 
-      try {
-        await clickAt(targetX, targetY);
-      } catch(e) {}
-
-      // Ensure element itself also receives click dispatch / method
-      if (typeof el.click === 'function') {
-        try { el.click(); } catch(e) {}
-      }
+      // Click exactly once on target element via clickAt
+      await clickAt(targetX, targetY, el);
 
       return { success: true, x: targetX, y: targetY };
     } catch(e) {
