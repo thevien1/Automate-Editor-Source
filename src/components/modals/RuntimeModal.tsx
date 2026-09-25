@@ -3955,28 +3955,78 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     else if (actType === 2 || actName.includes('increase')) {
       const currentVar = getRawVal('CURRENT_VAL', '$x');
       const incByStr = getRawVal('INCREASE_BY', '1');
-      const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
-      const cleanName = varName.replace(/^\$/, '');
-      const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
+
+      let resolvedCurrent = resolveStr(currentVar);
+      let oldVal = parseFloat(resolvedCurrent);
+      if (isNaN(oldVal)) {
+        const cleanCur = currentVar.replace(/^\$/, '');
+        oldVal = parseFloat(vars[currentVar] || vars[`$${cleanCur}`] || vars[cleanCur] || '0') || 0;
+      }
+
       const addVal = parseFloat(resolveStr(incByStr)) || 1;
       const newVal = String(oldVal + addVal);
+
+      let rawOutVar = (act.output_variable_name || '').trim();
+      if (!rawOutVar) {
+        rawOutVar = (getRawVal('OUTPUT_VAR', '') || getRawVal('OUTPUT_VARIABLE', '') || getRawVal('VARIABLE_NAME', '')).trim();
+      }
+
+      const inVarName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+      const cleanInVar = inVarName.replace(/^\$/, '');
+
+      const targetVar = rawOutVar || currentVar;
+      const varName = targetVar.startsWith('$') ? targetVar : `$${targetVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+
       vars[varName] = newVal;
       vars[cleanName] = newVal;
       vars[`$${cleanName}`] = newVal;
+
+      if (!rawOutVar || cleanName === cleanInVar) {
+        vars[inVarName] = newVal;
+        vars[cleanInVar] = newVal;
+        vars[`$${cleanInVar}`] = newVal;
+      }
+
       updateThreadLog(threadId, 'success', `✔ Increase variable › ${varName} = ${newVal}`);
     }
     // Decrease variable (type 3)
     else if (actType === 3 || actName.includes('decrease')) {
       const currentVar = getRawVal('CURRENT_VAL', '$x');
-      const decByStr = getRawVal('DESCREASE_BY', '1');
-      const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
-      const cleanName = varName.replace(/^\$/, '');
-      const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
+      const decByStr = getRawVal('DECREASE_BY', '') || getRawVal('DESCREASE_BY', '1');
+
+      let resolvedCurrent = resolveStr(currentVar);
+      let oldVal = parseFloat(resolvedCurrent);
+      if (isNaN(oldVal)) {
+        const cleanCur = currentVar.replace(/^\$/, '');
+        oldVal = parseFloat(vars[currentVar] || vars[`$${cleanCur}`] || vars[cleanCur] || '0') || 0;
+      }
+
       const subVal = parseFloat(resolveStr(decByStr)) || 1;
       const newVal = String(oldVal - subVal);
+
+      let rawOutVar = (act.output_variable_name || '').trim();
+      if (!rawOutVar) {
+        rawOutVar = (getRawVal('OUTPUT_VAR', '') || getRawVal('OUTPUT_VARIABLE', '') || getRawVal('VARIABLE_NAME', '')).trim();
+      }
+
+      const inVarName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+      const cleanInVar = inVarName.replace(/^\$/, '');
+
+      const targetVar = rawOutVar || currentVar;
+      const varName = targetVar.startsWith('$') ? targetVar : `$${targetVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+
       vars[varName] = newVal;
       vars[cleanName] = newVal;
       vars[`$${cleanName}`] = newVal;
+
+      if (!rawOutVar || cleanName === cleanInVar) {
+        vars[inVarName] = newVal;
+        vars[cleanInVar] = newVal;
+        vars[`$${cleanInVar}`] = newVal;
+      }
+
       updateThreadLog(threadId, 'success', `✔ Decrease variable › ${varName} = ${newVal}`);
     }
     // Count (type 4)

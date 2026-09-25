@@ -96,9 +96,12 @@ export const VariableProps: React.FC<ActionPropsCommon> = ({
           </label>
           <input
             type="text"
-            value={actionNode.output_variable_name || ''}
-            onChange={(e) => updateNode(actionNode.id, { output_variable_name: e.target.value })}
-            placeholder=""
+            value={actionNode.output_variable_name || getRawVal('OUTPUT_VAR') || ''}
+            onChange={(e) => {
+              updateNode(actionNode.id, { output_variable_name: e.target.value });
+              handleRawInputByKey('OUTPUT_VAR', e.target.value);
+            }}
+            placeholder="e.g. tangLenMot (Leave empty to update current variable)"
             className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
           />
         </div>
@@ -141,9 +144,12 @@ export const VariableProps: React.FC<ActionPropsCommon> = ({
           </label>
           <input
             type="text"
-            value={actionNode.output_variable_name || ''}
-            onChange={(e) => updateNode(actionNode.id, { output_variable_name: e.target.value })}
-            placeholder=""
+            value={actionNode.output_variable_name || getRawVal('OUTPUT_VAR') || ''}
+            onChange={(e) => {
+              updateNode(actionNode.id, { output_variable_name: e.target.value });
+              handleRawInputByKey('OUTPUT_VAR', e.target.value);
+            }}
+            placeholder="e.g. giamXuongMot (Leave empty to update current variable)"
             className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
           />
         </div>

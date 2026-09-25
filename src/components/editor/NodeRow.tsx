@@ -281,8 +281,19 @@ export const NodeRow: React.FC<NodeRowProps> = ({
       } catch (e) {}
     }
 
+    // For Increase / Decrease variable
+    if (act.type === 2 || act.type === 3 || act.display_text?.toLowerCase().includes('increase') || act.display_text?.toLowerCase().includes('decrease')) {
+      try {
+        const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
+        const cur = parsed?.find((p: any) => p.Key === 'CURRENT_VAL')?.Value || '';
+        const step = parsed?.find((p: any) => p.Key === 'INCREASE_BY' || p.Key === 'DECREASE_BY' || p.Key === 'DESCREASE_BY')?.Value || '1';
+        const rawOut = (act.output_variable_name || parsed?.find((p: any) => p.Key === 'OUTPUT_VAR')?.Value || '').trim();
+        const out = rawOut ? ` ➔ $${rawOut.replace(/^\$/, '')}` : '';
+        const op = (act.type === 3 || act.display_text?.toLowerCase().includes('decrease')) ? '-' : '+';
+        if (cur) return `${cur} ${op} ${step}${out}`;
+      } catch (e) {}
+    }
 
-    // Try parse raw_input
     if (act.raw_input) {
       try {
         const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;

@@ -621,20 +621,53 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
               if (Array.isArray(parsed)) {
                 const c = parsed.find((p: any) => p.Key === 'CURRENT_VAL');
-                if (c) currentVar = c.Value;
+                if (c && c.Value !== undefined) currentVar = c.Value;
                 const inc = parsed.find((p: any) => p.Key === 'INCREASE_BY');
-                if (inc) incBy = inc.Value;
+                if (inc && inc.Value !== undefined) incBy = inc.Value;
               }
             } catch (e) {}
           }
-          const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
-          const cleanName = varName.replace(/^\$/, '');
-          logActionStart(act, varName);
-          const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
-          const addVal = parseFloat(incBy) || 1;
+
+          let rawOutVar = (act.output_variable_name || '').trim();
+          if (!rawOutVar && act.raw_input) {
+            try {
+              const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
+              if (Array.isArray(parsed)) {
+                const out = parsed.find((p: any) => p.Key === 'OUTPUT_VAR' || p.Key === 'OUTPUT_VARIABLE' || p.Key === 'VARIABLE_NAME');
+                if (out && out.Value) rawOutVar = String(out.Value).trim();
+              }
+            } catch (e) {}
+          }
+
+          let resolvedCurrent = resolveVars(currentVar, vars);
+          let oldVal = parseFloat(resolvedCurrent);
+          if (isNaN(oldVal)) {
+            const cleanCur = currentVar.replace(/^\$/, '');
+            oldVal = parseFloat(vars[currentVar] || vars[`$${cleanCur}`] || vars[cleanCur] || '0') || 0;
+          }
+
+          const resolvedInc = resolveVars(incBy, vars);
+          const addVal = parseFloat(resolvedInc) || 1;
           const newVal = String(oldVal + addVal);
+
+          const inVarName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+          const cleanInVar = inVarName.replace(/^\$/, '');
+
+          const targetVar = rawOutVar || currentVar;
+          const varName = targetVar.startsWith('$') ? targetVar : `$${targetVar}`;
+          const cleanName = varName.replace(/^\$/, '');
+
+          logActionStart(act, varName);
+
           vars[varName] = newVal;
           vars[cleanName] = newVal;
+          vars[`$${cleanName}`] = newVal;
+
+          if (!rawOutVar || cleanName === cleanInVar) {
+            vars[inVarName] = newVal;
+            vars[cleanInVar] = newVal;
+            vars[`$${cleanInVar}`] = newVal;
+          }
 
           if (stopSignalRef.current) break;
           logActionResult(act, varName, { name: varName, value: newVal });
@@ -647,20 +680,53 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
               if (Array.isArray(parsed)) {
                 const c = parsed.find((p: any) => p.Key === 'CURRENT_VAL');
-                if (c) currentVar = c.Value;
-                const dec = parsed.find((p: any) => p.Key === 'DESCREASE_BY');
-                if (dec) decBy = dec.Value;
+                if (c && c.Value !== undefined) currentVar = c.Value;
+                const dec = parsed.find((p: any) => p.Key === 'DECREASE_BY' || p.Key === 'DESCREASE_BY');
+                if (dec && dec.Value !== undefined) decBy = dec.Value;
               }
             } catch (e) {}
           }
-          const varName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
-          const cleanName = varName.replace(/^\$/, '');
-          logActionStart(act, varName);
-          const oldVal = parseFloat(vars[varName] || vars[cleanName] || '0') || 0;
-          const subVal = parseFloat(decBy) || 1;
+
+          let rawOutVar = (act.output_variable_name || '').trim();
+          if (!rawOutVar && act.raw_input) {
+            try {
+              const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
+              if (Array.isArray(parsed)) {
+                const out = parsed.find((p: any) => p.Key === 'OUTPUT_VAR' || p.Key === 'OUTPUT_VARIABLE' || p.Key === 'VARIABLE_NAME');
+                if (out && out.Value) rawOutVar = String(out.Value).trim();
+              }
+            } catch (e) {}
+          }
+
+          let resolvedCurrent = resolveVars(currentVar, vars);
+          let oldVal = parseFloat(resolvedCurrent);
+          if (isNaN(oldVal)) {
+            const cleanCur = currentVar.replace(/^\$/, '');
+            oldVal = parseFloat(vars[currentVar] || vars[`$${cleanCur}`] || vars[cleanCur] || '0') || 0;
+          }
+
+          const resolvedDec = resolveVars(decBy, vars);
+          const subVal = parseFloat(resolvedDec) || 1;
           const newVal = String(oldVal - subVal);
+
+          const inVarName = currentVar.startsWith('$') ? currentVar : `$${currentVar}`;
+          const cleanInVar = inVarName.replace(/^\$/, '');
+
+          const targetVar = rawOutVar || currentVar;
+          const varName = targetVar.startsWith('$') ? targetVar : `$${targetVar}`;
+          const cleanName = varName.replace(/^\$/, '');
+
+          logActionStart(act, varName);
+
           vars[varName] = newVal;
           vars[cleanName] = newVal;
+          vars[`$${cleanName}`] = newVal;
+
+          if (!rawOutVar || cleanName === cleanInVar) {
+            vars[inVarName] = newVal;
+            vars[cleanInVar] = newVal;
+            vars[`$${cleanInVar}`] = newVal;
+          }
 
           if (stopSignalRef.current) break;
           logActionResult(act, varName, { name: varName, value: newVal });
