@@ -3287,7 +3287,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       updateThreadLog(threadId, 'info', `▶ Import cookie › File: "${filePath || '(từ biến/mặc định)'}"`, 'Import cookie');
 
       try {
-        let cookieData: any = filePath;
+        let cookieData: any = null;
         if (filePath && (window as any).electronAPI?.fileAction) {
           const fileCheck = await (window as any).electronAPI.fileAction({
             action: 'exists',
@@ -3299,14 +3299,24 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               action: 'readText',
               payload: { path: filePath },
             }).catch(() => null);
-            if (readRes?.success && readRes.text) {
-              cookieData = readRes.text;
+            const fileText = readRes?.text ?? readRes?.content;
+            if (readRes?.success && fileText) {
+              cookieData = fileText;
             }
           }
         }
 
+        if (!cookieData && filePath && !filePath.endsWith('.json') && !filePath.endsWith('.txt') && !filePath.includes('\\') && !filePath.includes('/')) {
+          cookieData = filePath;
+        }
+
         if (!cookieData && (vars.$cookie || vars.cookie)) {
           cookieData = vars.$cookie || vars.cookie;
+        }
+
+        if (!cookieData && filePath) {
+          // Pass path to main process as it also auto-reads file paths
+          cookieData = filePath;
         }
 
         if (!cookieData) {
@@ -3335,7 +3345,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // Export cookie (type 65)
     else if (actType === 65 || actName === 'export cookie') {
       const rawPath = getRawVal('FILE_PATH', getRawVal('COOKIE_FILE', ''));
-      const filePath = resolveStr(rawPath).trim();
+      const filePath = resolveStr(rawPath).trim().replace(/^["']|["']$/g, '');
       updateThreadLog(threadId, 'info', `▶ Export cookie › ${filePath ? `Lưu vào: "${filePath}"` : 'Lưu vào biến'}`, 'Export cookie');
 
       try {
@@ -3357,11 +3367,16 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           }
 
           if (filePath && (window as any).electronAPI?.fileAction) {
-            await (window as any).electronAPI.fileAction({
+            const writeRes = await (window as any).electronAPI.fileAction({
               action: 'writeText',
               payload: { path: filePath, text: jsonStr },
             });
-            updateThreadLog(threadId, 'success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies ra file: ${filePath}`);
+            if (writeRes?.success !== false) {
+              updateThreadLog(threadId, 'success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies ra file: ${writeRes?.path || filePath}`);
+            } else {
+              const failRes = await handleActionFailure('Export cookie', writeRes?.error || 'Lỗi khi ghi file cookie');
+              if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+            }
           } else {
             updateThreadLog(threadId, 'success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies vào biến`);
           }

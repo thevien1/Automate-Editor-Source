@@ -425,12 +425,17 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
   try {
     let { action, payload } = req;
     if (action === 'exists') {
-      const exists = fs.existsSync(payload.path) && fs.statSync(payload.path).isFile();
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      const exists = Boolean(targetPath && fs.existsSync(targetPath) && fs.statSync(targetPath).isFile());
       return { success: true, exists };
     }
-    if (action === 'read' || action === 'readText') {
-      const content = fs.readFileSync(payload.path, 'utf-8');
-      return { success: true, content };
+    if (action === 'read' || action === 'readText' || action === 'readFileText') {
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        return { success: false, error: 'File does not exist: ' + targetPath };
+      }
+      const text = fs.readFileSync(targetPath, 'utf-8');
+      return { success: true, content: text, text };
     }
     if (action === 'copy') {
       const destDir = path.dirname(payload.dest);
@@ -512,10 +517,16 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       return { success: true, line };
     }
     if (action === 'writeText') {
-      const dir = path.dirname(payload.path);
+      const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
+      if (!targetPath) return { success: false, error: 'File path is required' };
+      let finalPath = targetPath;
+      if (fs.existsSync(finalPath) && fs.statSync(finalPath).isDirectory()) {
+        finalPath = path.join(finalPath, 'cookies.json');
+      }
+      const dir = path.dirname(finalPath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(payload.path, payload.text ?? '', 'utf-8');
-      return { success: true };
+      fs.writeFileSync(finalPath, payload.text ?? '', 'utf-8');
+      return { success: true, path: finalPath };
     }
     if (action === 'appendLine' && (payload?.option?.toLowerCase()?.includes('update') || payload?.mode?.toLowerCase()?.includes('update'))) {
       action = 'updateFileLine';
@@ -1752,59 +1763,158 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       }
       await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
 
-      let cookieList = payload?.cookies;
-      if (typeof cookieList === 'string') {
-        try {
-          cookieList = JSON.parse(cookieList);
-        } catch {
-          cookieList = cookieList.split(';').map((pair: string) => {
+      let rawData = payload?.cookies;
+      // If someone passed a file path, auto-read file content
+      if (typeof rawData === 'string') {
+        const trimmed = rawData.trim().replace(/^["']|["']$/g, '');
+        if ((trimmed.endsWith('.json') || trimmed.endsWith('.txt') || trimmed.includes('\\') || trimmed.includes('/')) && fs.existsSync(trimmed)) {
+          try {
+            rawData = fs.readFileSync(trimmed, 'utf-8');
+          } catch (e) {}
+        }
+      }
+
+      let cookieList: any[] = [];
+      if (typeof rawData === 'string') {
+        let str = rawData;
+        if (str.charCodeAt(0) === 0xFEFF) {
+          str = str.slice(1);
+        }
+        const trimmed = str.trim();
+
+        // 1. JSON format (array, or object with cookies/data, or key-value object)
+        if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              cookieList = parsed;
+            } else if (parsed && typeof parsed === 'object') {
+              if (Array.isArray(parsed.cookies)) {
+                cookieList = parsed.cookies;
+              } else if (Array.isArray(parsed.data)) {
+                cookieList = parsed.data;
+              } else {
+                cookieList = Object.entries(parsed).map(([k, v]) => ({ name: k, value: String(v) }));
+              }
+            }
+          } catch (e) {}
+        }
+
+        // 2. Netscape tab-separated format
+        if (cookieList.length === 0 && trimmed.includes('\t')) {
+          const lines = trimmed.split(/\r?\n/);
+          for (const line of lines) {
+            const l = line.trim();
+            if (!l || l.startsWith('#')) continue;
+            const parts = line.split('\t');
+            if (parts.length >= 7) {
+              cookieList.push({
+                domain: parts[0].trim(),
+                path: parts[2].trim(),
+                secure: parts[3].trim().toUpperCase() === 'TRUE',
+                expires: parseInt(parts[4].trim(), 10) || 0,
+                name: parts[5].trim(),
+                value: parts[6].trim(),
+              });
+            }
+          }
+        }
+
+        // 3. Semicolon-separated format (name1=val1; name2=val2)
+        if (cookieList.length === 0 && trimmed.length > 0) {
+          cookieList = trimmed.split(';').map((pair: string) => {
             const idx = pair.indexOf('=');
             if (idx === -1) return null;
             return {
               name: pair.substring(0, idx).trim(),
               value: pair.substring(idx + 1).trim(),
             };
-          }).filter(Boolean);
+          }).filter(Boolean) as any[];
         }
+      } else if (Array.isArray(rawData)) {
+        cookieList = rawData;
       }
 
-      if (!Array.isArray(cookieList)) {
-        return { success: false, error: 'Invalid cookie data (expected JSON array or cookie string)' };
+      if (!Array.isArray(cookieList) || cookieList.length === 0) {
+        return { success: false, error: 'Không tìm thấy cookie nào hợp lệ (cần danh sách JSON hoặc chuỗi cookie)' };
       }
 
       const fallbackUrl = (page.url && page.url.startsWith('http')) ? page.url : undefined;
 
       const formattedCookies = cookieList.map((c: any) => {
-        if (!c || !c.name) return null;
+        if (!c) return null;
+        const name = c.name || c.Name || c.key || c.Key;
+        if (!name) return null;
+        const value = c.value !== undefined ? c.value : (c.Value !== undefined ? c.Value : '');
         const cookie: any = {
-          name: String(c.name),
-          value: String(c.value ?? ''),
+          name: String(name),
+          value: String(value),
         };
-        if (c.domain) cookie.domain = String(c.domain);
-        if (c.path) cookie.path = String(c.path);
-        if (c.url) cookie.url = String(c.url);
-        if (!cookie.domain && !cookie.url && fallbackUrl) {
+
+        const domain = c.domain || c.Domain;
+        if (domain) {
+          cookie.domain = String(domain);
+        }
+
+        const path = c.path || c.Path || '/';
+        cookie.path = String(path);
+
+        const url = c.url || c.Url;
+        if (url) {
+          cookie.url = String(url);
+        } else if (!cookie.domain && fallbackUrl) {
           cookie.url = fallbackUrl;
         }
-        if (typeof c.secure === 'boolean') cookie.secure = c.secure;
-        if (typeof c.httpOnly === 'boolean') cookie.httpOnly = c.httpOnly;
-        const expiresVal = c.expires ?? c.expirationDate;
+
+        const secure = c.secure ?? c.Secure;
+        if (typeof secure === 'boolean') cookie.secure = secure;
+
+        const httpOnly = c.httpOnly ?? c.HttpOnly;
+        if (typeof httpOnly === 'boolean') cookie.httpOnly = httpOnly;
+
+        const expiresVal = c.expires ?? c.Expires ?? c.expirationDate ?? c.ExpirationDate;
         if (typeof expiresVal === 'number' && expiresVal > 0) {
           cookie.expires = Math.floor(expiresVal);
         }
-        const ss = String(c.sameSite || '').toLowerCase();
-        if (ss === 'strict') cookie.sameSite = 'Strict';
-        else if (ss === 'lax') cookie.sameSite = 'Lax';
-        else if (ss === 'none' || ss === 'no_restriction') cookie.sameSite = 'None';
+
+        const rawSameSite = c.sameSite ?? c.SameSite;
+        if (rawSameSite) {
+          const ss = String(rawSameSite).toLowerCase();
+          if (ss === 'strict') cookie.sameSite = 'Strict';
+          else if (ss === 'lax') cookie.sameSite = 'Lax';
+          else if (ss === 'none' || ss === 'no_restriction') {
+            cookie.sameSite = 'None';
+            cookie.secure = true;
+          }
+        }
 
         return cookie;
       }).filter(Boolean);
 
-      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: formattedCookies });
+      if (formattedCookies.length === 0) {
+        return { success: false, error: 'Không có cookie nào có tên và giá trị hợp lệ' };
+      }
+
+      // 1. Try batch Network.setCookies
+      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: formattedCookies }).catch(() => null);
       if (res && res.success) {
         return { success: true, count: formattedCookies.length };
       }
-      return { success: false, error: res?.error || 'Failed to set cookies' };
+
+      // 2. Fallback: Set each cookie individually with Network.setCookie so valid cookies still import
+      let successCount = 0;
+      for (const c of formattedCookies) {
+        const singleRes = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookie', c).catch(() => null);
+        if (singleRes && singleRes.success && singleRes.result?.success !== false) {
+          successCount++;
+        }
+      }
+
+      if (successCount > 0) {
+        return { success: true, count: successCount };
+      }
+
+      return { success: false, error: res?.error || 'Lỗi khi nạp cookies vào trình duyệt' };
     }
 
     if (action === 'getCookies') {
@@ -1813,11 +1923,35 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         return { success: false, error: 'No active Chrome page found.' };
       }
       await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
-      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', {});
-      if (res && res.success && res.result && Array.isArray(res.result.cookies)) {
-        return { success: true, cookies: res.result.cookies };
+
+      let cookies: any[] = [];
+      // 1. Try Storage.getCookies (canonical global cookie getter across all domains)
+      const storageRes = await sendWs(page.webSocketDebuggerUrl, 'Storage.getCookies', {}).catch(() => null);
+      if (storageRes?.success && Array.isArray(storageRes.result?.cookies) && storageRes.result.cookies.length > 0) {
+        cookies = storageRes.result.cookies;
       }
-      return { success: false, error: res?.error || 'Failed to get cookies' };
+
+      // 2. Try Network.getCookies with current page url
+      if (cookies.length === 0) {
+        const netParam: any = {};
+        if (page.url && page.url.startsWith('http')) {
+          netParam.urls = [page.url];
+        }
+        const netRes = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', netParam).catch(() => null);
+        if (netRes?.success && Array.isArray(netRes.result?.cookies) && netRes.result.cookies.length > 0) {
+          cookies = netRes.result.cookies;
+        }
+      }
+
+      // 3. Fallback Network.getCookies without parameters
+      if (cookies.length === 0) {
+        const netResAll = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', {}).catch(() => null);
+        if (netResAll?.success && Array.isArray(netResAll.result?.cookies)) {
+          cookies = netResAll.result.cookies;
+        }
+      }
+
+      return { success: true, cookies };
     }
 
     if (action === 'clearCookies') {

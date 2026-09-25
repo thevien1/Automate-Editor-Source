@@ -2442,7 +2442,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           addLog('info', `▶ Import cookie › File: "${resolvedPath || '(từ biến/mặc định)'}"`);
 
           try {
-            let cookieData: any = resolvedPath;
+            let cookieData: any = null;
             if (resolvedPath && (window as any).electronAPI?.fileAction) {
               const fileCheck = await (window as any).electronAPI.fileAction({
                 action: 'exists',
@@ -2454,14 +2454,24 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   action: 'readText',
                   payload: { path: resolvedPath },
                 }).catch(() => null);
-                if (readRes?.success && readRes.text) {
-                  cookieData = readRes.text;
+                const fileText = readRes?.text ?? readRes?.content;
+                if (readRes?.success && fileText) {
+                  cookieData = fileText;
                 }
               }
             }
 
+            if (!cookieData && resolvedPath && !resolvedPath.endsWith('.json') && !resolvedPath.endsWith('.txt') && !resolvedPath.includes('\\') && !resolvedPath.includes('/')) {
+              cookieData = resolvedPath;
+            }
+
             if (!cookieData && (vars.$cookie || vars.cookie)) {
               cookieData = vars.$cookie || vars.cookie;
+            }
+
+            if (!cookieData && resolvedPath) {
+              // Pass path to main process as it also auto-reads file paths
+              cookieData = resolvedPath;
             }
 
             if (!cookieData) {
@@ -2500,7 +2510,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           await sleep(40);
         } else if (actType === 65 || actName === 'export cookie') {
           const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', getRawInputValue(act.raw_input, 'COOKIE_FILE', ''));
-          const resolvedPath = resolveVars(rawPath, vars).trim();
+          const resolvedPath = resolveVars(rawPath, vars).trim().replace(/^["']|["']$/g, '');
           const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
           logActionStart(act, resolvedPath || 'Export cookie');
           addLog('info', `▶ Export cookie › ${resolvedPath ? `Lưu vào: "${resolvedPath}"` : 'Lưu vào biến'}`);
@@ -2524,11 +2534,20 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               }
 
               if (resolvedPath && (window as any).electronAPI?.fileAction) {
-                await (window as any).electronAPI.fileAction({
+                const writeRes = await (window as any).electronAPI.fileAction({
                   action: 'writeText',
                   payload: { path: resolvedPath, text: jsonStr },
                 });
-                addLog('success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies ra file: ${resolvedPath}`);
+                if (writeRes?.success !== false) {
+                  addLog('success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies ra file: ${writeRes?.path || resolvedPath}`);
+                } else {
+                  if (contOnError) {
+                    addLog('info', `⚠ Export cookie › Ghi file lỗi: ${writeRes?.error || 'Lỗi'} (Continue on error)`);
+                  } else {
+                    addLog('error', `✕ Export cookie thất bại: Không thể ghi file ${resolvedPath} (${writeRes?.error})`);
+                    break;
+                  }
+                }
               } else {
                 addLog('success', `✔ Export cookie › Đã xuất ${cdpRes.cookies.length} cookies vào biến`);
               }
