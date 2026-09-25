@@ -1203,19 +1203,54 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (actType === 20 || actName === 'file append line') {
           const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', '');
           const rawText = getRawInputValue(act.raw_input, 'TEXT', '');
+          const rawOption = getRawInputValue(act.raw_input, 'OPTION', '') || getRawInputValue(act.raw_input, 'MODE', '') || 'Append line';
+          const rawLineIdx = getRawInputValue(act.raw_input, 'LINE_INDEX', '') || getRawInputValue(act.raw_input, 'LINE_NUMBER', '');
+          const rawUpdateMethod = getRawInputValue(act.raw_input, 'UPDATE_METHOD', '') || 'Replace line content';
+
           const resolvedPath = resolveVars(rawPath, vars);
           const resolvedText = resolveVars(rawText, vars);
+          const resolvedLineIdx = resolveVars(rawLineIdx, vars).trim();
+          const isUpdate = rawOption.toLowerCase().includes('update');
+          const isSuffix = rawUpdateMethod.toLowerCase().includes('suffix') || rawUpdateMethod.toLowerCase().includes('append');
 
-          logActionStart(act, resolvedPath);
+          logActionStart(act, `${isUpdate ? 'Update' : 'Append'} › ${resolvedPath}`);
 
           try {
             if ((window as any).electronAPI?.fileAction) {
-              const res = await (window as any).electronAPI.fileAction({
-                action: 'appendLine',
-                payload: { path: resolvedPath, text: resolvedText },
-              });
+              let res;
+              if (isUpdate) {
+                let lineIndex = -1;
+                if (resolvedLineIdx !== '') {
+                  const num = parseInt(resolvedLineIdx, 10);
+                  if (!isNaN(num)) {
+                    lineIndex = num > 0 ? num - 1 : 0;
+                  }
+                } else if (vars.$txt_line_index !== undefined && vars.$txt_line_index !== '') {
+                  lineIndex = parseInt(vars.$txt_line_index, 10);
+                }
+
+                if (lineIndex < 0) {
+                  throw new Error('Line Index is required for updating file line');
+                }
+
+                res = await (window as any).electronAPI.fileAction({
+                  action: 'updateFileLine',
+                  payload: {
+                    path: resolvedPath,
+                    lineIndex,
+                    newText: isSuffix ? undefined : resolvedText,
+                    suffix: isSuffix ? resolvedText : undefined,
+                  },
+                });
+              } else {
+                res = await (window as any).electronAPI.fileAction({
+                  action: 'appendLine',
+                  payload: { path: resolvedPath, text: resolvedText },
+                });
+              }
+
               if (res && res.success === false) {
-                throw new Error(res.error || 'Failed to append to file');
+                throw new Error(res.error || (isUpdate ? 'Failed to update file line' : 'Failed to append to file'));
               }
             }
             if (stopSignalRef.current) break;
@@ -1223,9 +1258,9 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {
-              addLog('info', `⚠ File append line › ${e.message} (Continue on error)`);
+              addLog('info', `⚠ ${isUpdate ? 'Update file line' : 'File append line'} › ${e.message} (Continue on error)`);
             } else {
-              addLog('error', `✕ File append line failed: ${e.message}`);
+              addLog('error', `✕ ${isUpdate ? 'Update file line' : 'File append line'} failed: ${e.message}`);
               break;
             }
           }

@@ -267,14 +267,20 @@ export const NodeRow: React.FC<NodeRowProps> = ({
     if (act.comment) return act.comment;
     if (act.element_xpath) return act.element_xpath;
 
-    // For Go to URL: show URL if comment not set
-    if (act.type === 39 || act.display_text?.toLowerCase() === 'go to url') {
+    // For File append line: show concise mode and text
+    if (act.type === 20 || act.display_text?.toLowerCase() === 'file append line') {
       try {
         const parsed = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
-        const u = parsed?.find((p: any) => p.Key === 'URL')?.Value;
-        if (u) return u;
+        const opt = (parsed?.find((p: any) => p.Key === 'OPTION')?.Value || parsed?.find((p: any) => p.Key === 'MODE')?.Value || 'Append line').trim();
+        const txt = parsed?.find((p: any) => p.Key === 'TEXT')?.Value || '';
+        const lineIdx = parsed?.find((p: any) => p.Key === 'LINE_INDEX')?.Value || '';
+        if (opt.toLowerCase().includes('update')) {
+          return `Update line ${lineIdx ? `#${lineIdx}` : '(current)'} › ${txt}`;
+        }
+        if (txt) return `Append line › ${txt}`;
       } catch (e) {}
     }
+
 
     // Try parse raw_input
     if (act.raw_input) {

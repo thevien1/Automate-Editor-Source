@@ -290,6 +290,11 @@ export const FileFolderExcelProps: React.FC<ActionPropsCommon> = ({
 
   // FILE APPEND LINE ACTION
   if (isFileAppendLine) {
+    const option = getRawVal('OPTION', getRawVal('MODE', 'Append line'));
+    const isUpdate = option.toLowerCase().includes('update');
+    const updateMethod = getRawVal('UPDATE_METHOD', 'Replace line content');
+    const isSuffix = updateMethod.toLowerCase().includes('suffix') || updateMethod.toLowerCase().includes('append');
+
     return (
       <div className="space-y-4">
         <div>
@@ -300,18 +305,64 @@ export const FileFolderExcelProps: React.FC<ActionPropsCommon> = ({
             value={getRawVal('FILE_PATH', '')}
             onChange={(val) => handleRawInputByKey('FILE_PATH', val)}
             browseType="file"
-            placeholder=""
+            placeholder="Select or enter file path"
           />
         </div>
 
         <div>
           <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
-            Text
+            Option
+          </label>
+          <select
+            value={option}
+            onChange={(e) => handleRawInputByKey('OPTION', e.target.value)}
+            className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none cursor-pointer"
+          >
+            <option value="Append line">Append line</option>
+            <option value="Update line">Update line</option>
+          </select>
+        </div>
+
+        {isUpdate && (
+          <>
+            <div>
+              <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
+                Line Index
+              </label>
+              <VariableInput
+                value={getRawVal('LINE_INDEX', '')}
+                onChange={(val) => handleRawInputByKey('LINE_INDEX', val)}
+                placeholder="e.g. 1, {{index}} (Leave blank for current line)"
+              />
+              <div className="text-[10px] text-[#64748b] dark:text-[#94a3b8] mt-1">
+                Line number (1-based index). Leave blank to update the current profile's mapped line.
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
+                Update Method
+              </label>
+              <select
+                value={updateMethod}
+                onChange={(e) => handleRawInputByKey('UPDATE_METHOD', e.target.value)}
+                className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none cursor-pointer"
+              >
+                <option value="Replace line content">Replace line content</option>
+                <option value="Append suffix to line">Append suffix to line</option>
+              </select>
+            </div>
+          </>
+        )}
+
+        <div>
+          <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
+            {isUpdate && isSuffix ? 'Suffix Text' : 'Text'}
           </label>
           <VariableInput
             value={getRawVal('TEXT', '')}
             onChange={(val) => handleRawInputByKey('TEXT', val)}
-            placeholder=""
+            placeholder={isUpdate && isSuffix ? 'e.g.  | OK' : 'Enter text'}
           />
         </div>
 

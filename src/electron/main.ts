@@ -384,7 +384,7 @@ let fileActionLock = Promise.resolve<any>(undefined);
 // File system actions for File & Folder automations
 ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }) => {
   try {
-    const { action, payload } = req;
+    let { action, payload } = req;
     if (action === 'exists') {
       const exists = fs.existsSync(payload.path) && fs.statSync(payload.path).isFile();
       return { success: true, exists };
@@ -474,6 +474,9 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       fs.writeFileSync(payload.path, payload.text ?? '', 'utf-8');
       return { success: true };
     }
+    if (action === 'appendLine' && (payload?.option?.toLowerCase()?.includes('update') || payload?.mode?.toLowerCase()?.includes('update'))) {
+      action = 'updateFileLine';
+    }
     if (action === 'appendLine') {
       const dir = path.dirname(payload.path);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -505,12 +508,23 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
         fileActionLock = fileActionLock.then(() => {
           try {
             const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
-            if (!targetPath || !fs.existsSync(targetPath)) {
-              resolve({ success: false, error: 'File does not exist: ' + targetPath });
+            if (!targetPath) {
+              resolve({ success: false, error: 'File path is required' });
               return;
             }
+            const dir = path.dirname(targetPath);
+            if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+            if (!fs.existsSync(targetPath)) {
+              fs.writeFileSync(targetPath, '', 'utf-8');
+            }
+
             const originalLine = typeof payload?.originalLine === 'string' ? payload.originalLine : undefined;
-            const lineIndex = typeof payload?.lineIndex === 'number' ? payload.lineIndex : -1;
+            const rawLineIdx = payload?.lineIndex;
+            const lineIndex = typeof rawLineIdx === 'number'
+              ? rawLineIdx
+              : (rawLineIdx !== undefined && rawLineIdx !== null && !isNaN(parseInt(String(rawLineIdx), 10)))
+                ? parseInt(String(rawLineIdx), 10)
+                : -1;
             const suffix = payload?.suffix || ' | OK';
             const newText = payload?.newText;
 
@@ -538,6 +552,14 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
 
             // 3. Fallback to line index
             if (targetIdx === -1 && lineIndex >= 0 && lineIndex < lines.length) {
+              targetIdx = lineIndex;
+            }
+
+            // 4. Pad empty lines if lineIndex is beyond current length
+            if (targetIdx === -1 && lineIndex >= lines.length && lineIndex < 100000) {
+              while (lines.length <= lineIndex) {
+                lines.push('');
+              }
               targetIdx = lineIndex;
             }
 

@@ -1824,6 +1824,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       threadVars[`$line`] = matchedTxtLine;
       threadVars[`line`] = matchedTxtLine;
 
+      if (targetTxtLineIdx >= 0) {
+        threadVars['$txt_line_index'] = String(targetTxtLineIdx);
+        threadVars['txt_line_index'] = String(targetTxtLineIdx);
+        threadVars['$txt_line_number'] = String(targetTxtLineIdx + 1);
+        threadVars['txt_line_number'] = String(targetTxtLineIdx + 1);
+      }
+
       // Automatically split line by delimiters: |, tab, semicolon, colon (if not URL), comma
       let parts: string[] = [];
       if (matchedTxtLine.includes('|')) {
@@ -4339,17 +4346,59 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     else if (actType === 20 || actName === 'file append line') {
       const filePath = resolveStr(getRawVal('FILE_PATH', ''));
       const text = resolveStr(getRawVal('TEXT', ''));
+      const option = (getRawVal('OPTION', '') || getRawVal('MODE', '') || 'Append line').trim();
+      const isUpdate = option.toLowerCase().includes('update');
+      const rawLineIdx = resolveStr(getRawVal('LINE_INDEX', '') || getRawVal('LINE_NUMBER', '')).trim();
+      const updateMethod = (getRawVal('UPDATE_METHOD', '') || 'Replace line content').trim();
+      const isSuffix = updateMethod.toLowerCase().includes('suffix') || updateMethod.toLowerCase().includes('append');
+
       try {
         if ((window as any).electronAPI?.fileAction) {
-          const res = await (window as any).electronAPI.fileAction({
-            action: 'appendLine',
-            payload: { path: filePath, text },
-          });
-          if (res && res.success === false) throw new Error(res.error || 'Failed to append to file');
+          if (isUpdate) {
+            let lineIndex = -1;
+            let origLine = '';
+
+            if (rawLineIdx !== '') {
+              const num = parseInt(rawLineIdx, 10);
+              if (!isNaN(num)) {
+                lineIndex = num > 0 ? num - 1 : 0;
+              }
+            } else if (vars.$txt_line_index !== undefined && vars.$txt_line_index !== '') {
+              lineIndex = parseInt(vars.$txt_line_index, 10);
+              origLine = vars.$txt_line || '';
+            }
+
+            if (lineIndex < 0) {
+              throw new Error('Line Index is required (or run profile with TXT mapping)');
+            }
+
+            const res = await (window as any).electronAPI.fileAction({
+              action: 'updateFileLine',
+              payload: {
+                path: filePath,
+                lineIndex,
+                originalLine: origLine || undefined,
+                newText: isSuffix ? undefined : text,
+                suffix: isSuffix ? text : undefined,
+              },
+            });
+
+            if (res && res.success === false) {
+              throw new Error(res.error || 'Failed to update file line');
+            }
+            const finalLineNum = (res?.updatedLineIndex ?? lineIndex) + 1;
+            updateThreadLog(threadId, 'success', `✔ Update file line › Line #${finalLineNum} in ${filePath}`);
+          } else {
+            const res = await (window as any).electronAPI.fileAction({
+              action: 'appendLine',
+              payload: { path: filePath, text },
+            });
+            if (res && res.success === false) throw new Error(res.error || 'Failed to append to file');
+            updateThreadLog(threadId, 'success', `✔ File append line › ${filePath}`);
+          }
         }
-        updateThreadLog(threadId, 'success', `✔ File append line › ${filePath}`);
       } catch (e: any) {
-        const failRes = await handleActionFailure('File append line', e.message);
+        const failRes = await handleActionFailure(isUpdate ? 'Update file line' : 'File append line', e.message);
         if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
       }
     }
