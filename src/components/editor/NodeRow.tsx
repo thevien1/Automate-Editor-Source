@@ -96,7 +96,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
           actionName={node.display_text}
           blockType={blockType}
           isBlockHeader={true}
-          className={`w-4 h-4 ${isHeaderLight ? 'text-slate-900' : 'text-white'}`}
+          className={`w-[18px] h-[18px] ${isHeaderLight ? 'text-slate-900' : 'text-white'}`}
         />
       );
     }
@@ -106,7 +106,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
       <ActionIcon
         actionName={act.display_text}
         actionType={act.type}
-        className="w-3.5 h-3.5"
+        className="w-[18px] h-[18px]"
       />
     );
   };
@@ -623,7 +623,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
 
       {/* Left: Icon, Display Text, Subtext (cyan) */}
       <div className="flex items-center space-x-2.5 min-w-0 flex-1">
-        <div className="shrink-0 flex items-center justify-center">
+        <div className="shrink-0 flex items-center justify-center w-5 h-5">
           {getActionIcon()}
         </div>
 

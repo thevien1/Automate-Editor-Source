@@ -139,7 +139,7 @@ export const ActionsSidebar: React.FC = () => {
                           <ActionIcon
                             actionName={action.name}
                             actionType={action.type}
-                            className="w-3.5 h-3.5"
+                            className="w-[17px] h-[17px]"
                           />
                         </div>
                         <span className="truncate text-xs font-normal">{action.name}</span>

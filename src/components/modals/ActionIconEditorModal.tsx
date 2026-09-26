@@ -139,6 +139,7 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
   const [selectedBootstrapIcon, setSelectedBootstrapIcon] = useState<string>(initialIcon);
   const [customClassInput, setCustomClassInput] = useState<string>(`bi-${initialIcon}`);
   const [customSvgInput, setCustomSvgInput] = useState<string>('');
+  const [iconScale, setIconScale] = useState<number>(1.0);
   const [iconFilter, setIconFilter] = useState<string>('');
   const [copiedCode, setCopiedCode] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -150,6 +151,8 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
     const stored = getStoredCustomIcons()[cleanKey];
     if (stored) {
       setSelectedColor(stored.color || defaultConfig.color);
+      const isGoogleSvg = stored.iconType === 'svg' && stored.iconValue?.includes('-960 960 960');
+      setIconScale(stored.scale ?? (isGoogleSvg ? 1.35 : 1.0));
       if (stored.iconType === 'svg') {
         setIconMode('svg');
         setCustomSvgInput(stored.iconValue);
@@ -163,6 +166,7 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
       setSelectedBootstrapIcon(initialDefaultIcon);
       setCustomClassInput(`bi-${initialDefaultIcon}`);
       setCustomSvgInput('');
+      setIconScale(1.0);
     }
     setCopiedCode(false);
     setSavedSuccess(false);
@@ -184,6 +188,7 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
       color: selectedColor,
       iconType: iconMode === 'svg' ? 'svg' : 'bootstrap',
       iconValue: currentIconValue,
+      scale: iconScale,
     };
     saveCustomIconOverride(cleanKey, override);
 
@@ -211,6 +216,7 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
   const handleReset = async () => {
     deleteCustomIconOverride(cleanKey);
     setSelectedColor(defaultConfig.color);
+    setIconScale(1.0);
 
     if ((window as any).electronAPI?.fileAction) {
       try {
@@ -285,19 +291,30 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
         {/* Modal Body */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* Live Preview Card */}
-          <div className="p-3 rounded-lg border border-[#e2e8f0] dark:border-[#1e293b] bg-[#f8fafc] dark:bg-[#060a14] flex items-center justify-between">
-            <div>
-              <span className="text-[10px] uppercase font-bold text-[#64748b] tracking-wider block mb-1">
+          <div className="p-3 rounded-lg border border-[#e2e8f0] dark:border-[#1e293b] bg-[#f8fafc] dark:bg-[#060a14] space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] uppercase font-bold text-[#64748b] tracking-wider block">
                 Xem trước (Live Preview):
               </span>
+              <div className="text-[11px] px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-medium">
+                Tự động lưu & áp dụng
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-3">
+              {/* Box Preview */}
               <div className="flex items-center space-x-2.5">
                 <div
-                  className="w-8 h-8 rounded-lg bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] flex items-center justify-center text-base shadow-2xs"
+                  className="w-10 h-10 rounded-xl bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] flex items-center justify-center text-lg shadow-2xs overflow-hidden shrink-0"
                   style={{ color: selectedColor }}
                 >
                   {iconMode === 'svg' && customSvgInput ? (
                     <span
-                      className="w-4 h-4 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full"
+                      className="w-6 h-6 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full"
+                      style={{
+                        transform: `scale(${iconScale})`,
+                        transformOrigin: 'center',
+                      }}
                       dangerouslySetInnerHTML={{ __html: customSvgInput }}
                     />
                   ) : (
@@ -305,6 +322,11 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
                       className={`bi ${
                         currentIconValue.startsWith('bi-') ? currentIconValue : `bi-${currentIconValue}`
                       }`}
+                      style={{
+                        transform: `scale(${iconScale})`,
+                        transformOrigin: 'center',
+                        display: 'inline-block',
+                      }}
                     />
                   )}
                 </div>
@@ -313,14 +335,31 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
                     {actionName}
                   </div>
                   <div className="text-[10px] font-mono text-[#64748b]">
-                    Màu: <span style={{ color: selectedColor }}>{selectedColor}</span> | Icon: {currentIconValue}
+                    Màu: <span style={{ color: selectedColor }}>{selectedColor}</span> | Tỉ lệ: <span className="font-bold text-[#1677ff] dark:text-[#38bdf8]">{Math.round(iconScale * 100)}%</span>
                   </div>
                 </div>
               </div>
-            </div>
 
-            <div className="text-[11px] px-2.5 py-1 rounded bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 font-medium">
-              Tự động lưu & áp dụng
+              {/* Realistic Node Row Preview */}
+              <div className="px-3 py-1.5 bg-white dark:bg-[#0c1424] border border-[#e2e8f0] dark:border-[#1a2840] rounded-lg shadow-2xs flex items-center space-x-2 shrink-0">
+                <div className="w-5 h-5 flex items-center justify-center shrink-0" style={{ color: selectedColor }}>
+                  {iconMode === 'svg' && customSvgInput ? (
+                    <span
+                      className="w-[18px] h-[18px] flex items-center justify-center [&>svg]:w-full [&>svg]:h-full"
+                      style={{ transform: `scale(${iconScale})`, transformOrigin: 'center' }}
+                      dangerouslySetInnerHTML={{ __html: customSvgInput }}
+                    />
+                  ) : (
+                    <i
+                      className={`bi ${currentIconValue.startsWith('bi-') ? currentIconValue : `bi-${currentIconValue}`}`}
+                      style={{ transform: `scale(${iconScale})`, transformOrigin: 'center', display: 'inline-block' }}
+                    />
+                  )}
+                </div>
+                <span className="font-semibold text-xs text-[#1e293b] dark:text-[#f8fafc]">
+                  {actionName}
+                </span>
+              </div>
             </div>
           </div>
 
@@ -481,18 +520,96 @@ export const ActionIconEditorModal: React.FC<ActionIconEditorModalProps> = ({
             {/* Mode 3: SVG code */}
             {iconMode === 'svg' && (
               <div className="space-y-1.5">
-                <span className="text-[11px] text-[#64748b]">
-                  Dán mã XML SVG (có thẻ <code className="font-mono">&lt;svg&gt;...&lt;/svg&gt;</code>):
-                </span>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] text-[#64748b]">
+                    Dán mã XML SVG (có thẻ <code className="font-mono">&lt;svg&gt;...&lt;/svg&gt;</code>):
+                  </span>
+                  {customSvgInput?.includes('-960 960 960') && (
+                    <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">
+                      ✓ Đã phát hiện Google Material Icon
+                    </span>
+                  )}
+                </div>
                 <textarea
                   rows={4}
                   value={customSvgInput}
-                  onChange={(e) => setCustomSvgInput(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setCustomSvgInput(val);
+                    if (val.includes('-960 960 960') && iconScale === 1.0) {
+                      setIconScale(1.4);
+                    }
+                  }}
                   placeholder='<svg viewBox="0 0 24 24" fill="currentColor">...</svg>'
                   className="w-full p-2 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded focus:border-[#1677ff] focus:outline-none"
                 />
               </div>
             )}
+          </div>
+
+          {/* Section 3: Icon Size / Scale Slider */}
+          <div className="space-y-2 pt-2 border-t border-[#e2e8f0] dark:border-[#1e293b]">
+            <div className="flex items-center justify-between">
+              <label className="font-bold text-[11px] text-[#334155] dark:text-[#cbd5e1] block">
+                3. Kích thước hiển thị (Thu phóng / Scale):
+              </label>
+              <div className="flex items-center space-x-1.5">
+                <span className="font-mono text-[11px] px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 text-[#1677ff] dark:text-[#38bdf8] font-bold">
+                  {Math.round(iconScale * 100)}%
+                </span>
+                {iconScale !== 1.0 && (
+                  <button
+                    type="button"
+                    onClick={() => setIconScale(1.0)}
+                    className="text-[10px] text-[#64748b] hover:text-[#1677ff] underline cursor-pointer"
+                  >
+                    Về 100%
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center space-x-3">
+              <span className="text-[10px] text-[#64748b] font-mono">80%</span>
+              <input
+                type="range"
+                min="0.8"
+                max="2.2"
+                step="0.05"
+                value={iconScale}
+                onChange={(e) => setIconScale(parseFloat(e.target.value))}
+                className="flex-1 h-1.5 bg-gray-200 dark:bg-gray-700 rounded-lg appearance-none cursor-pointer accent-[#1677ff]"
+              />
+              <span className="text-[10px] text-[#64748b] font-mono">220%</span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+              {[
+                { label: 'Chuẩn (100%)', val: 1.0 },
+                { label: 'Vừa (125%)', val: 1.25 },
+                { label: 'Lớn (140%)', val: 1.4 },
+                { label: 'Rất to (160%)', val: 1.6 },
+                { label: 'To hết cỡ (180%)', val: 1.8 },
+                { label: 'Cực đại (200%)', val: 2.0 },
+              ].map((preset) => (
+                <button
+                  key={preset.val}
+                  type="button"
+                  onClick={() => setIconScale(preset.val)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium border transition-colors cursor-pointer ${
+                    Math.abs(iconScale - preset.val) < 0.03
+                      ? 'border-[#1677ff] bg-blue-50 dark:bg-blue-950/60 text-[#1677ff] dark:text-[#38bdf8] font-bold shadow-2xs'
+                      : 'border-gray-200 dark:border-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            <p className="text-[10px] text-[#64748b] dark:text-[#94a3b8] italic">
+              💡 <strong>Mẹo:</strong> SVG tải từ Google Fonts thường có viền trống lớn quanh hình vẽ, bạn nên chọn <strong>140% - 180% (To hết cỡ)</strong> để icon to tròn, rõ nét trên kịch bản!
+            </p>
           </div>
         </div>
 

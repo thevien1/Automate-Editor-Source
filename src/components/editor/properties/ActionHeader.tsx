@@ -95,7 +95,7 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
                 actionName={actionNode?.display_text || selectedNode.display_text}
                 actionType={actionNode?.type}
                 blockType={blockType}
-                className="w-5 h-5"
+                className="w-6 h-6"
               />
             )}
           </div>

@@ -817,6 +817,8 @@ export interface CustomIconOverride {
   darkColor?: string;
   iconType: 'bootstrap' | 'svg' | 'preset';
   iconValue: string; // Tên class ví dụ: "bi-arrows-move" hoặc mã SVG string
+  size?: number | string;
+  scale?: number; // Hệ số phóng to thu nhỏ (mặc định 1.0, Google icons thường cần 1.35)
 }
 
 const STORAGE_KEY = 'gpm_custom_action_icons';
@@ -984,6 +986,9 @@ export const ActionIcon: React.FC<ActionIconProps> = ({
 
   if (override) {
     const activeColor = color || (isBlockHeader ? '#ffffff' : override.color || '#1677ff');
+    // Nếu là Google Material Symbols (viewBox 0 -960 960 960) có khoảng trống lớn xung quanh thì tự động bù scale 1.35x nếu chưa set scale
+    const isGoogleMaterialSvg = override.iconType === 'svg' && override.iconValue?.includes('-960 960 960');
+    const scale = override.scale || (isGoogleMaterialSvg ? 1.35 : 1.0);
     let renderedIcon: React.ReactNode = null;
 
     if (override.iconType === 'bootstrap') {
@@ -992,7 +997,9 @@ export const ActionIcon: React.FC<ActionIconProps> = ({
     } else if (override.iconType === 'svg') {
       renderedIcon = (
         <span
-          className="inline-flex items-center justify-center w-full h-full [&>svg]:w-full [&>svg]:h-full"
+          className={`inline-flex items-center justify-center w-full h-full [&>svg]:w-full [&>svg]:h-full ${
+            isBlockHeader ? '[&>svg]:fill-white [&_path]:fill-white' : ''
+          }`}
           dangerouslySetInnerHTML={{ __html: override.iconValue }}
         />
       );
@@ -1000,12 +1007,16 @@ export const ActionIcon: React.FC<ActionIconProps> = ({
       renderedIcon = <i className={`bi bi-${override.iconValue}`} />;
     }
 
+    const appliedSize = size || override.size;
+
     return (
       <span
         className={`inline-flex items-center justify-center shrink-0 ${className}`}
         style={{
           color: activeColor,
-          fontSize: size ? (typeof size === 'number' ? `${size}px` : size) : undefined,
+          fontSize: appliedSize ? (typeof appliedSize === 'number' ? `${appliedSize}px` : appliedSize) : undefined,
+          transform: scale !== 1.0 ? `scale(${scale})` : undefined,
+          transformOrigin: 'center',
           ...style,
         }}
         {...props}
