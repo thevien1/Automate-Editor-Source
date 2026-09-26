@@ -8,11 +8,22 @@ export const CallWorkflowProps: React.FC<ActionPropsCommon> = ({
   handleRawInputByKey,
   updateNode,
 }) => {
-  const { currentProject } = useProject();
+  const { currentProject, activeWorkflowTab } = useProject();
 
   const selectedRef = getRawVal('REFERENCE_FILE', '');
   const subWorkflows = currentProject?.subWorkflows || {};
-  const subWorkflowNames = Object.keys(subWorkflows);
+  
+  // Loại trừ chính workflow đang mở hiện tại (activeWorkflowTab) để không gọi chính nó
+  const availableWorkflowNames = Object.keys(subWorkflows).filter(
+    (name) => name !== activeWorkflowTab
+  );
+
+  // Nếu trước đó đang chọn chính tab hiện tại thì tự động xóa để tránh vòng lặp đệ quy
+  React.useEffect(() => {
+    if (selectedRef && selectedRef === activeWorkflowTab) {
+      handleRawInputByKey('REFERENCE_FILE', '');
+    }
+  }, [selectedRef, activeWorkflowTab]);
 
   return (
     <div className="space-y-4 text-left">
@@ -30,12 +41,12 @@ export const CallWorkflowProps: React.FC<ActionPropsCommon> = ({
             <option value="" disabled className="text-gray-400">
               -- Select workflow file --
             </option>
-            {subWorkflowNames.map((name) => (
+            {availableWorkflowNames.map((name) => (
               <option key={name} value={name}>
                 {name}
               </option>
             ))}
-            {selectedRef && !subWorkflowNames.includes(selectedRef) && (
+            {selectedRef && selectedRef !== activeWorkflowTab && !availableWorkflowNames.includes(selectedRef) && (
               <option value={selectedRef}>{selectedRef}</option>
             )}
           </select>
@@ -45,9 +56,11 @@ export const CallWorkflowProps: React.FC<ActionPropsCommon> = ({
             </svg>
           </div>
         </div>
-        {subWorkflowNames.length === 0 && (
+        {availableWorkflowNames.length === 0 && (
           <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
-            Chưa có workflow phụ. Hãy nhấn dấu + ở thanh tab bên trên để tạo workflow mới.
+            {activeWorkflowTab === 'main'
+              ? 'Chưa có workflow phụ. Hãy nhấn dấu + ở thanh tab bên trên để tạo workflow mới.'
+              : 'Không có workflow phụ nào khác để gọi. Hãy tạo thêm workflow phụ bằng dấu + ở thanh tab.'}
           </p>
         )}
       </div>
