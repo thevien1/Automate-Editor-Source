@@ -1972,7 +1972,45 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         }
       }
 
-      return { success: true, cookies };
+      // Format cookies to the standard Chrome Extension / Cookie-Editor / EditThisCookie JSON format
+      const formattedCookies = (cookies || []).map((c: any) => {
+        if (!c || !c.name) return null;
+        const domain = c.domain ? String(c.domain) : '';
+        const rawSameSite = c.sameSite ? String(c.sameSite).toLowerCase() : '';
+        let sameSite: 'no_restriction' | 'lax' | 'strict' | 'unspecified' = 'unspecified';
+        if (rawSameSite === 'none' || rawSameSite === 'no_restriction') {
+          sameSite = 'no_restriction';
+        } else if (rawSameSite === 'lax') {
+          sameSite = 'lax';
+        } else if (rawSameSite === 'strict') {
+          sameSite = 'strict';
+        }
+
+        const exp = typeof c.expires === 'number' && c.expires > 0
+          ? c.expires
+          : (typeof c.expirationDate === 'number' && c.expirationDate > 0 ? c.expirationDate : undefined);
+
+        const cookieItem: any = {
+          domain,
+          hostOnly: domain ? !domain.startsWith('.') : false,
+          httpOnly: Boolean(c.httpOnly),
+          name: String(c.name),
+          path: c.path || '/',
+          sameSite,
+          secure: Boolean(c.secure),
+          session: Boolean(c.session || !exp),
+          storeId: c.storeId !== undefined ? c.storeId : null,
+          value: String(c.value !== undefined ? c.value : ''),
+        };
+
+        if (exp !== undefined) {
+          cookieItem.expirationDate = exp;
+        }
+
+        return cookieItem;
+      }).filter(Boolean);
+
+      return { success: true, cookies: formattedCookies };
     }
 
     if (action === 'clearCookies') {

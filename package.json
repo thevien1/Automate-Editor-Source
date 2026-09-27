@@ -1,6 +1,6 @@
 {
   "name": "sv-browser-automate-editor",
-  "version": "3.1.30",
+  "version": "3.1.31",
   "description": "SV Browser Automate Editor - Visual workflow editor",
   "main": "dist-electron/main.js",
   "scripts": {
