@@ -1972,21 +1972,21 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       await sendWs(page.webSocketDebuggerUrl, 'Network.enable', {}).catch(() => {});
 
       let cookies: any[] = [];
-      // 1. Try Storage.getCookies (canonical global cookie getter across all domains)
-      const storageRes = await sendWs(page.webSocketDebuggerUrl, 'Storage.getCookies', {}).catch(() => null);
-      if (storageRes?.success && Array.isArray(storageRes.result?.cookies) && storageRes.result.cookies.length > 0) {
-        cookies = storageRes.result.cookies;
-      }
 
-      // 2. Try Network.getCookies with current page url
-      if (cookies.length === 0) {
-        const netParam: any = {};
-        if (page.url && page.url.startsWith('http')) {
-          netParam.urls = [page.url];
-        }
-        const netRes = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', netParam).catch(() => null);
+      // 1. If active page is on a real website (starts with http) or url is passed, prioritize getting site-specific cookies
+      const targetUrl = (payload?.url || (page.url && page.url.startsWith('http') ? page.url : ''));
+      if (targetUrl) {
+        const netRes = await sendWs(page.webSocketDebuggerUrl, 'Network.getCookies', { urls: [targetUrl] }).catch(() => null);
         if (netRes?.success && Array.isArray(netRes.result?.cookies) && netRes.result.cookies.length > 0) {
           cookies = netRes.result.cookies;
+        }
+      }
+
+      // 2. Fallback to Storage.getCookies across all domains if Network.getCookies was empty or page is on about:blank
+      if (cookies.length === 0) {
+        const storageRes = await sendWs(page.webSocketDebuggerUrl, 'Storage.getCookies', {}).catch(() => null);
+        if (storageRes?.success && Array.isArray(storageRes.result?.cookies) && storageRes.result.cookies.length > 0) {
+          cookies = storageRes.result.cookies;
         }
       }
 
@@ -1998,22 +1998,28 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         }
       }
 
-      // Format cookies to the standard Chrome Extension / Cookie-Editor / EditThisCookie JSON format
+      // Format cookies to the EXACT standard format requested by user:
+      // sameSite: "no_restriction" | "lax" | "strict" | null
+      // storeId: null
       const formattedCookies = (cookies || []).map((c: any) => {
         if (!c || !c.name) return null;
         const domain = c.domain ? String(c.domain) : '';
         const rawSameSite = c.sameSite ? String(c.sameSite).toLowerCase() : '';
-        const isSecure = Boolean(c.secure || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
 
-        // Standard Chrome extension sameSite enum: 'no_restriction', 'lax', 'strict'
-        // 'unspecified' must NOT be used because chrome.cookies.set throws TypeError on it
-        let sameSite: 'no_restriction' | 'lax' | 'strict' = 'lax';
-        if (rawSameSite === 'strict') {
-          sameSite = 'strict';
-        } else if (rawSameSite === 'none' || rawSameSite === 'no_restriction' || isSecure) {
+        // Standard extension sameSite format:
+        // 'none' / 'no_restriction' -> 'no_restriction'
+        // 'lax' -> 'lax'
+        // 'strict' -> 'strict'
+        // default / unspecified / none -> null
+        let sameSite: 'no_restriction' | 'lax' | 'strict' | null = null;
+        if (rawSameSite === 'none' || rawSameSite === 'no_restriction') {
           sameSite = 'no_restriction';
-        } else {
+        } else if (rawSameSite === 'lax') {
           sameSite = 'lax';
+        } else if (rawSameSite === 'strict') {
+          sameSite = 'strict';
+        } else {
+          sameSite = null;
         }
 
         const exp = typeof c.expires === 'number' && c.expires > 0
@@ -2022,25 +2028,23 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
 
         const cookieItem: any = {
           domain,
-          hostOnly: domain ? !domain.startsWith('.') : false,
-          httpOnly: Boolean(c.httpOnly),
-          name: String(c.name),
-          path: c.path || '/',
-          sameSite,
-          secure: isSecure,
-          session: Boolean(c.session || !exp),
-          value: String(c.value !== undefined ? c.value : ''),
         };
-
-        if (c.storeId) {
-          cookieItem.storeId = String(c.storeId);
-        }
 
         if (exp !== undefined) {
           cookieItem.expirationDate = exp;
         }
 
-        // For __Host- cookies, conform strictly to RFC 6265 (must NOT have domain, must be hostOnly)
+        cookieItem.hostOnly = domain ? !domain.startsWith('.') : false;
+        cookieItem.httpOnly = Boolean(c.httpOnly);
+        cookieItem.name = String(c.name);
+        cookieItem.path = c.path || '/';
+        cookieItem.sameSite = sameSite;
+        cookieItem.secure = Boolean(c.secure || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
+        cookieItem.session = Boolean(c.session || !exp);
+        cookieItem.storeId = null;
+        cookieItem.value = String(c.value !== undefined ? c.value : '');
+
+        // For __Host- cookies, conform strictly to RFC 6265
         if (cookieItem.name.startsWith('__Host-')) {
           delete cookieItem.domain;
           cookieItem.hostOnly = true;
