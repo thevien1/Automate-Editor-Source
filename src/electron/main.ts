@@ -1859,15 +1859,28 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         const path = c.path || c.Path || '/';
         cookie.path = String(path);
 
+        const secure = c.secure ?? c.Secure;
+        if (typeof secure === 'boolean') cookie.secure = secure;
+
+        // Auto-enforce secure for __Secure- and __Host- cookies as required by Chrome CDP RFC 6265
+        if (cookie.name.startsWith('__Secure-') || cookie.name.startsWith('__Host-')) {
+          cookie.secure = true;
+        }
+
         const url = c.url || c.Url;
         if (url) {
           cookie.url = String(url);
-        } else if (!cookie.domain && fallbackUrl) {
+        } else if (cookie.domain) {
+          const cleanHost = cookie.domain.replace(/^\./, '');
+          const scheme = cookie.secure ? 'https://' : 'http://';
+          cookie.url = `${scheme}${cleanHost}${cookie.path || '/'}`;
+        } else if (fallbackUrl) {
           cookie.url = fallbackUrl;
         }
 
-        const secure = c.secure ?? c.Secure;
-        if (typeof secure === 'boolean') cookie.secure = secure;
+        if (cookie.secure && cookie.url && cookie.url.startsWith('http://')) {
+          cookie.url = cookie.url.replace(/^http:\/\//, 'https://');
+        }
 
         const httpOnly = c.httpOnly ?? c.HttpOnly;
         if (typeof httpOnly === 'boolean') cookie.httpOnly = httpOnly;
@@ -1895,15 +1908,23 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         return { success: false, error: 'Không có cookie nào có tên và giá trị hợp lệ' };
       }
 
+      // Deduplicate formatted cookies so the most complete one is preserved
+      const cookieMap = new Map<string, any>();
+      for (const c of formattedCookies) {
+        const key = `${c.name}|${c.domain || ''}|${c.path || '/'}`;
+        cookieMap.set(key, c);
+      }
+      const uniqueCookies = Array.from(cookieMap.values());
+
       // 1. Try batch Network.setCookies
-      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: formattedCookies }).catch(() => null);
+      const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: uniqueCookies }).catch(() => null);
       if (res && res.success) {
-        return { success: true, count: formattedCookies.length };
+        return { success: true, count: uniqueCookies.length };
       }
 
       // 2. Fallback: Set each cookie individually with Network.setCookie so valid cookies still import
       let successCount = 0;
-      for (const c of formattedCookies) {
+      for (const c of uniqueCookies) {
         const singleRes = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookie', c).catch(() => null);
         if (singleRes && singleRes.success && singleRes.result?.success !== false) {
           successCount++;
