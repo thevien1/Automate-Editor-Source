@@ -3919,8 +3919,19 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         collectVars(currentProject.script.after_quit?.nodes || []);
       }
 
-      // If user configured TXT file in Runtime settings, load line 1 into vars for testing
-      const testTxtPath = localStorage.getItem('sv_txt_file_path') || '';
+      const projectKey = currentProject?.folderPath || currentProject?.info?.id || currentProject?.info?.name;
+      let projectRuntimeCfg = currentProject?.runtimeConfig;
+      if (!projectRuntimeCfg && projectKey) {
+        try {
+          const localStr = localStorage.getItem(`gpm_runtime_config_${projectKey}`);
+          if (localStr) projectRuntimeCfg = JSON.parse(localStr);
+        } catch {}
+      }
+
+      // If user configured TXT file in Runtime settings for THIS project, load line 1 into vars for testing
+      const testTxtPath = (projectRuntimeCfg?.useInputTxt && projectRuntimeCfg?.txtFilePath)
+        ? projectRuntimeCfg.txtFilePath
+        : '';
       if (testTxtPath.trim()) {
         try {
           const cleanTestPath = testTxtPath.trim().replace(/^["']|["']$/g, '');
@@ -3933,7 +3944,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               .map((l: any) => String(l).replace(/\r$/, ''))
               .filter((l: string) => l.trim().length > 0);
             if (lines.length > 0) {
-              const skipKws = (localStorage.getItem('sv_txt_skip_keywords') || 'done, trạng thái:, error, OK')
+              const skipKws = (projectRuntimeCfg?.txtSkipKeywords || 'done, trạng thái:, error, OK')
                 .split(',')
                 .map((k) => k.trim())
                 .filter(Boolean);

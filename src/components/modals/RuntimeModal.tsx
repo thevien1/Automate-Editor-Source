@@ -138,6 +138,60 @@ async function generateTOTP(secret: string): Promise<string> {
   return code.toString().padStart(6, '0');
 }
 
+export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
+  // Window & Screen
+  windowSizeMode: 'percent',
+  autoTileWindows: true,
+  tilePreset: 'auto',
+  percentWidth: 50,
+  percentHeight: 50,
+  windowWidth: 800,
+  windowHeight: 600,
+  windowScale: 100,
+  screenTarget: 'Screen 1 • 1920x1080 (primary)',
+
+  // Excel Input
+  useInputExcel: false,
+  excelFilePath: '',
+  excelSheetId: 0,
+  excelMapMode: 'all',
+  excelMapColA: false,
+  excelWriteOk: false,
+  excelOkCol: 'Z',
+  excelSkipIfHasText: true,
+  skipStatusKeywords: 'done, trạng thái:, error',
+
+  // TXT Input
+  useInputTxt: false,
+  txtFilePath: '',
+  txtMapMode: 'one',
+  txtSkipKeywords: 'done, trạng thái:, error, OK',
+  txtWriteOk: true,
+
+  // Session Configuration
+  sessionName: '',
+  numThreads: 2,
+  threadDelay: 10,
+  skipProxyCheck: false,
+  doNotCloseOnError: false,
+  closeBrowserOnDone: false,
+  performanceLimit: false,
+  hideWindowWhenDone: false,
+  useVirtualMouse: true,
+  restartOnError: false,
+  retryCount: 3,
+
+  // Schedule
+  useSchedule: false,
+
+  // Selected Profiles & Engine
+  selectedProfileIds: [],
+  selectedEngine: 'Selenium enhanced engine',
+  selectedProvider: 'SV Browser',
+  profilesSortOrder: 'default',
+  profilesPerPage: 20,
+};
+
 export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) => {
   const { currentProject, updateRuntimeConfig } = useProject();
 
@@ -155,78 +209,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   // Step 2: Sub-tab under CONFIGURATION MENU
   const [configMenu, setConfigMenu] = useState<'inputs' | 'session' | 'schedule'>('inputs');
 
-  // Step 2 Configurations (Auto-saved)
-  const [windowWidth, setWindowWidth] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_window_width');
-    return saved ? parseInt(saved, 10) : 800;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_window_width', String(windowWidth));
-  }, [windowWidth]);
+  // Step 2 Configurations (Project-scoped, auto-saved to runtime.json)
+  const [windowWidth, setWindowWidth] = useState<number>(800);
 
-  const [windowHeight, setWindowHeight] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_window_height');
-    return saved ? parseInt(saved, 10) : 600;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_window_height', String(windowHeight));
-  }, [windowHeight]);
+  const [windowHeight, setWindowHeight] = useState<number>(600);
+  const [windowScale, setWindowScale] = useState<number>(100);
 
-  const [windowScale, setWindowScale] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_window_scale');
-    return saved ? parseInt(saved, 10) : 100;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_window_scale', String(windowScale));
-  }, [windowScale]);
-
-  const [screenTarget, setScreenTarget] = useState<string>(() => {
-    return localStorage.getItem('sv_screen_target') || 'Screen 1 • 1920x1080 (primary)';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_screen_target', screenTarget);
-  }, [screenTarget]);
-
-  // Window Size Mode: 'percent' (Tỉ lệ % màn hình) hoặc 'custom' (pixel cố định)
-  const [windowSizeMode, setWindowSizeMode] = useState<'percent' | 'custom'>(() => {
-    return (localStorage.getItem('sv_window_size_mode') as 'percent' | 'custom') || 'percent';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_window_size_mode', windowSizeMode);
-  }, [windowSizeMode]);
-
-  // Tự động chia đều các cửa sổ trên màn hình (Auto Tile Grid - Ưu tiên góc trái trên)
-  const [autoTileWindows, setAutoTileWindows] = useState<boolean>(() => {
-    return localStorage.getItem('sv_auto_tile_windows') !== 'false';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_auto_tile_windows', String(autoTileWindows));
-  }, [autoTileWindows]);
-
-  // Preset chia lưới: 'auto' | '2x2' | '3x2' | '4x2' | '2x1' | 'custom'
-  const [tilePreset, setTilePreset] = useState<string>(() => {
-    return localStorage.getItem('sv_tile_preset') || 'auto';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_tile_preset', tilePreset);
-  }, [tilePreset]);
-
-  // Tỉ lệ % chiều rộng và % chiều cao
-  const [percentWidth, setPercentWidth] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_percent_width');
-    return saved ? parseFloat(saved) : 50;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_percent_width', String(percentWidth));
-  }, [percentWidth]);
-
-  const [percentHeight, setPercentHeight] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_percent_height');
-    return saved ? parseFloat(saved) : 50;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_percent_height', String(percentHeight));
-  }, [percentHeight]);
+  const [screenTarget, setScreenTarget] = useState<string>('Screen 1 • 1920x1080 (primary)');
+  const [windowSizeMode, setWindowSizeMode] = useState<'percent' | 'custom'>('percent');
+  const [autoTileWindows, setAutoTileWindows] = useState<boolean>(true);
+  const [tilePreset, setTilePreset] = useState<string>('auto');
+  const [percentWidth, setPercentWidth] = useState<number>(50);
+  const [percentHeight, setPercentHeight] = useState<number>(50);
 
   // Danh sách các màn hình kết nối thực tế từ Electron
   const [screenDisplays, setScreenDisplays] = useState<Array<{
@@ -418,107 +412,22 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  const [useInputExcel, setUseInputExcel] = useState<boolean>(() => {
-    return localStorage.getItem('sv_use_input_excel') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_use_input_excel', String(useInputExcel));
-  }, [useInputExcel]);
+  const [useInputExcel, setUseInputExcel] = useState<boolean>(false);
+  const [excelFilePath, setExcelFilePath] = useState<string>('');
+  const [excelSheetId, setExcelSheetId] = useState<number>(0);
+  const [excelMapMode, setExcelMapMode] = useState<'all' | 'one'>('all');
+  const [excelMapColA, setExcelMapColA] = useState<boolean>(false);
+  const [excelWriteOk, setExcelWriteOk] = useState<boolean>(false);
+  const [excelOkCol, setExcelOkCol] = useState<string>('Z');
+  const [excelSkipIfHasText, setExcelSkipIfHasText] = useState<boolean>(true);
+  const [skipStatusKeywords, setSkipStatusKeywords] = useState<string>('done, trạng thái:, error');
 
-  const [excelFilePath, setExcelFilePath] = useState<string>(() => {
-    return localStorage.getItem('sv_excel_file_path') || '';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_file_path', excelFilePath);
-  }, [excelFilePath]);
-
-  const [excelSheetId, setExcelSheetId] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_excel_sheet_id');
-    return saved !== null ? parseInt(saved, 10) || 0 : 0;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_sheet_id', String(excelSheetId));
-  }, [excelSheetId]);
-
-  const [excelMapMode, setExcelMapMode] = useState<'all' | 'one'>(() => {
-    return (localStorage.getItem('sv_excel_map_mode') as 'all' | 'one') || 'all';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_map_mode', excelMapMode);
-  }, [excelMapMode]);
-
-  const [excelMapColA, setExcelMapColA] = useState<boolean>(() => {
-    return localStorage.getItem('sv_excel_map_col_a') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_map_col_a', String(excelMapColA));
-  }, [excelMapColA]);
-
-  const [excelWriteOk, setExcelWriteOk] = useState<boolean>(() => {
-    return localStorage.getItem('sv_excel_write_ok') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_write_ok', String(excelWriteOk));
-  }, [excelWriteOk]);
-
-  const [excelOkCol, setExcelOkCol] = useState<string>(() => {
-    return localStorage.getItem('sv_excel_ok_col') || 'Z';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_ok_col', excelOkCol);
-  }, [excelOkCol]);
-
-  // Skip if status column already has text / has content (User request)
-  const [excelSkipIfHasText, setExcelSkipIfHasText] = useState<boolean>(() => {
-    return localStorage.getItem('sv_excel_skip_if_has_text') !== 'false';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_excel_skip_if_has_text', String(excelSkipIfHasText));
-  }, [excelSkipIfHasText]);
-
-  // Skip keywords filter: e.g. "done, trạng thái:, error" (User request)
-  const [skipStatusKeywords, setSkipStatusKeywords] = useState<string>(() => {
-    return localStorage.getItem('sv_skip_status_keywords') ?? 'done, trạng thái:, error';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_skip_status_keywords', skipStatusKeywords);
-  }, [skipStatusKeywords]);
-
-  // TXT Input Configuration
-  const [useInputTxt, setUseInputTxt] = useState<boolean>(() => {
-    return localStorage.getItem('sv_use_input_txt') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_use_input_txt', String(useInputTxt));
-  }, [useInputTxt]);
-
-  const [txtFilePath, setTxtFilePath] = useState<string>(() => {
-    return localStorage.getItem('sv_txt_file_path') || '';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_txt_file_path', txtFilePath);
-  }, [txtFilePath]);
-
-  const [txtMapMode, setTxtMapMode] = useState<'all' | 'one'>(() => {
-    return (localStorage.getItem('sv_txt_map_mode') as 'all' | 'one') || 'one';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_txt_map_mode', txtMapMode);
-  }, [txtMapMode]);
-
-  const [txtSkipKeywords, setTxtSkipKeywords] = useState<string>(() => {
-    return localStorage.getItem('sv_txt_skip_keywords') ?? 'done, trạng thái:, error, OK';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_txt_skip_keywords', txtSkipKeywords);
-  }, [txtSkipKeywords]);
-
-  const [txtWriteOk, setTxtWriteOk] = useState<boolean>(() => {
-    return localStorage.getItem('sv_txt_write_ok') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_txt_write_ok', String(txtWriteOk));
-  }, [txtWriteOk]);
+  // TXT Input Configuration (Project-scoped, auto-saved to runtime.json)
+  const [useInputTxt, setUseInputTxt] = useState<boolean>(false);
+  const [txtFilePath, setTxtFilePath] = useState<string>('');
+  const [txtMapMode, setTxtMapMode] = useState<'all' | 'one'>('one');
+  const [txtSkipKeywords, setTxtSkipKeywords] = useState<string>('done, trạng thái:, error, OK');
+  const [txtWriteOk, setTxtWriteOk] = useState<boolean>(true);
 
   // Helper: column letter <-> index
   const colLetterToIndex = (colStr: string): number => {
@@ -604,82 +513,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  // Session configuration (Auto-saved)
-  const [numThreads, setNumThreads] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_num_threads');
-    return saved ? Math.max(1, parseInt(saved, 10)) : 3;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_num_threads', String(numThreads));
-  }, [numThreads]);
-
-  const [threadDelay, setThreadDelay] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_thread_delay');
-    return saved ? parseInt(saved, 10) : 0;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_thread_delay', String(threadDelay));
-  }, [threadDelay]);
-
-  const [skipProxyCheck, setSkipProxyCheck] = useState<boolean>(() => {
-    return localStorage.getItem('sv_skip_proxy_check') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_skip_proxy_check', String(skipProxyCheck));
-  }, [skipProxyCheck]);
-
+  // Session configuration (Project-scoped, auto-saved to runtime.json)
+  const [numThreads, setNumThreads] = useState<number>(2);
+  const [threadDelay, setThreadDelay] = useState<number>(10);
+  const [skipProxyCheck, setSkipProxyCheck] = useState<boolean>(false);
   const [workerProxies, setWorkerProxies] = useState<Record<number, string>>({});
-
-  const [doNotCloseOnError, setDoNotCloseOnError] = useState<boolean>(() => {
-    return localStorage.getItem('sv_do_not_close_on_error') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_do_not_close_on_error', String(doNotCloseOnError));
-  }, [doNotCloseOnError]);
-
-  const [closeBrowserOnDone, setCloseBrowserOnDone] = useState<boolean>(() => {
-    return localStorage.getItem('sv_close_browser_on_done') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_close_browser_on_done', String(closeBrowserOnDone));
-  }, [closeBrowserOnDone]);
-
-  const [performanceLimit, setPerformanceLimit] = useState<boolean>(() => {
-    return localStorage.getItem('sv_performance_limit') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_performance_limit', String(performanceLimit));
-  }, [performanceLimit]);
-
-  const [hideWindowWhenDone, setHideWindowWhenDone] = useState<boolean>(() => {
-    return localStorage.getItem('sv_hide_window_when_done') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_hide_window_when_done', String(hideWindowWhenDone));
-  }, [hideWindowWhenDone]);
-
-  const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(() => {
-    const saved = localStorage.getItem('sv_use_virtual_mouse');
-    return saved !== null ? saved === 'true' : true;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_use_virtual_mouse', String(useVirtualMouse));
-  }, [useVirtualMouse]);
-
-  const [restartOnError, setRestartOnError] = useState<boolean>(() => {
-    return localStorage.getItem('sv_restart_on_error') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_restart_on_error', String(restartOnError));
-  }, [restartOnError]);
-
-  const [retryCount, setRetryCount] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_retry_count');
-    return saved ? parseInt(saved, 10) : 3;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_retry_count', String(retryCount));
-  }, [retryCount]);
+  const [doNotCloseOnError, setDoNotCloseOnError] = useState<boolean>(false);
+  const [closeBrowserOnDone, setCloseBrowserOnDone] = useState<boolean>(false);
+  const [performanceLimit, setPerformanceLimit] = useState<boolean>(false);
+  const [hideWindowWhenDone, setHideWindowWhenDone] = useState<boolean>(false);
+  const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(true);
+  const [restartOnError, setRestartOnError] = useState<boolean>(false);
+  const [retryCount, setRetryCount] = useState<number>(3);
 
   // Step 3: Profiles from GPMLogin API (http://localhost:8725/api/v3/profiles)
   const [profiles, setProfiles] = useState<GpmProfile[]>([]);
@@ -691,26 +536,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [apiStatus, setApiStatus] = useState<'connected' | 'error' | 'idle'>('idle');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
-  const [sortOrder, setSortOrder] = useState<string>(() => {
-    return localStorage.getItem('sv_profiles_sort_order') || 'default';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_profiles_sort_order', sortOrder);
-  }, [sortOrder]);
-
-  const [profilesPerPage, setProfilesPerPage] = useState<number>(() => {
-    const saved = localStorage.getItem('sv_profiles_per_page');
-    return saved ? Math.max(1, parseInt(saved, 10)) || 20 : 20;
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_profiles_per_page', String(profilesPerPage));
-  }, [profilesPerPage]);
-
+  const [sortOrder, setSortOrder] = useState<string>('default');
+  const [profilesPerPage, setProfilesPerPage] = useState<number>(20);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [customPerPageInput, setCustomPerPageInput] = useState<string>(() => {
-    const saved = localStorage.getItem('sv_profiles_per_page');
-    return saved ? String(Math.max(1, parseInt(saved, 10)) || 20) : '20';
-  });
+  const [customPerPageInput, setCustomPerPageInput] = useState<string>('20');
   const [selectedEngine, setSelectedEngine] = useState<string>('Selenium enhanced engine');
   const [selectedProvider, setSelectedProvider] = useState<string>('SV Browser');
 
@@ -813,13 +642,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
   };
 
-  // Schedule configuration (Image 5 - Auto-saved)
-  const [useSchedule, setUseSchedule] = useState<boolean>(() => {
-    return localStorage.getItem('sv_use_schedule') === 'true';
-  });
-  useEffect(() => {
-    localStorage.setItem('sv_use_schedule', String(useSchedule));
-  }, [useSchedule]);
+  // Schedule configuration (Project-scoped, auto-saved to runtime.json)
+  const [useSchedule, setUseSchedule] = useState<boolean>(false);
 
   const isInitialLoadingRef = useRef<boolean>(true);
   const loadedProjectKeyRef = useRef<string>('');
@@ -878,13 +702,79 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     profilesPerPage,
   });
 
+    const applyConfigToState = (cfg: ProjectRuntimeConfig, projName?: string) => {
+    // Window & Screen
+    setWindowSizeMode(cfg.windowSizeMode ?? 'percent');
+    setAutoTileWindows(cfg.autoTileWindows ?? true);
+    setTilePreset(cfg.tilePreset ?? 'auto');
+    setPercentWidth(cfg.percentWidth ?? 50);
+    setPercentHeight(cfg.percentHeight ?? 50);
+    setWindowWidth(cfg.windowWidth ?? 800);
+    setWindowHeight(cfg.windowHeight ?? 600);
+    setWindowScale(cfg.windowScale ?? 100);
+    if (cfg.screenTarget) {
+      setScreenTarget(cfg.screenTarget);
+    }
+
+    // Excel Input
+    setUseInputExcel(cfg.useInputExcel ?? false);
+    setExcelFilePath(cfg.excelFilePath ?? '');
+    setExcelSheetId(cfg.excelSheetId ?? 0);
+    setExcelMapMode(cfg.excelMapMode ?? 'all');
+    setExcelMapColA(cfg.excelMapColA ?? false);
+    setExcelWriteOk(cfg.excelWriteOk ?? false);
+    setExcelOkCol(cfg.excelOkCol ?? 'Z');
+    setExcelSkipIfHasText(cfg.excelSkipIfHasText ?? true);
+    setSkipStatusKeywords(cfg.skipStatusKeywords ?? 'done, trạng thái:, error');
+
+    // TXT Input
+    setUseInputTxt(cfg.useInputTxt ?? false);
+    setTxtFilePath(cfg.txtFilePath ?? '');
+    setTxtMapMode(cfg.txtMapMode ?? 'one');
+    setTxtSkipKeywords(cfg.txtSkipKeywords ?? 'done, trạng thái:, error, OK');
+    setTxtWriteOk(cfg.txtWriteOk ?? true);
+
+    // Session Configuration
+    if (cfg.sessionName && cfg.sessionName.trim()) {
+      setSessionName(cfg.sessionName);
+    } else {
+      const pName = projName || currentProject?.info?.name || 'Untitled';
+      const hash = Math.random().toString(16).substring(2, 10);
+      setSessionName(`${pName}-${hash}`);
+    }
+    setNumThreads(cfg.numThreads ?? 2);
+    setThreadDelay(cfg.threadDelay ?? 10);
+    setSkipProxyCheck(cfg.skipProxyCheck ?? false);
+    setDoNotCloseOnError(cfg.doNotCloseOnError ?? false);
+    setCloseBrowserOnDone(cfg.closeBrowserOnDone ?? false);
+    setPerformanceLimit(cfg.performanceLimit ?? false);
+    setHideWindowWhenDone(cfg.hideWindowWhenDone ?? false);
+    setUseVirtualMouse(cfg.useVirtualMouse ?? true);
+    setRestartOnError(cfg.restartOnError ?? false);
+    setRetryCount(cfg.retryCount ?? 3);
+
+    // Schedule
+    setUseSchedule(cfg.useSchedule ?? false);
+
+    // Selected Profiles & Engine
+    setSelectedEngine(cfg.selectedEngine || 'Selenium enhanced engine');
+    setSelectedProvider(cfg.selectedProvider || 'SV Browser');
+    setSortOrder(cfg.profilesSortOrder || 'default');
+    if (cfg.profilesPerPage) {
+      setProfilesPerPage(cfg.profilesPerPage);
+      setCustomPerPageInput(String(cfg.profilesPerPage));
+    }
+    setSelectedProfileIds(Array.isArray(cfg.selectedProfileIds) ? cfg.selectedProfileIds : []);
+  };
+
   const saveConfigForCurrentProject = (customConfig?: Partial<ProjectRuntimeConfig>) => {
     if (!currentProject) return;
     const projectKey = currentProject.folderPath || currentProject.info?.id || currentProject.info?.name;
     if (!projectKey) return;
 
+    const currentCfg = getCurrentRuntimeConfig();
     const cfg: ProjectRuntimeConfig = {
-      ...getCurrentRuntimeConfig(),
+      ...currentCfg,
       ...(customConfig || {}),
     };
 
@@ -901,7 +791,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           runtimeConfig: cfg,
         }).catch(() => {});
       } else if ((window as any).electronAPI?.fileAction) {
-        const cleanPath = `${currentProject.folderPath.replace(/[/\\]+$/, '')}/runtime.json`;
+        const cleanPath = `${currentProject.folderPath.replace(/[\\/\\\\]+$/, '')}/runtime.json`;
         (window as any).electronAPI.fileAction({
           action: 'writeText',
           payload: { path: cleanPath, text: JSON.stringify(cfg, null, 2) },
@@ -923,7 +813,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // 1. If not in memory, try reading from disk runtime.json directly
     if (!savedCfg && proj.folderPath && (window as any).electronAPI?.fileAction) {
       try {
-        const cleanPath = `${String(proj.folderPath).replace(/[/\\]+$/, '')}/runtime.json`;
+        const cleanPath = `${String(proj.folderPath).replace(/[\\/\\\\]+$/, '')}/runtime.json`;
         const res = await (window as any).electronAPI.fileAction({
           action: 'readText',
           payload: { path: cleanPath },
@@ -942,70 +832,22 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       } catch {}
     }
 
+    const projName = proj.info?.name || 'Untitled';
+
     if (savedCfg) {
-      // Window & Screen
-      if (savedCfg.windowSizeMode !== undefined) setWindowSizeMode(savedCfg.windowSizeMode);
-      if (savedCfg.autoTileWindows !== undefined) setAutoTileWindows(savedCfg.autoTileWindows);
-      if (savedCfg.tilePreset !== undefined) setTilePreset(savedCfg.tilePreset);
-      if (savedCfg.percentWidth !== undefined) setPercentWidth(savedCfg.percentWidth);
-      if (savedCfg.percentHeight !== undefined) setPercentHeight(savedCfg.percentHeight);
-      if (savedCfg.windowWidth !== undefined) setWindowWidth(savedCfg.windowWidth);
-      if (savedCfg.windowHeight !== undefined) setWindowHeight(savedCfg.windowHeight);
-      if (savedCfg.windowScale !== undefined) setWindowScale(savedCfg.windowScale);
-      if (savedCfg.screenTarget !== undefined) setScreenTarget(savedCfg.screenTarget);
-
-      // Excel
-      if (savedCfg.useInputExcel !== undefined) setUseInputExcel(savedCfg.useInputExcel);
-      if (savedCfg.excelFilePath !== undefined) setExcelFilePath(savedCfg.excelFilePath);
-      if (savedCfg.excelSheetId !== undefined) setExcelSheetId(savedCfg.excelSheetId);
-      if (savedCfg.excelMapMode !== undefined) setExcelMapMode(savedCfg.excelMapMode);
-      if (savedCfg.excelMapColA !== undefined) setExcelMapColA(savedCfg.excelMapColA);
-      if (savedCfg.excelWriteOk !== undefined) setExcelWriteOk(savedCfg.excelWriteOk);
-      if (savedCfg.excelOkCol !== undefined) setExcelOkCol(savedCfg.excelOkCol);
-      if (savedCfg.excelSkipIfHasText !== undefined) setExcelSkipIfHasText(savedCfg.excelSkipIfHasText);
-      if (savedCfg.skipStatusKeywords !== undefined) setSkipStatusKeywords(savedCfg.skipStatusKeywords);
-
-      // TXT
-      if (savedCfg.useInputTxt !== undefined) setUseInputTxt(savedCfg.useInputTxt);
-      if (savedCfg.txtFilePath !== undefined) setTxtFilePath(savedCfg.txtFilePath);
-      if (savedCfg.txtMapMode !== undefined) setTxtMapMode(savedCfg.txtMapMode);
-      if (savedCfg.txtSkipKeywords !== undefined) setTxtSkipKeywords(savedCfg.txtSkipKeywords);
-      if (savedCfg.txtWriteOk !== undefined) setTxtWriteOk(savedCfg.txtWriteOk);
-
-      // Session
-      if (savedCfg.numThreads !== undefined) setNumThreads(savedCfg.numThreads);
-      if (savedCfg.threadDelay !== undefined) setThreadDelay(savedCfg.threadDelay);
-      if (savedCfg.skipProxyCheck !== undefined) setSkipProxyCheck(savedCfg.skipProxyCheck);
-      if (savedCfg.doNotCloseOnError !== undefined) setDoNotCloseOnError(savedCfg.doNotCloseOnError);
-      if (savedCfg.closeBrowserOnDone !== undefined) setCloseBrowserOnDone(savedCfg.closeBrowserOnDone);
-      if (savedCfg.performanceLimit !== undefined) setPerformanceLimit(savedCfg.performanceLimit);
-      if (savedCfg.hideWindowWhenDone !== undefined) setHideWindowWhenDone(savedCfg.hideWindowWhenDone);
-      if (savedCfg.useVirtualMouse !== undefined) setUseVirtualMouse(savedCfg.useVirtualMouse);
-      if (savedCfg.restartOnError !== undefined) setRestartOnError(savedCfg.restartOnError);
-      if (savedCfg.retryCount !== undefined) setRetryCount(savedCfg.retryCount);
-
-      // Schedule
-      if (savedCfg.useSchedule !== undefined) setUseSchedule(savedCfg.useSchedule);
-
-      // Engine & Provider
-      if (savedCfg.selectedEngine !== undefined) setSelectedEngine(savedCfg.selectedEngine);
-      if (savedCfg.selectedProvider !== undefined) setSelectedProvider(savedCfg.selectedProvider);
-
-      if (savedCfg.profilesSortOrder !== undefined) setSortOrder(savedCfg.profilesSortOrder);
-      if (savedCfg.profilesPerPage !== undefined) {
-        setProfilesPerPage(savedCfg.profilesPerPage);
-        setCustomPerPageInput(String(savedCfg.profilesPerPage));
-      }
-
-      // Selected Profiles: restore saved profiles for this project
-      if (Array.isArray(savedCfg.selectedProfileIds) && savedCfg.selectedProfileIds.length > 0) {
-        setSelectedProfileIds(savedCfg.selectedProfileIds);
-      }
+      const mergedCfg: ProjectRuntimeConfig = {
+        ...DEFAULT_PROJECT_RUNTIME_CONFIG,
+        ...savedCfg,
+      };
+      applyConfigToState(mergedCfg, projName);
+    } else {
+      // Clean start from zero ("bắt đầu bằng số 0") for new / unconfigured project!
+      applyConfigToState(DEFAULT_PROJECT_RUNTIME_CONFIG, projName);
     }
 
     setTimeout(() => {
       isInitialLoadingRef.current = false;
-    }, 250);
+    }, 300);
   };
 
   useEffect(() => {
@@ -1023,9 +865,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   useEffect(() => {
     if (isInitialLoadingRef.current) return;
     if (!currentProject) return;
+    const projectKey = currentProject.folderPath || currentProject.info?.id || currentProject.info?.name;
+    if (!projectKey || loadedProjectKeyRef.current !== projectKey) return;
 
     const timer = setTimeout(() => {
-      saveConfigForCurrentProject();
+      if (loadedProjectKeyRef.current === projectKey && !isInitialLoadingRef.current) {
+        saveConfigForCurrentProject();
+      }
     }, 400);
 
     return () => clearTimeout(timer);
@@ -1104,6 +950,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // Step navigation
+  const goToStep = (targetStep: number) => {
+    if (step === 2 || targetStep > step) {
+      saveConfigForCurrentProject();
+    }
+    setStep(targetStep);
+  };
+
+  const handleModalClose = () => {
+    saveConfigForCurrentProject();
+    onClose();
+  };
+
   const handleContinue = () => {
     if (step === 1) {
       setStep(2);
@@ -1120,6 +978,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   const handleBack = () => {
     if (step > 1) {
+      if (step === 2) {
+        saveConfigForCurrentProject();
+      }
       setStep((prev) => prev - 1);
     }
   };
@@ -5155,9 +5016,6 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   const updateSelectedProfiles = (newIds: string[]) => {
     setSelectedProfileIds(newIds);
-    try {
-      localStorage.setItem('sv_selected_profile_ids', JSON.stringify(newIds));
-    } catch {}
     saveConfigForCurrentProject({ selectedProfileIds: newIds });
   };
 
@@ -5243,7 +5101,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
           <div className="flex items-center space-x-1">
             <button
-              onClick={onClose}
+              onClick={handleModalClose}
               className="p-1 rounded text-[#64748b] hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
             >
               <X className="w-4 h-4" />
@@ -5353,7 +5211,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               <div className="flex items-center justify-between max-w-2xl mx-auto py-1 text-xs select-none">
                 {/* Step 1 */}
                 <div
-                  onClick={() => setStep(1)}
+                  onClick={() => goToStep(1)}
                   className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
                   title="Step 1: Select Application"
                 >
@@ -5375,7 +5233,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
                 {/* Step 2 */}
                 <div
-                  onClick={() => setStep(2)}
+                  onClick={() => goToStep(2)}
                   className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
                   title="Step 2: Configure Settings"
                 >
@@ -5397,7 +5255,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
                 {/* Step 3 */}
                 <div
-                  onClick={() => setStep(3)}
+                  onClick={() => goToStep(3)}
                   className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
                   title="Step 3: Select Profiles"
                 >
@@ -5419,7 +5277,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
                 {/* Step 4 */}
                 <div
-                  onClick={() => setStep(4)}
+                  onClick={() => goToStep(4)}
                   className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
                   title="Step 4: Running Automation"
                 >
@@ -7247,7 +7105,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </button>
                 ) : (
                   <button
-                    onClick={onClose}
+                    onClick={handleModalClose}
                     className="px-5 py-1.5 rounded-lg bg-[#1677ff] hover:bg-blue-600 text-white font-semibold cursor-pointer shadow-xs transition-colors"
                   >
                     Close
