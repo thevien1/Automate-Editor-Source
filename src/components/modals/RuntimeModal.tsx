@@ -546,6 +546,71 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [selectedEngine, setSelectedEngine] = useState<string>('Selenium enhanced engine');
   const [selectedProvider, setSelectedProvider] = useState<string>('SV Browser');
 
+  // Helper to sort profiles by sortOrder
+  const sortProfilesList = (list: GpmProfile[], order: string, selIds: string[] = selectedProfileIds) => {
+    return [...list].sort((a, b) => {
+      if (order === 'asc') {
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'desc') {
+        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'id_asc') {
+        const numA = parseInt(String(a.id), 10);
+        const numB = parseInt(String(b.id), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
+      }
+      if (order === 'id_desc') {
+        const numA = parseInt(String(a.id), 10);
+        const numB = parseInt(String(b.id), 10);
+        if (!isNaN(numA) && !isNaN(numB)) return numB - numA;
+        return String(b.id).localeCompare(String(a.id), undefined, { numeric: true });
+      }
+      if (order === 'group_asc') {
+        const grpA = a?.group_name || a?.group_id || '';
+        const grpB = b?.group_name || b?.group_id || '';
+        const cmp = grpA.localeCompare(grpB, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'group_desc') {
+        const grpA = a?.group_name || a?.group_id || '';
+        const grpB = b?.group_name || b?.group_id || '';
+        const cmp = grpB.localeCompare(grpA, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'core_asc') {
+        const coreA = a?.browser?.name || '';
+        const coreB = b?.browser?.name || '';
+        const cmp = coreA.localeCompare(coreB, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'core_desc') {
+        const coreA = a?.browser?.name || '';
+        const coreB = b?.browser?.name || '';
+        const cmp = coreB.localeCompare(coreA, undefined, { numeric: true, sensitivity: 'base' });
+        if (cmp !== 0) return cmp;
+        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'selected_first') {
+        const selA = selIds.includes(String(a.id)) ? 0 : 1;
+        const selB = selIds.includes(String(b.id)) ? 0 : 1;
+        if (selA !== selB) return selA - selB;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      if (order === 'unselected_first') {
+        const selA = selIds.includes(String(a.id)) ? 1 : 0;
+        const selB = selIds.includes(String(b.id)) ? 1 : 0;
+        if (selA !== selB) return selA - selB;
+        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+      return 0;
+    });
+  };
+
   // Fetch profiles from GPMLogin API (http://localhost:8725/api/v1/profiles)
   const fetchProfiles = async () => {
     setIsLoadingProfiles(true);
@@ -1120,7 +1185,25 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     };
 
     let initial: ThreadState[] = [];
-    const selected = profiles.filter((p) => selectedProfileIds.includes(p.id));
+
+    // Order selected profiles strictly according to active sort order / user selection:
+    const selectedSet = new Set(selectedProfileIds.map((id) => String(id)));
+    const allSelected = (profiles || []).filter((p) => selectedSet.has(String(p.id)));
+
+    let selected: GpmProfile[] = [];
+    if (sortOrder !== 'default') {
+      selected = sortProfilesList(allSelected, sortOrder, selectedProfileIds);
+    } else {
+      // In default sort order, respect the exact order of selectedProfileIds (preserving user click / selection order)
+      const profileMap = new Map<string, GpmProfile>();
+      (profiles || []).forEach((p) => profileMap.set(String(p.id), p));
+      selected = selectedProfileIds
+        .map((id) => profileMap.get(String(id)))
+        .filter((p): p is GpmProfile => Boolean(p));
+      if (selected.length === 0) {
+        selected = allSelected;
+      }
+    }
 
     if (selected.length > 0) {
       initial = selected.map((p, idx) => ({
@@ -5040,8 +5123,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     ),
   ];
 
-  const filteredProfiles = (profiles || [])
-    .filter((p) => {
+  const filteredProfiles = sortProfilesList(
+    (profiles || []).filter((p) => {
       if (!p) return false;
       if (selectedGroup !== 'All') {
         const grp = p.group_name || p.group_id || 'Default group';
@@ -5055,54 +5138,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         if (!matchName && !matchGroup && !matchCore) return false;
       }
       return true;
-    })
-    .sort((a, b) => {
-      if (sortOrder === 'asc') {
-        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      if (sortOrder === 'desc') {
-        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      if (sortOrder === 'id_asc') {
-        const numA = parseInt(String(a.id), 10);
-        const numB = parseInt(String(b.id), 10);
-        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-        return String(a.id).localeCompare(String(b.id), undefined, { numeric: true });
-      }
-      if (sortOrder === 'id_desc') {
-        const numA = parseInt(String(a.id), 10);
-        const numB = parseInt(String(b.id), 10);
-        if (!isNaN(numA) && !isNaN(numB)) return numB - numA;
-        return String(b.id).localeCompare(String(a.id), undefined, { numeric: true });
-      }
-      if (sortOrder === 'group_asc') {
-        const grpA = a?.group_name || a?.group_id || '';
-        const grpB = b?.group_name || b?.group_id || '';
-        const cmp = grpA.localeCompare(grpB, undefined, { numeric: true, sensitivity: 'base' });
-        if (cmp !== 0) return cmp;
-        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      if (sortOrder === 'group_desc') {
-        const grpA = a?.group_name || a?.group_id || '';
-        const grpB = b?.group_name || b?.group_id || '';
-        const cmp = grpB.localeCompare(grpA, undefined, { numeric: true, sensitivity: 'base' });
-        if (cmp !== 0) return cmp;
-        return (b?.name || '').localeCompare(a?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      if (sortOrder === 'selected_first') {
-        const selA = selectedProfileIds.includes(String(a.id)) ? 0 : 1;
-        const selB = selectedProfileIds.includes(String(b.id)) ? 0 : 1;
-        if (selA !== selB) return selA - selB;
-        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      if (sortOrder === 'unselected_first') {
-        const selA = selectedProfileIds.includes(String(a.id)) ? 1 : 0;
-        const selB = selectedProfileIds.includes(String(b.id)) ? 1 : 0;
-        if (selA !== selB) return selA - selB;
-        return (a?.name || '').localeCompare(b?.name || '', undefined, { numeric: true, sensitivity: 'base' });
-      }
-      return 0;
-    });
+    }),
+    sortOrder
+  );
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredProfiles.length / profilesPerPage));
@@ -6534,6 +6572,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                         <option value="default">Mặc định (Default Order)</option>
                         <option value="asc">Tên (A → Z)</option>
                         <option value="desc">Tên (Z → A)</option>
+                        <option value="core_asc">Core (A → Z)</option>
+                        <option value="core_desc">Core (Z → A)</option>
                         <option value="id_desc">Mới nhất trước (Newest First)</option>
                         <option value="id_asc">Cũ nhất trước (Oldest First)</option>
                         <option value="group_asc">Nhóm (A → Z)</option>
@@ -6640,8 +6680,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                         {sortOrder === 'asc' && <span className="text-[#1677ff] font-bold">↑</span>}
                         {sortOrder === 'desc' && <span className="text-[#1677ff] font-bold">↓</span>}
                       </div>
-                      <div className="col-span-2 text-center font-medium text-[#475569] dark:text-[#cbd5e1]">
-                        Core
+                      <div
+                        onClick={() => setSortOrder(sortOrder === 'core_asc' ? 'core_desc' : 'core_asc')}
+                        className="col-span-2 text-center font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center justify-center space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
+                        title="Click để đổi thứ tự sắp xếp theo Core trình duyệt"
+                      >
+                        <span>Core</span>
+                        {sortOrder === 'core_asc' && <span className="text-[#1677ff] font-bold">↑</span>}
+                        {sortOrder === 'core_desc' && <span className="text-[#1677ff] font-bold">↓</span>}
                       </div>
                       <div
                         onClick={() => setSortOrder(sortOrder === 'group_asc' ? 'group_desc' : 'group_asc')}
