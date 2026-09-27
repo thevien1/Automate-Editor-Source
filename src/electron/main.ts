@@ -1907,6 +1907,12 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           else if (ss === 'none' || ss === 'no_restriction') {
             cookie.sameSite = 'None';
             cookie.secure = true;
+          } else if (ss === 'unspecified') {
+            if (cookie.secure) {
+              cookie.sameSite = 'None';
+            } else {
+              cookie.sameSite = 'Lax';
+            }
           }
         }
 
@@ -1997,13 +2003,17 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         if (!c || !c.name) return null;
         const domain = c.domain ? String(c.domain) : '';
         const rawSameSite = c.sameSite ? String(c.sameSite).toLowerCase() : '';
-        let sameSite: 'no_restriction' | 'lax' | 'strict' | 'unspecified' = 'unspecified';
-        if (rawSameSite === 'none' || rawSameSite === 'no_restriction') {
-          sameSite = 'no_restriction';
-        } else if (rawSameSite === 'lax') {
-          sameSite = 'lax';
-        } else if (rawSameSite === 'strict') {
+        const isSecure = Boolean(c.secure || c.name.startsWith('__Secure-') || c.name.startsWith('__Host-'));
+
+        // Standard Chrome extension sameSite enum: 'no_restriction', 'lax', 'strict'
+        // 'unspecified' must NOT be used because chrome.cookies.set throws TypeError on it
+        let sameSite: 'no_restriction' | 'lax' | 'strict' = 'lax';
+        if (rawSameSite === 'strict') {
           sameSite = 'strict';
+        } else if (rawSameSite === 'none' || rawSameSite === 'no_restriction' || isSecure) {
+          sameSite = 'no_restriction';
+        } else {
+          sameSite = 'lax';
         }
 
         const exp = typeof c.expires === 'number' && c.expires > 0
@@ -2017,14 +2027,25 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           name: String(c.name),
           path: c.path || '/',
           sameSite,
-          secure: Boolean(c.secure),
+          secure: isSecure,
           session: Boolean(c.session || !exp),
-          storeId: c.storeId !== undefined ? c.storeId : null,
           value: String(c.value !== undefined ? c.value : ''),
         };
 
+        if (c.storeId) {
+          cookieItem.storeId = String(c.storeId);
+        }
+
         if (exp !== undefined) {
           cookieItem.expirationDate = exp;
+        }
+
+        // For __Host- cookies, conform strictly to RFC 6265 (must NOT have domain, must be hostOnly)
+        if (cookieItem.name.startsWith('__Host-')) {
+          delete cookieItem.domain;
+          cookieItem.hostOnly = true;
+          cookieItem.path = '/';
+          cookieItem.secure = true;
         }
 
         return cookieItem;
