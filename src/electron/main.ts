@@ -1867,15 +1867,24 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           cookie.secure = true;
         }
 
-        const url = c.url || c.Url;
-        if (url) {
-          cookie.url = String(url);
-        } else if (cookie.domain) {
-          const cleanHost = cookie.domain.replace(/^\./, '');
-          const scheme = cookie.secure ? 'https://' : 'http://';
-          cookie.url = `${scheme}${cleanHost}${cookie.path || '/'}`;
-        } else if (fallbackUrl) {
-          cookie.url = fallbackUrl;
+        // RFC 6265: __Host- cookies MUST NOT have a domain attribute, MUST be secure, MUST have path '/'
+        if (cookie.name.startsWith('__Host-')) {
+          delete cookie.domain;
+          cookie.path = '/';
+          cookie.secure = true;
+          const host = (c.domain || c.Domain || '').replace(/^\./, '');
+          if (host) {
+            cookie.url = `https://${host}/`;
+          } else if (fallbackUrl) {
+            cookie.url = fallbackUrl;
+          }
+        } else {
+          const url = c.url || c.Url;
+          if (url) {
+            cookie.url = String(url);
+          } else if (!cookie.domain && fallbackUrl) {
+            cookie.url = fallbackUrl;
+          }
         }
 
         if (cookie.secure && cookie.url && cookie.url.startsWith('http://')) {
@@ -1915,6 +1924,17 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         cookieMap.set(key, c);
       }
       const uniqueCookies = Array.from(cookieMap.values());
+
+      // If YouTube LOGIN_INFO is in the cookies, sync to sessionStorage and inject hook so YouTube doesn't wipe auth
+      const ytLoginInfo = uniqueCookies.find((c: any) => c.name === 'LOGIN_INFO');
+      if (ytLoginInfo && ytLoginInfo.value) {
+        await sendWs(page.webSocketDebuggerUrl, 'Page.addScriptToEvaluateOnNewDocument', {
+          source: `try { sessionStorage.setItem('session_logininfo', ${JSON.stringify(ytLoginInfo.value)}); } catch (e) {}`
+        }).catch(() => {});
+        await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+          expression: `try { sessionStorage.setItem('session_logininfo', ${JSON.stringify(ytLoginInfo.value)}); } catch (e) {}`
+        }).catch(() => {});
+      }
 
       // 1. Try batch Network.setCookies
       const res = await sendWs(page.webSocketDebuggerUrl, 'Network.setCookies', { cookies: uniqueCookies }).catch(() => null);
