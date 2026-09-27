@@ -4020,6 +4020,20 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } catch (e) {}
       }
 
+      // Inject standard browser system variables into test vars
+      vars['$port'] = port || '43076';
+      vars['port'] = port || '43076';
+      vars['$threadId'] = '1';
+      vars['threadId'] = '1';
+      vars['$profileId'] = vars['$profileId'] || 'test-profile-id';
+      vars['profileId'] = vars['profileId'] || 'test-profile-id';
+      vars['$profileName'] = vars['$profileName'] || currentProject?.info?.name || 'Test Profile';
+      vars['profileName'] = vars['profileName'] || currentProject?.info?.name || 'Test Profile';
+      vars['$profileProxy'] = vars['$profileProxy'] || '';
+      vars['profileProxy'] = vars['profileProxy'] || '';
+      vars['$proxy'] = vars['$proxy'] || vars['$profileProxy'] || '';
+      vars['proxy'] = vars['proxy'] || vars['profileProxy'] || '';
+
       const runResult = await executeNodes(nodesToRun, vars, addLog);
 
       if (runResult === 'STOP' || stopSignalRef.current) {

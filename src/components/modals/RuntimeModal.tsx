@@ -62,6 +62,8 @@ export interface GpmProfile {
   group_name?: string;
   storage_path?: string;
   raw_proxy?: string;
+  proxy?: string;
+  profileProxy?: string;
   browser?: {
     name: string;
     version: string;
@@ -84,6 +86,7 @@ interface ThreadState {
   id: number;
   profileId?: string;
   profileName?: string;
+  profileProxy?: string;
   port: number;
   name: string;
   status: 'idle' | 'running' | 'completed' | 'error';
@@ -584,10 +587,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         return list
           .map((item: any) => {
             const rawId = item.id ?? item.profile_id ?? item.uuid ?? item.raw_id ?? '';
+            const rawProxy = String(item.raw_proxy ?? item.proxy ?? item.proxy_url ?? item.profileProxy ?? '').trim();
             return {
               ...item,
               id: String(rawId),
               name: String(item.name ?? item.profile_name ?? `Profile ${rawId}`),
+              raw_proxy: rawProxy,
+              proxy: rawProxy,
+              profileProxy: rawProxy,
               group_id: item.group_id ? String(item.group_id) : undefined,
               group_name: String(item.group_name ?? item.group ?? item.group_id ?? 'Default group'),
               browser: item.browser ?? {
@@ -1120,6 +1127,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         id: idx + 1,
         profileId: p.id,
         profileName: p.name,
+        profileProxy: p.raw_proxy || (p as any).proxy || (p as any).profileProxy || '',
         port: 0,
         name: p.name,
         status: 'idle',
@@ -1131,6 +1139,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       const baseThreads = generateInitialThreads(numThreads);
       initial = baseThreads.map((t, idx) => ({
         ...t,
+        profileProxy: workerProxies[t.id] || '',
         assignedTxtEntry: buildTxtEntry(idx),
       }));
     }
@@ -1226,7 +1235,44 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const runWorkerThread = async (t: ThreadState, workerIdx?: number) => {
     const threadId = t.id;
     setThreadStatus(threadId, 'running');
-    const proxy = workerProxies[threadId]?.trim();
+
+    // Resolve profile proxy from workerProxies, t.profileProxy, or profile in memory
+    const prof = profiles.find((p) => p.id === t.profileId);
+    let resolvedProfileProxy = (
+      workerProxies[threadId]?.trim() ||
+      t.profileProxy ||
+      prof?.raw_proxy ||
+      (prof as any)?.proxy ||
+      (prof as any)?.profileProxy ||
+      ''
+    ).trim();
+
+    // If still empty and we have profileId, query single profile info via API
+    if (!resolvedProfileProxy && t.profileId) {
+      try {
+        const profileInfoUrls = [
+          `http://127.0.0.1:8725/api/v1/profiles/${t.profileId}`,
+          `http://localhost:8725/api/v1/profiles/${t.profileId}`,
+          `http://127.0.0.1:8725/api/v3/profiles/${t.profileId}`,
+          `http://localhost:8725/api/v3/profiles/${t.profileId}`,
+        ];
+        for (const pUrl of profileInfoUrls) {
+          try {
+            const pRes = await fetch(pUrl);
+            if (pRes.ok) {
+              const pData = await pRes.json();
+              const pProxy = pData?.data?.raw_proxy || pData?.data?.proxy || pData?.raw_proxy || pData?.proxy || '';
+              if (pProxy) {
+                resolvedProfileProxy = String(pProxy).trim();
+                break;
+              }
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+
+    const proxy = resolvedProfileProxy;
 
     // 0. Check Excel / TXT input condition before opening profile or executing
     let targetExcelRow = -1; // 1-indexed row number in Excel
@@ -1525,6 +1571,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           }
         }
 
+        if (launchRes?.data?.raw_proxy || launchRes?.data?.proxy) {
+          const apiProxy = String(launchRes.data.raw_proxy || launchRes.data.proxy).trim();
+          if (apiProxy) resolvedProfileProxy = apiProxy;
+        }
+
         const addr =
           launchRes?.data?.remote_debugging_address ||
           launchRes?.remote_debugging_address ||
@@ -1634,8 +1685,73 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       $port: String(activePort),
       $profileId: t.profileId || '',
       $profileName: t.profileName || '',
+      $profileProxy: resolvedProfileProxy,
+      $proxy: resolvedProfileProxy,
       threadId: String(threadId),
+      port: String(activePort),
+      profileId: t.profileId || '',
+      profileName: t.profileName || '',
+      profileProxy: resolvedProfileProxy,
+      proxy: resolvedProfileProxy,
     };
+
+    if (resolvedProfileProxy) {
+      let pHost = '';
+      let pPort = '';
+      let pUser = '';
+      let pPass = '';
+
+      if (resolvedProfileProxy.includes('://')) {
+        try {
+          const u = new URL(resolvedProfileProxy);
+          pHost = u.hostname || '';
+          pPort = u.port || '';
+          pUser = decodeURIComponent(u.username || '');
+          pPass = decodeURIComponent(u.password || '');
+        } catch {}
+      } else {
+        const parts = resolvedProfileProxy.split(':');
+        if (parts.length >= 2) {
+          pHost = parts[0] || '';
+          pPort = parts[1] || '';
+        }
+        if (parts.length >= 4) {
+          pUser = parts[2] || '';
+          pPass = parts[3] || '';
+        }
+      }
+
+      if (pHost) {
+        threadVars['$profileProxyHost'] = pHost;
+        threadVars['profileProxyHost'] = pHost;
+        threadVars['$proxyHost'] = pHost;
+        threadVars['proxyHost'] = pHost;
+      }
+      if (pPort) {
+        threadVars['$profileProxyPort'] = pPort;
+        threadVars['profileProxyPort'] = pPort;
+        threadVars['$proxyPort'] = pPort;
+        threadVars['proxyPort'] = pPort;
+      }
+      if (pUser) {
+        threadVars['$profileProxyUser'] = pUser;
+        threadVars['profileProxyUser'] = pUser;
+        threadVars['$proxyUser'] = pUser;
+        threadVars['proxyUser'] = pUser;
+      }
+      if (pPass) {
+        threadVars['$profileProxyPass'] = pPass;
+        threadVars['profileProxyPass'] = pPass;
+        threadVars['$proxyPass'] = pPass;
+        threadVars['proxyPass'] = pPass;
+      }
+    }
+
+    updateThreadLog(
+      threadId,
+      'info',
+      `🚀 [Khởi tạo biến] $profileName = "${t.profileName || ''}", $profileProxy = "${resolvedProfileProxy || '(Không dùng proxy)'}"`
+    );
 
     if (matchedRowValues && matchedRowValues.length > 0) {
       matchedRowValues.forEach((val, idx) => {

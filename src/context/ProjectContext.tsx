@@ -614,7 +614,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSelectedBlockKey('main_logic');
   };
 
-  const openProjectByPath = async (path: string, name?: string) => {
+  const openProjectByPath = async (rawPath: string, name?: string) => {
+    // If a file inside the project directory was picked, extract directory
+    const path = (rawPath || '').trim().replace(/[/\\](info\.gpmsln|src\.gscript|runtime\.json|test\.gscript)$/i, '');
     let proj: ProjectData | null = null;
 
     if ((window as any).electronAPI?.readProjectFromDisk) {
@@ -645,6 +647,20 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         }
       } catch {}
     }
+
+    // Update Recents
+    setRecentProjects((prev) => {
+      const existing = prev.filter((p) => p.path !== path);
+      const projDisplayName = proj?.info?.name || name || path.split('\\').pop() || 'Project';
+      const updated = [
+        { id: generateGuid(), name: projDisplayName, path, lastOpened: new Date().toISOString() },
+        ...existing,
+      ];
+      try {
+        localStorage.setItem('gpm_recent_projects', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
 
     setCurrentProject(proj);
     setScreen('editor');
@@ -1565,6 +1581,19 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
         e.preventDefault();
         saveProject();
+        return;
+      }
+
+      // Ctrl+O: Open Project Directly via folder picker
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+        e.preventDefault();
+        if ((window as any).electronAPI?.openFolderDialog) {
+          (window as any).electronAPI.openFolderDialog().then((selected: string | null) => {
+            if (selected) {
+              openProjectByPath(selected);
+            }
+          }).catch(() => {});
+        }
         return;
       }
 
