@@ -3528,6 +3528,9 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             if (!foundCoords) {
               addLog('error', `✕ Không tìm thấy XPath sau 15s: [${resolvedXPath}]`);
             } else {
+              // Di chuyển chuột ảo đến đúng ô nhập liệu
+              await evaluateInChrome(getVirtualMouseClickCoordsScript(foundCoords.x, foundCoords.y), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined).catch(() => {});
+
               // Click CDP coordinates
               if ((window as any).electronAPI?.cdpAction) {
                 await (window as any).electronAPI.cdpAction({
