@@ -2636,7 +2636,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // Mouse click (type 48) with Virtual Mouse!
     else if (actType === 48 || actName === 'mouse click') {
       const clickType = getRawVal('CLICK_TYPE', 'Click by Xpath');
-      let xpath = resolveStr(getRawVal('XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
+      let xpath = resolveStr(act.element_xpath || getRawVal('XPATH', '')).trim();
       const pos = resolveStr(getRawVal('POS', ''));
 
       const isCoords = clickType === 'CLICK_POS' || clickType === 'CLICK_COORDINATES' || clickType === 'Click by coordinates' || (!xpath && pos && clickType !== 'CLICK_XPATH' && clickType !== 'Click by Xpath');
@@ -3728,7 +3728,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       const resolvedKey = resolveStr(rawKey);
       const rawType = getRawVal('TYPE', 'Text');
       const delayPress = getRawVal('DELAY_PRESS', getRawVal('DELAY_EACH_CHAR', '-1'));
-      const xpath = resolveStr(getRawVal('XPATH', act.element_xpath || ''));
+      let xpath = resolveStr(act.element_xpath || getRawVal('XPATH', '')).trim();
+      let isInherited = false;
+      if (!xpath && vars.$lastFoundXPath) {
+        xpath = vars.$lastFoundXPath;
+        isInherited = true;
+      }
 
       // Smart detection: If user chose Single key / Combo key but entered text/variable, auto-treat as Text
       const isKnownSingleOrCombo = [

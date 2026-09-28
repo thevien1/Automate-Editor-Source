@@ -2991,7 +2991,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
 
           const clickType = getRawInputValue(act.raw_input, 'CLICK_TYPE', 'CLICK_XPATH');
-          const rawXPath = (getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
 
           let resolvedXPath = resolveVars(rawXPath, vars).trim();
@@ -3092,7 +3092,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           }
           await sleep(40);
         } else if (actType === 49 || actName === 'mouse try to click') {
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const clickType = getRawInputValue(act.raw_input, 'CLICK_TYPE', 'Click by Xpath');
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
           const numTries = parseInt(resolveVars(getRawInputValue(act.raw_input, 'NUMBER_OF_TRIES', '5'), vars), 10) || 5;
@@ -3223,7 +3223,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           }
           await sleep(40);
         } else if (actType === 111 || actName === 'select dropdown') {
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const rawSelectText = getRawInputValue(act.raw_input, 'SELECT_TEXT', '');
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedText = resolveVars(rawSelectText, vars);
@@ -3361,7 +3361,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           addLog('success', '✔ Scroll to bottom');
         } else if (actType === 50 || actName === 'mouse move') {
           const moveType = getRawInputValue(act.raw_input, 'MOVE_TYPE', 'Move by Xpath');
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
           const resolvedXPath = resolveVars(rawXPath, vars);
           const resolvedPos = resolveVars(rawPos, vars);
@@ -3395,7 +3395,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             addLog('success', `✔ Mouse move › ${resolvedXPath || 'XPath'}`);
           }
         } else if (actType === 51 || actName === 'mouse press and hold') {
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
           const pressType = getRawInputValue(act.raw_input, 'PRESS_TYPE', (rawPos && !rawXPath) ? 'PRESS_POS' : 'PRESS_XPATH');
           const resolvedXPath = resolveVars(rawXPath, vars);
@@ -3455,7 +3455,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const rawKey = getRawInputValue(act.raw_input, 'KEY', '');
           const resolvedKey = resolveVars(rawKey, vars);
           const rawType = getRawInputValue(act.raw_input, 'TYPE', 'Text');
-          const rawXPath = (getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           let resolvedXPath = resolveVars(rawXPath, vars).trim();
           let isInheritedXPath = false;
           if (!resolvedXPath && vars.$lastFoundXPath) {
