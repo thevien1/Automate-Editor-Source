@@ -321,7 +321,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
       if (Array.isArray(parsed)) {
         const item = parsed.find((p: any) => p.Key === key);
-        if (item && item.Value !== undefined) return item.Value;
+        if (item && item.Value !== undefined && item.Value !== null) {
+          const valStr = String(item.Value);
+          if (valStr.trim() === '' && fallback) return fallback;
+          return valStr;
+        }
       }
     } catch (e) {}
     return fallback;
@@ -2821,6 +2825,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             if (stopSignalRef.current) break;
 
             if (found) {
+              vars.$lastFoundXPath = resolvedXPath;
+              vars.$lastWaitXPath = resolvedXPath;
               addLog('success', `✔ Wait element › Found: ${resolvedXPath}`);
             } else {
               if (contOnError) {
@@ -2985,14 +2991,20 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
 
           const clickType = getRawInputValue(act.raw_input, 'CLICK_TYPE', 'CLICK_XPATH');
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
+          const rawXPath = (getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
           const rawPos = getRawInputValue(act.raw_input, 'POS', '');
 
-          const resolvedXPath = resolveVars(rawXPath, vars);
+          let resolvedXPath = resolveVars(rawXPath, vars).trim();
           const resolvedPos = resolveVars(rawPos, vars);
 
           const isCoords = clickType === 'CLICK_POS' || clickType === 'CLICK_COORDINATES' || clickType === 'Click by coordinates' || (!resolvedXPath && resolvedPos && clickType !== 'CLICK_XPATH' && clickType !== 'Click by Xpath');
           const isCurrentPos = clickType === 'CLICK_CURRENT_POS' || clickType === 'Click by current position' || clickType === 'Click current position';
+
+          let isInheritedXPath = false;
+          if (!resolvedXPath && vars.$lastFoundXPath && !isCoords && !isCurrentPos) {
+            resolvedXPath = vars.$lastFoundXPath;
+            isInheritedXPath = true;
+          }
 
           if (isCoords) {
             const [xStr, yStr] = resolvedPos.split(',');
@@ -3027,7 +3039,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 addLog('info', `⚠ Mouse click › XPath is empty (Skipped)`);
               }
             } else {
-              addLog('info', `▶ Mouse click › ${resolvedXPath}`);
+              addLog('info', `▶ Mouse click › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
               let evalRes = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath, vars.$currentFrameXPath), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
               if (!evalRes.success || !evalRes.value?.success) {
                 // Fallback to direct DOM click if virtual mouse script encounters any page-specific restriction
@@ -3443,8 +3455,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const rawKey = getRawInputValue(act.raw_input, 'KEY', '');
           const resolvedKey = resolveVars(rawKey, vars);
           const rawType = getRawInputValue(act.raw_input, 'TYPE', 'Text');
-          const rawXPath = getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '');
-          const resolvedXPath = resolveVars(rawXPath, vars);
+          const rawXPath = (getRawInputValue(act.raw_input, 'XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
+          let resolvedXPath = resolveVars(rawXPath, vars).trim();
+          let isInheritedXPath = false;
+          if (!resolvedXPath && vars.$lastFoundXPath) {
+            resolvedXPath = vars.$lastFoundXPath;
+            isInheritedXPath = true;
+          }
 
           const isKnownSingleOrCombo = [
             'enter', 'return', 'backspace', 'tab', 'escape', 'space', 'delete',
@@ -3459,7 +3476,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
           // 1. Nếu có XPath: Tự động tìm kiếm, cuộn tới và click focus bằng CDP
           if (resolvedXPath) {
-            addLog('info', `🔍 Tự động tìm & kích hoạt ô nhập › ${resolvedXPath}`);
+            addLog('info', `🔍 Tự động tìm & kích hoạt ô nhập › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
             let foundCoords: { x: number; y: number } | null = null;
             const startFind = Date.now();
 

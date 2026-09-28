@@ -60,8 +60,14 @@ export const PropertyPanel: React.FC = () => {
 
   const rawInputs = parseRawInput(actionNode?.raw_input || null);
 
-  const getRawVal = (key: string, fallback = '') =>
-    rawInputs.find((p) => p.Key === key)?.Value ?? fallback;
+  const getRawVal = (key: string, fallback = '') => {
+    const val = rawInputs.find((p) => p.Key === key)?.Value;
+    if (val !== undefined && val !== null) {
+      if (String(val).trim() === '' && fallback) return fallback;
+      return val;
+    }
+    return fallback;
+  };
 
   const handleRawInputByKey = (key: string, val: string) => {
     if (!actionNode) return;

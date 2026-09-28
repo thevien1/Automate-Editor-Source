@@ -2291,7 +2291,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         const p = typeof act.raw_input === 'string' ? JSON.parse(act.raw_input) : act.raw_input;
         if (Array.isArray(p)) {
           const item = p.find((x: any) => x.Key === key);
-          if (item && item.Value !== undefined) return item.Value;
+          if (item && item.Value !== undefined && item.Value !== null) {
+            const valStr = String(item.Value);
+            if (valStr.trim() === '' && fb) return fb;
+            return valStr;
+          }
         }
       } catch (e) {}
       return fb;
@@ -2620,6 +2624,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           await sleep(350);
         }
         if (found) {
+          vars.$lastFoundXPath = xpath;
+          vars.$lastWaitXPath = xpath;
           updateThreadLog(threadId, 'success', `✔ Found element › ${xpath}`);
         } else {
           const failRes = await handleActionFailure('Wait element', `Không tìm thấy phần tử trong ${timeoutSec}s [${xpath}]`);
@@ -2630,11 +2636,17 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // Mouse click (type 48) with Virtual Mouse!
     else if (actType === 48 || actName === 'mouse click') {
       const clickType = getRawVal('CLICK_TYPE', 'Click by Xpath');
-      const xpath = resolveStr(getRawVal('XPATH', act.element_xpath || ''));
+      let xpath = resolveStr(getRawVal('XPATH', act.element_xpath || '') || act.element_xpath || '').trim();
       const pos = resolveStr(getRawVal('POS', ''));
 
       const isCoords = clickType === 'CLICK_POS' || clickType === 'CLICK_COORDINATES' || clickType === 'Click by coordinates' || (!xpath && pos && clickType !== 'CLICK_XPATH' && clickType !== 'Click by Xpath');
       const isCurrentPos = clickType === 'CLICK_CURRENT_POS' || clickType === 'Click by current position' || clickType === 'Click current position';
+
+      let isInherited = false;
+      if (!xpath && vars.$lastFoundXPath && !isCoords && !isCurrentPos) {
+        xpath = vars.$lastFoundXPath;
+        isInherited = true;
+      }
 
       if (isCoords) {
         const [xStr, yStr] = pos.split(',');
@@ -2691,7 +2703,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         updateThreadLog(
           threadId,
           'info',
-          `▶ ${useVirtualMouse ? 'Virtual Mouse click' : 'Mouse click'} › XPath: ${xpath || '(empty)'}`,
+          `▶ ${useVirtualMouse ? 'Virtual Mouse click' : 'Mouse click'} › XPath: ${xpath || '(empty)'}${isInherited ? ' (Tự động lấy từ Wait element)' : ''}`,
           `Clicking: ${xpath}`
         );
 
