@@ -28,8 +28,9 @@
   },
   "wait popup": {
     "color": "#1677ff",
-    "iconType": "bootstrap",
-    "iconValue": "file-earmark-excel"
+    "iconType": "svg",
+    "iconValue": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" height=\"100px\" fill=\"#1677ff\"><title>arrange-bring-forward</title><path d=\"M2,2H16V16H2V2M22,8V22H8V18H10V20H20V10H18V8H22Z\" /></svg>",
+    "scale": 1
   },
   "call workflow": {
     "color": "#1677ff",
@@ -71,6 +72,12 @@
     "color": "#1677ff",
     "iconType": "svg",
     "iconValue": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" height=\"100px\" fill=\"#1677ff\"><title>close</title><path d=\"M19,6.41L17.59,5L12,10.59L6.41,5L5,6.41L10.59,12L5,17.59L6.41,19L12,13.41L17.59,19L19,17.59L13.41,12L19,6.41Z\" /></svg>",
+    "scale": 1
+  },
+  "has popup": {
+    "color": "#1677ff",
+    "iconType": "svg",
+    "iconValue": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" height=\"100px\" fill=\"#1677ff\"><title>arrange-bring-to-front</title><path d=\"M2,2H11V6H9V4H4V9H6V11H2V2M22,13V22H13V18H15V20H20V15H18V13H22M8,8H16V16H8V8Z\" /></svg>",
     "scale": 1
   }
 }

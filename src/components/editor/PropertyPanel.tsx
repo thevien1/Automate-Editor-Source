@@ -148,17 +148,6 @@ export const PropertyPanel: React.FC = () => {
     if (name === 'upload file' || type === 55) return <FileUploadProps {...commonProps} />;
     if (name.includes('select dropdown') || type === 111) return <SelectDropdownProps {...commonProps} />;
 
-    // Variable Actions
-    if (
-      name === 'set variable' ||
-      name.includes('increase') ||
-      name.includes('decrease') ||
-      name.includes('count') ||
-      [1, 2, 3, 4].includes(type as number)
-    ) {
-      return <VariableProps {...commonProps} />;
-    }
-
     // Flow Actions
     if (
       name.includes('exit loop') ||
@@ -201,9 +190,21 @@ export const PropertyPanel: React.FC = () => {
       name === 'get element attribute' ||
       name === 'get element text' ||
       name === 'count element' ||
+      name.includes('element') ||
       [44, 45, 46, 47].includes(type as number)
     ) {
       return <ElementProps {...commonProps} />;
+    }
+
+    // Variable Actions
+    if (
+      name === 'set variable' ||
+      name.includes('increase') ||
+      name.includes('decrease') ||
+      name === 'count' ||
+      [1, 2, 3, 4].includes(type as number)
+    ) {
+      return <VariableProps {...commonProps} />;
     }
 
     // Text Actions
