@@ -159,3 +159,5 @@ export const Window = createIcon('window');
 export const WindowStack = createIcon('window-stack');
 export const Layout = createIcon('layout-split');
 export const Cookie = createIcon('cookie');
+export const Tag = createIcon('tag');
+export const Tags = createIcon('tags');

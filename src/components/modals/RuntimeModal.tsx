@@ -39,6 +39,8 @@ import {
   Grid,
   Grid3x3,
   Layout,
+  Tag,
+  Tags,
 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 import { WorkflowNode, ActionNode, ProjectRuntimeConfig, EditorFile } from '../../types/gscript';
@@ -53,6 +55,13 @@ import { resolveVariableString } from '../../utils/variableResolver';
 interface RuntimeModalProps {
   isOpen: boolean;
   onClose: () => void;
+}
+
+export interface GpmTag {
+  id: string;
+  name: string;
+  color?: string;
+  createdAt?: number;
 }
 
 export interface GpmProfile {
@@ -71,6 +80,7 @@ export interface GpmProfile {
   os?: string;
   note?: string;
   status?: string;
+  tags?: string[] | any[];
 }
 
 export interface AssignedTxtEntry {
@@ -539,6 +549,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [apiStatus, setApiStatus] = useState<'connected' | 'error' | 'idle'>('idle');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedGroup, setSelectedGroup] = useState<string>('All');
+  const [selectedTag, setSelectedTag] = useState<string>('All');
+  const [availableTags, setAvailableTags] = useState<GpmTag[]>([]);
   const [sortOrder, setSortOrder] = useState<string>('default');
   const [profilesPerPage, setProfilesPerPage] = useState<number>(20);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -653,6 +665,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           .map((item: any) => {
             const rawId = item.id ?? item.profile_id ?? item.uuid ?? item.raw_id ?? '';
             const rawProxy = String(item.raw_proxy ?? item.proxy ?? item.proxy_url ?? item.profileProxy ?? '').trim();
+            const rawTags: string[] = Array.isArray(item.tags)
+              ? item.tags.map((t: any) => (typeof t === 'string' ? t : String(t?.name || t?.id || '')).trim()).filter(Boolean)
+              : (typeof item.tags === 'string' && item.tags.trim()
+                ? item.tags.split(',').map((s: string) => s.trim()).filter(Boolean)
+                : []);
             return {
               ...item,
               id: String(rawId),
@@ -662,6 +679,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               profileProxy: rawProxy,
               group_id: item.group_id ? String(item.group_id) : undefined,
               group_name: String(item.group_name ?? item.group ?? item.group_id ?? 'Default group'),
+              tags: rawTags,
               browser: item.browser ?? {
                 name: String(item.browser_name ?? 'chrome'),
                 version: String(item.browser_version ?? ''),
@@ -704,6 +722,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       if (data && Array.isArray(data)) {
         setProfiles(data);
         setApiStatus('connected');
+        fetchTags().catch(() => {});
       } else {
         setApiStatus('error');
       }
@@ -711,6 +730,91 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       setApiStatus('error');
     } finally {
       setIsLoadingProfiles(false);
+    }
+  };
+
+  // Fetch tags from GPMLogin API (http://127.0.0.1:8725/api/v1/tags)
+  const fetchTags = async () => {
+    try {
+      let tagData: GpmTag[] | null = null;
+      const endpoints = [
+        'http://localhost:8725/api/v1/tags',
+        'http://127.0.0.1:8725/api/v1/tags',
+        'http://localhost:8725/api/v3/tags',
+        'http://127.0.0.1:8725/api/v3/tags',
+        'http://localhost:9495/api/v1/tags',
+      ];
+
+      const extractTags = (payload: any): GpmTag[] | null => {
+        if (!payload) return null;
+        let obj = payload;
+        if (typeof obj === 'string') {
+          try {
+            obj = JSON.parse(obj);
+          } catch {
+            return null;
+          }
+        }
+        let list: any[] | null = null;
+        if (Array.isArray(obj)) list = obj;
+        else if (Array.isArray(obj?.data)) list = obj.data;
+        else if (Array.isArray(obj?.data?.data)) list = obj.data.data;
+        else if (Array.isArray(obj?.tags)) list = obj.tags;
+        else if (Array.isArray(obj?.result)) list = obj.result;
+
+        if (!list) return null;
+
+        return list
+          .map((item: any) => {
+            if (typeof item === 'string') {
+              return { id: item, name: item, color: '#0284c7' };
+            }
+            const rawId = item.id ?? item.tag_id ?? item.uuid ?? item.name ?? '';
+            return {
+              id: String(rawId),
+              name: String(item.name ?? item.tag_name ?? rawId),
+              color: item.color || '#0284c7',
+              createdAt: item.createdAt,
+            };
+          })
+          .filter((t: GpmTag) => Boolean(t.name && t.name.length > 0));
+      };
+
+      for (const ep of endpoints) {
+        try {
+          const res = await fetch(ep);
+          if (res.ok) {
+            const json = await res.json();
+            const list = extractTags(json);
+            if (list && list.length > 0) {
+              tagData = list;
+              break;
+            }
+          }
+        } catch (err) {
+          if ((window as any).electronAPI?.fileAction) {
+            try {
+              const res = await (window as any).electronAPI.fileAction({
+                action: 'httpRequest',
+                payload: { url: ep, method: 'GET' },
+              });
+              if (res && res.data) {
+                const list = extractTags(res.data);
+                if (list && list.length > 0) {
+                  tagData = list;
+                  break;
+                }
+              }
+            } catch {}
+          }
+        }
+      }
+
+      if (tagData && Array.isArray(tagData)) {
+        setAvailableTags(tagData);
+      }
+    } catch (e) {
+      console.warn('fetchTags error:', e);
     }
   };
 
@@ -772,9 +876,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     selectedProvider,
     profilesSortOrder: sortOrder,
     profilesPerPage,
+    selectedGroup,
+    selectedTag,
   });
 
-    const applyConfigToState = (cfg: ProjectRuntimeConfig, projName?: string) => {
+  const applyConfigToState = (cfg: ProjectRuntimeConfig, projName?: string) => {
     // Window & Screen
     setWindowSizeMode(cfg.windowSizeMode ?? 'percent');
     setAutoTileWindows(cfg.autoTileWindows ?? true);
@@ -836,6 +942,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       setProfilesPerPage(cfg.profilesPerPage);
       setCustomPerPageInput(String(cfg.profilesPerPage));
     }
+    if (cfg.selectedGroup) setSelectedGroup(cfg.selectedGroup);
+    if (cfg.selectedTag) setSelectedTag(cfg.selectedTag);
     setSelectedProfileIds(Array.isArray(cfg.selectedProfileIds) ? cfg.selectedProfileIds : []);
   };
 
@@ -925,6 +1033,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   useEffect(() => {
     if (isOpen) {
       fetchProfiles();
+      fetchTags();
       if (!isExecuting) {
         setStep(1);
       }
@@ -5140,6 +5249,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     ),
   ];
 
+  // Map tag name to color
+  const tagColorMap = new Map<string, string>();
+  availableTags.forEach((t) => {
+    if (t?.name) tagColorMap.set(t.name.toLowerCase().trim(), t.color || '#0284c7');
+  });
+
+  const allTagNames = Array.from(
+    new Set([
+      ...availableTags.map((t) => t?.name?.trim()).filter(Boolean),
+      ...(profiles || []).flatMap((p) => (Array.isArray(p.tags) ? p.tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '')?.trim()) : [])).filter(Boolean),
+    ])
+  ).sort((a, b) => (a as string).localeCompare(b as string, undefined, { numeric: true, sensitivity: 'base' }));
+
+  const tagOptions = ['All', ...allTagNames];
+
   const filteredProfiles = sortProfilesList(
     (profiles || []).filter((p) => {
       if (!p) return false;
@@ -5147,12 +5271,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         const grp = p.group_name || p.group_id || 'Default group';
         if (grp !== selectedGroup) return false;
       }
+      if (selectedTag !== 'All') {
+        const pTags: string[] = Array.isArray(p.tags)
+          ? p.tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '')?.trim().toLowerCase())
+          : [];
+        if (!pTags.includes(selectedTag.trim().toLowerCase())) return false;
+      }
       if (searchQuery.trim()) {
         const query = searchQuery.trim().toLowerCase();
         const matchName = (p.name || '').toLowerCase().includes(query);
         const matchGroup = (p.group_name || p.group_id || '').toLowerCase().includes(query);
         const matchCore = (p.browser?.name || '').toLowerCase().includes(query);
-        if (!matchName && !matchGroup && !matchCore) return false;
+        const matchTag = (Array.isArray(p.tags) ? p.tags : []).some((t: any) =>
+          (typeof t === 'string' ? t : t?.name || '').toLowerCase().includes(query)
+        );
+        if (!matchName && !matchGroup && !matchCore && !matchTag) return false;
       }
       return true;
     }),
@@ -6549,17 +6682,41 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </div>
 
                   {/* Filter Toolbar */}
-                  <div className="flex items-center space-x-2">
+                  <div className="flex flex-wrap items-center gap-2">
                     {/* Group Filter */}
                     <div className="relative min-w-[130px]">
                       <select
                         value={selectedGroup}
-                        onChange={(e) => setSelectedGroup(e.target.value)}
-                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                        onChange={(e) => {
+                          setSelectedGroup(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer"
+                        title="Lọc theo Nhóm (Group)"
                       >
                         {groups.map((grp) => (
                           <option key={grp} value={grp}>
-                            {grp}
+                            {grp === 'All' ? '📁 Tất cả nhóm' : grp}
+                          </option>
+                        ))}
+                      </select>
+                      <ChevronDown className="w-3.5 h-3.5 text-[#94a3b8] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    </div>
+
+                    {/* Tag Filter */}
+                    <div className="relative min-w-[130px]">
+                      <select
+                        value={selectedTag}
+                        onChange={(e) => {
+                          setSelectedTag(e.target.value);
+                          setCurrentPage(1);
+                        }}
+                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer"
+                        title="Lọc profile theo Thẻ (Tags từ /api/v1/tags)"
+                      >
+                        {tagOptions.map((tag) => (
+                          <option key={tag} value={tag}>
+                            {tag === 'All' ? '🏷️ Tất cả thẻ (Tags)' : `# ${tag}`}
                           </option>
                         ))}
                       </select>
@@ -6567,19 +6724,22 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </div>
 
                     {/* Search Input */}
-                    <div className="relative flex-1">
+                    <div className="relative flex-1 min-w-[170px]">
                       <Search className="w-3.5 h-3.5 text-[#94a3b8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
                         type="text"
-                        placeholder="Search profile name..."
+                        placeholder="Tìm tên, nhóm, core, thẻ tag..."
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={(e) => {
+                          setSearchQuery(e.target.value);
+                          setCurrentPage(1);
+                        }}
                         className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs text-[#1e293b] dark:text-[#f1f5f9] placeholder-[#94a3b8] focus:outline-none focus:border-[#1677ff]"
                       />
                     </div>
 
                     {/* Sort Dropdown */}
-                    <div className="relative min-w-[170px]">
+                    <div className="relative min-w-[160px]">
                       <select
                         value={sortOrder}
                         onChange={(e) => setSortOrder(e.target.value)}
@@ -6604,8 +6764,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     {/* Refresh Button */}
                     <button
                       type="button"
-                      onClick={fetchProfiles}
-                      title="Refresh profile list (http://localhost:8725/api/v1/profiles)"
+                      onClick={() => {
+                        fetchProfiles();
+                        fetchTags();
+                      }}
+                      title="Làm mới danh sách profile & thẻ tag (http://localhost:8725)"
                       className="p-1.5 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-[#64748b] hover:text-[#1677ff] hover:border-[#1677ff] transition-colors cursor-pointer"
                     >
                       <RefreshCw className={`w-4 h-4 ${isLoadingProfiles ? 'animate-spin text-[#1677ff]' : ''}`} />
@@ -6690,12 +6853,16 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       </div>
                       <div
                         onClick={() => setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')}
-                        className="col-span-6 font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
+                        className="col-span-4 font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
                         title="Click để đổi thứ tự sắp xếp theo tên"
                       >
                         <span>Profile Name</span>
                         {sortOrder === 'asc' && <span className="text-[#1677ff] font-bold">↑</span>}
                         {sortOrder === 'desc' && <span className="text-[#1677ff] font-bold">↓</span>}
+                      </div>
+                      <div className="col-span-3 font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center space-x-1">
+                        <Tag className="w-3.5 h-3.5 text-[#94a3b8]" />
+                        <span>Tags</span>
                       </div>
                       <div
                         onClick={() => setSortOrder(sortOrder === 'core_asc' ? 'core_desc' : 'core_asc')}
@@ -6708,7 +6875,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       </div>
                       <div
                         onClick={() => setSortOrder(sortOrder === 'group_asc' ? 'group_desc' : 'group_asc')}
-                        className="col-span-3 text-right font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center justify-end space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
+                        className="col-span-2 text-right font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center justify-end space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
                         title="Click để đổi thứ tự sắp xếp theo nhóm"
                       >
                         <span>Group</span>
@@ -6764,13 +6931,41 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                                   className="w-4 h-4 rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                                 />
                               </div>
-                              <div className="col-span-6 font-normal text-[#1e293b] dark:text-[#f1f5f9] truncate">
+                              <div className="col-span-4 font-normal text-[#1e293b] dark:text-[#f1f5f9] truncate" title={p.name}>
                                 {p.name}
+                              </div>
+                              <div
+                                className="col-span-3 flex flex-wrap items-center gap-1 overflow-hidden"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                {Array.isArray(p.tags) && p.tags.length > 0 ? (
+                                  p.tags.map((tagItem: any, tidx: number) => {
+                                    const tagName = typeof tagItem === 'string' ? tagItem : (tagItem?.name || String(tagItem));
+                                    const tagColor = tagColorMap.get(tagName.toLowerCase().trim()) || (typeof tagItem === 'object' && tagItem?.color ? tagItem.color : '#0284c7');
+                                    return (
+                                      <span
+                                        key={tidx}
+                                        onClick={(ev) => {
+                                          ev.stopPropagation();
+                                          setSelectedTag(tagName);
+                                          setCurrentPage(1);
+                                        }}
+                                        className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium text-white shadow-2xs hover:opacity-85 transition-opacity cursor-pointer whitespace-nowrap"
+                                        style={{ backgroundColor: tagColor }}
+                                        title={`Thẻ: ${tagName} (Click để lọc theo thẻ này)`}
+                                      >
+                                        {tagName}
+                                      </span>
+                                    );
+                                  })
+                                ) : (
+                                  <span className="text-[#94a3b8] dark:text-[#64748b] text-[11px]">-</span>
+                                )}
                               </div>
                               <div className="col-span-2 text-center text-[#475569] dark:text-[#94a3b8]">
                                 {coreName}
                               </div>
-                              <div className="col-span-3 text-right text-[#475569] dark:text-[#94a3b8] truncate">
+                              <div className="col-span-2 text-right text-[#475569] dark:text-[#94a3b8] truncate" title={groupName}>
                                 {groupName}
                               </div>
                             </div>

@@ -138,6 +138,8 @@ export interface ProjectRuntimeConfig {
   selectedProvider?: string;
   profilesSortOrder?: string;
   profilesPerPage?: number;
+  selectedGroup?: string;
+  selectedTag?: string;
 }
 
 export interface ProjectData {
