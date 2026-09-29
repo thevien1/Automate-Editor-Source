@@ -3044,35 +3044,84 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             })()`,
           },
         });
-        updateThreadLog(threadId, 'success', `✔ Mouse moved to [${x}, ${y}]`);
-      } else {
-        updateThreadLog(threadId, 'info', `▶ Mouse move › XPath: ${xpath || '(empty)'}`);
-        if (xpath) {
-          await (window as any).electronAPI?.cdpAction({
+        if ((window as any).electronAPI?.cdpAction) {
+          await (window as any).electronAPI.cdpAction({
             port,
-            action: 'evaluate',
-            payload: {
-              expression: `(async () => {
-                ${VIRTUAL_MOUSE_SCRIPT};
-                const res = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                const el = res.singleNodeValue;
-                if (!el) return { success: false, error: 'Element not found' };
-                if (typeof el.scrollIntoView === 'function') {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-                  await new Promise(r => setTimeout(r, 200));
-                }
-                const rect = el.getBoundingClientRect();
-                const tx = Math.round(rect.left + rect.width / 2);
-                const ty = Math.round(rect.top + rect.height / 2);
-                return await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
-              })()`,
-            },
-          });
-          updateThreadLog(threadId, 'success', `✔ Mouse moved to element`);
+            action: 'mouseMove',
+            payload: { x, y },
+          }).catch(() => {});
         }
+        updateThreadLog(threadId, 'success', `✔ Mouse moved to [${x}, ${y}]`);
+        } else {
+          updateThreadLog(threadId, 'info', `▶ Mouse move › XPath: ${xpath || '(empty)'}`);
+          if (xpath) {
+            const evalMoveRes = await (window as any).electronAPI?.cdpAction({
+              port,
+              action: 'evaluate',
+              payload: {
+                expression: `(async () => {
+                  ${VIRTUAL_MOUSE_SCRIPT};
+                  const res = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  const el = res.singleNodeValue;
+                  if (!el) return { success: false, error: 'Element not found' };
+                  if (typeof el.scrollIntoView === 'function') {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                    await new Promise(r => setTimeout(r, 200));
+                  }
+                  const rect = el.getBoundingClientRect();
+                  const tx = Math.round(rect.left + rect.width / 2);
+                  const ty = Math.round(rect.top + rect.height / 2);
+                  await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
+
+                  const targetEl = document.elementFromPoint(tx, ty) || el;
+                  const evOpts = {
+                    bubbles: true,
+                    cancelable: true,
+                    clientX: tx,
+                    clientY: ty,
+                    screenX: tx + (window.screenX || 0),
+                    screenY: ty + (window.screenY || 0),
+                    view: window,
+                    pointerId: 1,
+                    pointerType: 'mouse',
+                    isPrimary: true,
+                  };
+                  try {
+                    if (typeof PointerEvent !== 'undefined') {
+                      targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                      targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                      el.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                      el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                    }
+                  } catch(e) {}
+                  try {
+                    targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                    targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                    targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                    el.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                    el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                    el.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                  } catch(e) {}
+
+                  return { success: true, x: tx, y: ty };
+                })()`,
+              },
+            });
+
+            const coords = evalMoveRes?.value?.x !== undefined ? evalMoveRes.value : (evalMoveRes as any)?.result?.value;
+            if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port,
+                action: 'mouseMove',
+                payload: { x: coords.x, y: coords.y },
+              }).catch(() => {});
+            }
+
+            updateThreadLog(threadId, 'success', `✔ Mouse moved to element`);
+          }
+        }
+        await sleep(150);
       }
-      await sleep(150);
-    }
     // Mouse press and hold (type 51)
     else if (actType === 51 || actName === 'mouse press and hold') {
       const xpath = resolveStr(getRawVal('XPATH', act.element_xpath || ''));

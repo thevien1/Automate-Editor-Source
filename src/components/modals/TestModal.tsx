@@ -3376,9 +3376,16 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               ${VIRTUAL_MOUSE_SCRIPT};
               return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
             })()`);
+            if ((window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port: port.trim() || '43076',
+                action: 'mouseMove',
+                payload: { x, y },
+              }).catch(() => {});
+            }
             addLog('success', `✔ Mouse move › [${x}, ${y}]`);
           } else {
-            await evaluateInChrome(`(async () => {
+            const evalMoveRes = await evaluateInChrome(`(async () => {
               ${VIRTUAL_MOUSE_SCRIPT};
               const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
               const el = res.singleNodeValue;
@@ -3390,8 +3397,50 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const rect = el.getBoundingClientRect();
               const tx = Math.round(rect.left + rect.width / 2);
               const ty = Math.round(rect.top + rect.height / 2);
-              return await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
+              await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
+
+              const targetEl = document.elementFromPoint(tx, ty) || el;
+              const evOpts = {
+                bubbles: true,
+                cancelable: true,
+                clientX: tx,
+                clientY: ty,
+                screenX: tx + (window.screenX || 0),
+                screenY: ty + (window.screenY || 0),
+                view: window,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+              };
+              try {
+                if (typeof PointerEvent !== 'undefined') {
+                  targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                  targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                  el.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                  el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                }
+              } catch(e) {}
+              try {
+                targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                el.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                el.dispatchEvent(new MouseEvent('mousemove', evOpts));
+              } catch(e) {}
+
+              return { success: true, x: tx, y: ty };
             })()`);
+
+            const coords = evalMoveRes?.value?.x !== undefined ? evalMoveRes.value : (evalMoveRes as any)?.result?.value;
+            if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port: port.trim() || '43076',
+                action: 'mouseMove',
+                payload: { x: coords.x, y: coords.y },
+              }).catch(() => {});
+            }
+
             addLog('success', `✔ Mouse move › ${resolvedXPath || 'XPath'}`);
           }
         } else if (actType === 51 || actName === 'mouse press and hold') {

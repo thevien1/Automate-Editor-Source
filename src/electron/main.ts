@@ -1615,6 +1615,25 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       return { success: false, error: 'No active Chrome page found.' };
     }
 
+    if (action === 'mouseMove' || action === 'moveCoordinates') {
+      const { x, y } = payload || {};
+      const posX = parseFloat(x) || 0;
+      const posY = parseFloat(y) || 0;
+
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        try {
+          await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+            type: 'mouseMoved',
+            x: posX,
+            y: posY,
+          });
+        } catch (e) {}
+      }
+
+      return { success: true, x: posX, y: posY };
+    }
+
     if (action === 'clickCoordinates') {
       const { x, y } = payload || {};
       const posX = parseFloat(x) || 0;

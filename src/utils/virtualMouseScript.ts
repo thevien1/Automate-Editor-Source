@@ -144,6 +144,30 @@ export const VIRTUAL_MOUSE_SCRIPT = `
         if (step >= steps) {
           clearInterval(interval);
           setPos(targetX, targetY);
+          try {
+            const finalEl = document.elementFromPoint(targetX, targetY);
+            if (finalEl) {
+              const opts = {
+                bubbles: true,
+                cancelable: true,
+                clientX: targetX,
+                clientY: targetY,
+                screenX: targetX + (window.screenX || 0),
+                screenY: targetY + (window.screenY || 0),
+                view: window,
+                pointerId: 1,
+                pointerType: 'mouse',
+                isPrimary: true,
+              };
+              if (typeof PointerEvent !== 'undefined') {
+                finalEl.dispatchEvent(new PointerEvent('pointerover', opts));
+                finalEl.dispatchEvent(new PointerEvent('pointerenter', opts));
+              }
+              finalEl.dispatchEvent(new MouseEvent('mouseover', opts));
+              finalEl.dispatchEvent(new MouseEvent('mouseenter', opts));
+              finalEl.dispatchEvent(new MouseEvent('mousemove', opts));
+            }
+          } catch(e) {}
           resolve();
         }
       }, Math.max(8, Math.floor(durationMs / steps)));
