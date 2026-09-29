@@ -4398,9 +4398,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
       let res = '';
       for (let i = 0; i < len; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
-      const varName = act.output_variable_name || 'random_text';
+      const rawVar = act.output_variable_name || 'random_text';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
       vars[varName] = res;
-      vars[varName.replace(/^\$/, '')] = res;
+      vars[cleanName] = res;
       updateThreadLog(threadId, 'success', `✔ Random text › ${len} chars`);
     }
     // Split text (type 9)
@@ -4478,24 +4480,31 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
     // Random number (type 11)
     else if (actType === 11 || actName === 'random number') {
-      const minVal = parseInt(resolveStr(getRawVal('MIN', '1')), 10) || 1;
-      const maxVal = parseInt(resolveStr(getRawVal('MAX', '100')), 10) || 100;
+      const parsedMin = parseInt(resolveStr(getRawVal('MIN', '1')), 10);
+      const parsedMax = parseInt(resolveStr(getRawVal('MAX', '100')), 10);
+      const minVal = isNaN(parsedMin) ? 1 : parsedMin;
+      const maxVal = isNaN(parsedMax) ? 100 : parsedMax;
       const rand = Math.floor(Math.random() * (Math.max(minVal, maxVal) - Math.min(minVal, maxVal) + 1)) + Math.min(minVal, maxVal);
-      const varName = act.output_variable_name || 'random_number';
+      const rawVar = act.output_variable_name || 'random_number';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
       vars[varName] = String(rand);
-      vars[varName.replace(/^\$/, '')] = String(rand);
-      updateThreadLog(threadId, 'success', `✔ Random number › ${rand}`);
+      vars[cleanName] = String(rand);
+      updateThreadLog(threadId, 'success', `✔ Random number › ${rand} [${minVal}..${maxVal}]`);
+      updateThreadLog(threadId, 'arrow', `   ↳ ${varName} = ${rand}`);
     }
     // Math execute (type 12)
     else if (actType === 12 || actName === 'math execute') {
       const expr = resolveStr(getRawVal('MATH_EXPRESSION', ''));
-      const varName = act.output_variable_name || 'math_result';
+      const rawVar = act.output_variable_name || 'math_result';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
       try {
         const sanitized = expr.replace(/[^0-9+\-*/().% ]/g, '');
         const calc = Function(`"use strict"; return (${sanitized || 0})`)();
         const valStr = String(calc ?? 0);
         vars[varName] = valStr;
-        vars[varName.replace(/^\$/, '')] = valStr;
+        vars[cleanName] = valStr;
         updateThreadLog(threadId, 'success', `✔ Math execute › ${valStr}`);
       } catch (e: any) {
         const failRes = await handleActionFailure('Math execute', e.message);
@@ -4505,12 +4514,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // 2FA code (type 81)
     else if (actType === 81 || actName === '2fa code') {
       const secret = resolveStr(getRawVal('SECRETE_KEY', ''));
-      const varName = act.output_variable_name || 'two_fa_code';
+      const rawVar = act.output_variable_name || 'two_fa_code';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
       try {
         let code = '000000';
         if (secret) code = await generateTOTP(secret);
         vars[varName] = code;
-        vars[varName.replace(/^\$/, '')] = code;
+        vars[cleanName] = code;
         updateThreadLog(threadId, 'success', `✔ 2FA code › ${code}`);
       } catch (e: any) {
         const failRes = await handleActionFailure('2FA code', e.message);
