@@ -2410,10 +2410,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 const pages = (listRes?.targets || []).filter((t: any) => t.type === 'page');
 
                 if (resolvedTitle) {
+                  const keywords = resolvedTitle.includes('|')
+                    ? resolvedTitle.split('|').map((k: string) => k.trim()).filter(Boolean)
+                    : [resolvedTitle];
                   matchedTarget = pages.find((t: any) => {
                     const tTitle = (t.title || '').toLowerCase();
                     const tUrl = (t.url || '').toLowerCase();
-                    return tTitle.includes(resolvedTitle) || tUrl.includes(resolvedTitle);
+                    return keywords.some((k: string) => tTitle.includes(k) || tUrl.includes(k));
                   });
                 } else {
                   if (pages.length > 1) {

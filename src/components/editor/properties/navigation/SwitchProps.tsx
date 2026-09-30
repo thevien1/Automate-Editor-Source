@@ -47,7 +47,7 @@ export const SwitchProps: React.FC<ActionPropsCommon> = ({
               handleRawInputByKey('TITLE', val);
               handleRawInputByKey('POPUP_TITLE', val);
             }}
-            placeholder=""
+            placeholder="Bài viết | Post | posts (hỗ trợ nhiều tiêu đề ngăn cách bởi dấu |)"
           />
         </div>
       )}

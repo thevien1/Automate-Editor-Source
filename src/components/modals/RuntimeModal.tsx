@@ -3473,10 +3473,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           const pages = (listRes?.targets || []).filter((t: any) => t.type === 'page');
 
           if (targetTitle) {
+            const keywords = targetTitle.includes('|')
+              ? targetTitle.split('|').map((k: string) => k.trim()).filter(Boolean)
+              : [targetTitle];
             matchedTarget = pages.find((t: any) => {
               const tTitle = (t.title || '').toLowerCase();
               const tUrl = (t.url || '').toLowerCase();
-              return tTitle.includes(targetTitle) || tUrl.includes(targetTitle);
+              return keywords.some((k: string) => tTitle.includes(k) || tUrl.includes(k));
             });
           } else {
             if (pages.length > 1) {
