@@ -3564,11 +3564,12 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           for (let notch = 0; notch < totalNotches; notch++) {
             if (stopSignalRef.current) break;
 
+            // Mỗi nấc lăn chuột (~300 - 340px) có gia tốc miết và hãm đà quán tính tự nhiên
             const microDeltas = [
-              Math.floor(Math.random() * 8) + 20,
-              Math.floor(Math.random() * 12) + 38,
-              Math.floor(Math.random() * 10) + 30,
-              Math.floor(Math.random() * 6) + 14,
+              Math.floor(Math.random() * 16) + 55,  // Vi bước 1: bắt đầu xoay bánh lăn (~62px)
+              Math.floor(Math.random() * 22) + 115, // Vi bước 2: đạt đỉnh gia tốc con lăn (~125px)
+              Math.floor(Math.random() * 16) + 75,  // Vi bước 3: quán tính lướt tiếp (~82px)
+              Math.floor(Math.random() * 16) + 45,  // Vi bước 4: dừng mượt mà hãm đà (~52px)
             ];
 
             for (const tick of microDeltas) {
@@ -3607,11 +3608,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 })()`);
               }
 
-              await sleep(Math.floor(Math.random() * 15) + 20);
+              // Khoảng trễ tự nhiên giữa các vi bước lăn chuột (8ms - 15ms chuẩn 60fps siêu mượt)
+              await sleep(Math.floor(Math.random() * 8) + 8);
             }
 
+            // Khoảng nghỉ tự nhiên giữa các lần miết ngón tay xoay chuột (40ms - 75ms)
             if (notch < totalNotches - 1) {
-              await sleep(Math.floor(Math.random() * 80) + 80);
+              await sleep(Math.floor(Math.random() * 35) + 40);
             }
           }
 

@@ -46,6 +46,7 @@ export const PropertyPanel: React.FC = () => {
     duplicateSelectedNode,
     allVariables,
     selectedNodeIds = [],
+    showConfirmModal,
   } = useProject();
 
   const [activeTab, setActiveTab] = useState<'property' | 'variables'>('property');
@@ -348,8 +349,27 @@ export const PropertyPanel: React.FC = () => {
               </div>
 
               <button
-                onClick={deleteSelectedNode}
-                className="p-1.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 transition-colors"
+                onClick={() => {
+                  showConfirmModal({
+                    title: 'Delete Selected Actions',
+                    subtitle: `Xóa ${selectedNodeIds.length} hành động đã chọn`,
+                    message: (
+                      <span>
+                        Bạn có chắc chắn muốn xóa đồng thời <strong>{selectedNodeIds.length}</strong> hành động đã chọn không?
+                      </span>
+                    ),
+                    confirmText: `Delete (${selectedNodeIds.length})`,
+                    cancelText: 'Hủy',
+                    variant: 'danger',
+                    itemName: `${selectedNodeIds.length} actions`,
+                    itemType: 'Batch Selection',
+                    warningNote: 'Các hành động đã chọn sẽ bị xóa khỏi quy trình. Bạn có thể nhấn Ctrl+Z để hoàn tác.',
+                    onConfirm: () => {
+                      deleteSelectedNode();
+                    },
+                  });
+                }}
+                className="p-1.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 transition-colors cursor-pointer"
                 title="Delete Selected (Del)"
               >
                 <Trash2 className="w-4 h-4" />
@@ -361,20 +381,39 @@ export const PropertyPanel: React.FC = () => {
               <div className="flex flex-col gap-2 pt-1">
                 <button
                   onClick={copySelectedNode}
-                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-[#1677ff] hover:bg-[#4096ff] text-white font-medium text-xs shadow-xs transition-colors"
+                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-[#1677ff] hover:bg-[#4096ff] text-white font-medium text-xs shadow-xs transition-colors cursor-pointer"
                 >
                   <Copy className="w-3.5 h-3.5" />
                   <span>Copy {selectedNodeIds.length} items (Ctrl+C)</span>
                 </button>
                 <button
                   onClick={duplicateSelectedNode}
-                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] hover:border-[#1677ff] dark:hover:border-[#38bdf8] font-medium text-xs transition-colors"
+                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] hover:border-[#1677ff] dark:hover:border-[#38bdf8] font-medium text-xs transition-colors cursor-pointer"
                 >
                   <span>Duplicate {selectedNodeIds.length} items (Ctrl+D)</span>
                 </button>
                 <button
-                  onClick={deleteSelectedNode}
-                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 font-medium text-xs border border-red-500/20 transition-colors"
+                  onClick={() => {
+                    showConfirmModal({
+                      title: 'Delete Selected Actions',
+                      subtitle: `Xóa ${selectedNodeIds.length} hành động đã chọn`,
+                      message: (
+                        <span>
+                          Bạn có chắc chắn muốn xóa đồng thời <strong>{selectedNodeIds.length}</strong> hành động đã chọn không?
+                        </span>
+                      ),
+                      confirmText: `Delete (${selectedNodeIds.length})`,
+                      cancelText: 'Hủy',
+                      variant: 'danger',
+                      itemName: `${selectedNodeIds.length} actions`,
+                      itemType: 'Batch Selection',
+                      warningNote: 'Các hành động đã chọn sẽ bị xóa khỏi quy trình. Bạn có thể nhấn Ctrl+Z để hoàn tác.',
+                      onConfirm: () => {
+                        deleteSelectedNode();
+                      },
+                    });
+                  }}
+                  className="flex items-center justify-center space-x-2 w-full py-2 px-3 rounded-md bg-red-500/10 hover:bg-red-500/20 text-red-500 dark:text-red-400 font-medium text-xs border border-red-500/20 transition-colors cursor-pointer"
                 >
                   <Trash2 className="w-3.5 h-3.5" />
                   <span>Delete {selectedNodeIds.length} items (Del)</span>

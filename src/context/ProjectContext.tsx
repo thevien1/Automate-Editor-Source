@@ -4,6 +4,7 @@ import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
 import { createDefaultProject, createDefaultNormalBlock, generateGuid, serializeRawInput } from '../utils/gpmUtils';
 import { UpdateInfo, checkForAppUpdates } from '../services/updateService';
 import { normalizeWorkflowNodes, nodesToJsonString } from '../utils/jsonWorkflowUtils';
+import { ConfirmModalOptions } from '../components/modals/ConfirmModal';
 
 export const BROWSER_SYSTEM_VARIABLES = [
   'profileName',
@@ -196,6 +197,9 @@ interface ProjectContextType {
   pasteCopiedNode: () => void;
   duplicateSelectedNode: () => void;
   clearWorkflow: () => void;
+  confirmModalState: ConfirmModalOptions | null;
+  showConfirmModal: (options: ConfirmModalOptions) => void;
+  closeConfirmModal: () => void;
 }
 
 const ProjectContext = createContext<ProjectContextType | undefined>(undefined);
@@ -491,6 +495,18 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [jsonModalMode, setJsonModalMode] = useState<'export' | 'import'>('export');
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [isCheckingUpdate, setIsCheckingUpdate] = useState<boolean>(false);
+  const [confirmModalState, setConfirmModalState] = useState<ConfirmModalOptions | null>(null);
+
+  const showConfirmModal = (options: ConfirmModalOptions) => {
+    setConfirmModalState(options);
+  };
+
+  const closeConfirmModal = () => {
+    if (confirmModalState?.onCancel) {
+      confirmModalState.onCancel();
+    }
+    setConfirmModalState(null);
+  };
 
   const checkAppUpdate = async (manual: boolean = false): Promise<UpdateInfo | null> => {
     setIsCheckingUpdate(true);
@@ -1443,16 +1459,46 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const clearWorkflow = () => {
     if (!currentProject) return;
-    if (confirm('Are you sure you want to clear all nodes in the current workflow?')) {
-      const script = getActiveScript() || currentProject.script;
-      pushUndoSnapshot(script);
-      const newScript = JSON.parse(JSON.stringify(script)) as EditorFile;
-      const targetBk = newScript[selectedBlockKey] ? selectedBlockKey : 'main_logic';
-      newScript[targetBk].nodes = [];
-      applyScriptUpdate(newScript);
-      setSelectedNodeId(null);
-      setSelectedNodeIds([]);
+    const targetBk = selectedBlockKey || 'main_logic';
+    const blockDisplayName = {
+      before_init: 'Before browser opened',
+      main_logic: 'Main logic',
+      after_quit: 'After browser closed',
+    }[targetBk] || targetBk;
+
+    const script = getActiveScript() || currentProject.script;
+    const currentNodes = script?.[targetBk]?.nodes || [];
+    if (currentNodes.length === 0) {
+      showToast('Notice', `Khối ${blockDisplayName} hiện tại không có hành động nào để xóa`);
+      return;
     }
+
+    showConfirmModal({
+      title: 'Clear All Actions',
+      subtitle: `Xóa toàn bộ hành động trong "${blockDisplayName}"`,
+      message: (
+        <span>
+          Bạn có chắc chắn muốn xóa tất cả <strong>{currentNodes.length}</strong> hành động trong khối <span className="text-red-500 font-semibold">{blockDisplayName}</span>?
+        </span>
+      ),
+      confirmText: 'Clear All',
+      cancelText: 'Hủy',
+      variant: 'danger',
+      itemName: blockDisplayName,
+      itemType: `${currentNodes.length} nodes`,
+      warningNote: 'Toàn bộ hành động trong khối này sẽ bị xóa khỏi canvas. Bạn có thể nhấn Ctrl+Z để hoàn tác nếu lỡ tay xóa.',
+      onConfirm: () => {
+        const currentScript = getActiveScript() || currentProject.script;
+        pushUndoSnapshot(currentScript);
+        const newScript = JSON.parse(JSON.stringify(currentScript)) as EditorFile;
+        const target = newScript[targetBk] ? targetBk : 'main_logic';
+        newScript[target].nodes = [];
+        applyScriptUpdate(newScript);
+        setSelectedNodeId(null);
+        setSelectedNodeIds([]);
+        showToast('Cleared', `Đã xóa toàn bộ hành động trong ${blockDisplayName}`);
+      },
+    });
   };
 
   const moveNode = (
@@ -1774,6 +1820,9 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         pasteCopiedNode,
         duplicateSelectedNode,
         clearWorkflow,
+        confirmModalState,
+        showConfirmModal,
+        closeConfirmModal,
       }}
     >
       {children}

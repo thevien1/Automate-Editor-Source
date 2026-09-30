@@ -10,6 +10,7 @@ export const WorkflowTabs: React.FC = () => {
     createSubWorkflow,
     deleteSubWorkflow,
     importSubWorkflow,
+    showConfirmModal,
   } = useProject();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -164,7 +165,24 @@ export const WorkflowTabs: React.FC = () => {
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    deleteSubWorkflow(name);
+                    showConfirmModal({
+                      title: 'Delete Workflow File',
+                      subtitle: `Xóa tệp quy trình "${name}.gscript"`,
+                      message: (
+                        <span>
+                          Bạn có chắc chắn muốn xóa tab quy trình <span className="text-red-500 font-semibold">{name}</span> khỏi dự án không?
+                        </span>
+                      ),
+                      confirmText: 'Delete',
+                      cancelText: 'Hủy',
+                      variant: 'danger',
+                      itemName: `${name}.gscript`,
+                      itemType: 'Sub-workflow File',
+                      warningNote: 'Tệp này và toàn bộ các khối lệnh bên trong sẽ bị xóa khỏi dự án. Hãy kiểm tra kỹ trước khi xóa.',
+                      onConfirm: () => {
+                        deleteSubWorkflow(name);
+                      },
+                    });
                   }}
                   className="p-0.5 ml-1 rounded hover:bg-red-100 dark:hover:bg-red-900/40 text-red-500 hover:text-red-600 transition-colors"
                   title={`Delete ${name}`}

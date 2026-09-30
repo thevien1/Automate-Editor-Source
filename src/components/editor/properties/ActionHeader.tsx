@@ -16,7 +16,7 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
   deleteSelectedNode,
   headerIcon,
 }) => {
-  const { setShowJsonModal, setJsonModalMode } = useProject();
+  const { setShowJsonModal, setJsonModalMode, showConfirmModal } = useProject();
   const [isEditingIcon, setIsEditingIcon] = useState(false);
   const [, setVer] = useState(0);
 
@@ -130,7 +130,33 @@ export const ActionHeader: React.FC<ActionHeaderProps> = ({
           </button>
 
           <button
-            onClick={deleteSelectedNode}
+            onClick={() => {
+              const hasChildren = 'nodes' in selectedNode && Array.isArray((selectedNode as any).nodes) && (selectedNode as any).nodes.length > 0;
+              const nodeName = selectedNode.display_text || title;
+              if (hasChildren) {
+                const childCount = (selectedNode as any).nodes.length;
+                showConfirmModal({
+                  title: 'Delete Block',
+                  subtitle: `Xóa khối "${nodeName}"`,
+                  message: (
+                    <span>
+                      Khối <span className="text-red-500 font-semibold">{nodeName}</span> đang chứa <strong>{childCount}</strong> hành động con. Bạn có chắc chắn muốn xóa khối này cùng toàn bộ hành động bên trong không?
+                    </span>
+                  ),
+                  confirmText: 'Delete',
+                  cancelText: 'Hủy',
+                  variant: 'danger',
+                  itemName: nodeName,
+                  itemType: `${childCount} child nodes`,
+                  warningNote: 'Toàn bộ hành động con bên trong khối này sẽ bị xóa. Bạn có thể nhấn Ctrl+Z để hoàn tác nếu cần.',
+                  onConfirm: () => {
+                    deleteSelectedNode();
+                  },
+                });
+              } else {
+                deleteSelectedNode();
+              }
+            }}
             className="p-1.5 rounded text-red-500 hover:bg-red-50 dark:hover:bg-red-500/20 transition-colors cursor-pointer"
             title="Delete Node (Del)"
           >

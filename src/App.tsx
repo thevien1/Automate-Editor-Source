@@ -9,6 +9,7 @@ import { UpdateModal } from './components/modals/UpdateModal';
 import { JsonCodeModal } from './components/modals/JsonCodeModal';
 import { TestModal } from './components/modals/TestModal';
 import { RuntimeModal } from './components/modals/RuntimeModal';
+import { ConfirmModal } from './components/modals/ConfirmModal';
 import { SaveToast } from './components/common/SaveToast';
 import { useProject } from './context/ProjectContext';
 
@@ -29,6 +30,8 @@ export const App: React.FC = () => {
     jsonModalMode,
     updateInfo,
     openProjectByPath,
+    confirmModalState,
+    closeConfirmModal,
   } = useProject();
   const [isNewModalOpen, setIsNewModalOpen] = useState(false);
   const [isOpenModalOpen, setIsOpenModalOpen] = useState(false);
@@ -99,6 +102,11 @@ export const App: React.FC = () => {
       <RuntimeModal
         isOpen={showRuntimeModal}
         onClose={() => setShowRuntimeModal(false)}
+      />
+      <ConfirmModal
+        isOpen={!!confirmModalState}
+        onClose={closeConfirmModal}
+        options={confirmModalState}
       />
 
       {/* Floating Save Toast Notification (Image 1) */}
