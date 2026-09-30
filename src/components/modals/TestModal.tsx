@@ -3400,6 +3400,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 action: 'mouseMove',
                 payload: { x, y },
               }).catch(() => {});
+              vars.$lastMouseX = String(x);
+              vars.$lastMouseY = String(y);
             }
             addLog('success', `✔ Mouse move › [${x}, ${y}]`);
           } else {
@@ -3457,6 +3459,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 action: 'mouseMove',
                 payload: { x: coords.x, y: coords.y },
               }).catch(() => {});
+              vars.$lastMouseX = String(coords.x);
+              vars.$lastMouseY = String(coords.y);
             }
 
             addLog('success', `✔ Mouse move › ${resolvedXPath || 'XPath'}`);
@@ -3514,10 +3518,104 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           })()`);
           addLog('success', `✔ Mouse release`);
         } else if (actType === 53 || actName === 'mouse scroll') {
-          const scrollNumStr = getRawInputValue(act.raw_input, 'SCROLL_NUM', '1');
-          const scrollNum = parseInt(resolveVars(scrollNumStr, vars), 10) || 1;
-          await evaluateInChrome(`window.scrollBy(0, ${scrollNum * 350})`);
-          addLog('success', `✔ Mouse scroll › ${scrollNum}`);
+          const rawScrollVal = resolveVars(getRawInputValue(act.raw_input, 'SCROLL_NUM', '1'), vars).trim();
+          let scrollSteps = 1;
+          if (rawScrollVal.includes(',') || rawScrollVal.includes('-')) {
+            const parts = rawScrollVal.includes(',') ? rawScrollVal.split(',') : rawScrollVal.split('-');
+            const minS = parseInt(parts[0], 10) || 1;
+            const maxS = parseInt(parts[1], 10) || minS;
+            scrollSteps = Math.floor(Math.random() * (Math.abs(maxS - minS) + 1)) + Math.min(minS, maxS);
+            if (minS < 0 && maxS < 0) scrollSteps = -Math.abs(scrollSteps);
+          } else {
+            scrollSteps = parseInt(rawScrollVal, 10);
+            if (isNaN(scrollSteps)) scrollSteps = 1;
+          }
+
+          const isScrollUp = scrollSteps < 0;
+          const totalNotches = Math.max(1, Math.abs(scrollSteps));
+          const direction = isScrollUp ? -1 : 1;
+
+          addLog('info', `▶ Mouse scroll › ${isScrollUp ? 'Cuộn lên' : 'Cuộn xuống'} ${totalNotches} nấc (mô phỏng con lăn chuột)`);
+
+          let targetX = vars.$lastMouseX ? parseFloat(vars.$lastMouseX) : undefined;
+          let targetY = vars.$lastMouseY ? parseFloat(vars.$lastMouseY) : undefined;
+          if (typeof targetX !== 'number' || isNaN(targetX) || typeof targetY !== 'number' || isNaN(targetY)) {
+            try {
+              const posRes = await evaluateInChrome(`(() => {
+                const activeDialog = document.querySelector('div[role="dialog"], div[role="alertdialog"], div[aria-modal="true"]');
+                if (activeDialog) {
+                  const rect = activeDialog.getBoundingClientRect();
+                  if (rect.width > 50 && rect.height > 50) {
+                    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                  }
+                }
+                return { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
+              })()`);
+              const posVal = posRes?.value || (posRes as any)?.result?.value || posRes;
+              if (posVal && typeof posVal.x === 'number') {
+                targetX = posVal.x;
+                targetY = posVal.y;
+              }
+            } catch (e) {}
+          }
+          if (typeof targetX !== 'number') targetX = 500;
+          if (typeof targetY !== 'number') targetY = 400;
+
+          for (let notch = 0; notch < totalNotches; notch++) {
+            if (stopSignalRef.current) break;
+
+            const microDeltas = [
+              Math.floor(Math.random() * 8) + 20,
+              Math.floor(Math.random() * 12) + 38,
+              Math.floor(Math.random() * 10) + 30,
+              Math.floor(Math.random() * 6) + 14,
+            ];
+
+            for (const tick of microDeltas) {
+              if (stopSignalRef.current) break;
+              const dy = tick * direction;
+
+              let wheelOk = false;
+              if ((window as any).electronAPI?.cdpAction) {
+                const res = await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'mouseWheel',
+                  payload: {
+                    x: targetX,
+                    y: targetY,
+                    deltaX: 0,
+                    deltaY: dy,
+                  },
+                });
+                if (res?.success) wheelOk = true;
+              }
+
+              if (!wheelOk) {
+                await evaluateInChrome(`(() => {
+                  try {
+                    let el = document.elementFromPoint(${targetX}, ${targetY});
+                    while (el && el !== document.body && el !== document.documentElement) {
+                      const s = window.getComputedStyle(el);
+                      if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) break;
+                      el = el.parentElement;
+                    }
+                    if (!el || el === document.body || el === document.documentElement) {
+                      el = document.scrollingElement || document.documentElement || window;
+                    }
+                    el.scrollBy(0, ${dy});
+                  } catch(e) {}
+                })()`);
+              }
+
+              await sleep(Math.floor(Math.random() * 15) + 20);
+            }
+
+            if (notch < totalNotches - 1) {
+              await sleep(Math.floor(Math.random() * 80) + 80);
+            }
+          }
+
+          addLog('success', `✔ Mouse scrolled ${totalNotches} nấc thành công (mượt như người thật)`);
         } else if (actType === 54 || actName === 'key press') {
           const rawKey = getRawInputValue(act.raw_input, 'KEY', '');
           const resolvedKey = resolveVars(rawKey, vars);

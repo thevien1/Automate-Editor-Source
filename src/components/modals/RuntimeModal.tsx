@@ -3050,6 +3050,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             action: 'mouseMove',
             payload: { x, y },
           }).catch(() => {});
+          vars.$lastMouseX = String(x);
+          vars.$lastMouseY = String(y);
         }
         updateThreadLog(threadId, 'success', `✔ Mouse moved to [${x}, ${y}]`);
         } else {
@@ -3115,6 +3117,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                 action: 'mouseMove',
                 payload: { x: coords.x, y: coords.y },
               }).catch(() => {});
+              vars.$lastMouseX = String(coords.x);
+              vars.$lastMouseY = String(coords.y);
             }
 
             updateThreadLog(threadId, 'success', `✔ Mouse moved to element`);
@@ -3194,17 +3198,121 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
     // Mouse scroll (type 53)
     else if (actType === 53 || actName === 'mouse scroll') {
-      const scrollNumStr = getRawVal('SCROLL_NUM', '1');
-      const scrollNum = parseInt(resolveStr(scrollNumStr), 10) || 1;
-      updateThreadLog(threadId, 'info', `▶ Mouse scroll › ${scrollNum}`);
-      await (window as any).electronAPI?.cdpAction({
-        port,
-        action: 'evaluate',
-        payload: {
-          expression: `window.scrollBy(0, ${scrollNum * 350})`,
-        },
-      });
-      updateThreadLog(threadId, 'success', `✔ Mouse scrolled ${scrollNum} steps`);
+      const rawScrollVal = resolveStr(getRawVal('SCROLL_NUM', '1')).trim();
+      let scrollSteps = 1;
+      if (rawScrollVal.includes(',') || rawScrollVal.includes('-')) {
+        const parts = rawScrollVal.includes(',') ? rawScrollVal.split(',') : rawScrollVal.split('-');
+        const minS = parseInt(parts[0], 10) || 1;
+        const maxS = parseInt(parts[1], 10) || minS;
+        scrollSteps = Math.floor(Math.random() * (Math.abs(maxS - minS) + 1)) + Math.min(minS, maxS);
+        if (minS < 0 && maxS < 0) scrollSteps = -Math.abs(scrollSteps);
+      } else {
+        scrollSteps = parseInt(rawScrollVal, 10);
+        if (isNaN(scrollSteps)) scrollSteps = 1;
+      }
+
+      const isScrollUp = scrollSteps < 0;
+      const totalNotches = Math.max(1, Math.abs(scrollSteps));
+      const direction = isScrollUp ? -1 : 1;
+
+      updateThreadLog(threadId, 'info', `▶ Mouse scroll › ${isScrollUp ? 'Cuộn lên' : 'Cuộn xuống'} ${totalNotches} nấc (mô phỏng con lăn chuột)`, 'Mouse scroll');
+
+      // 1. Xác định tọa độ con trỏ chuột (Ưu tiên vị trí chuột vừa rê tới, hoặc tâm của Dialog / Viewport)
+      let targetX = vars.$lastMouseX ? parseFloat(vars.$lastMouseX) : undefined;
+      let targetY = vars.$lastMouseY ? parseFloat(vars.$lastMouseY) : undefined;
+      if (typeof targetX !== 'number' || isNaN(targetX) || typeof targetY !== 'number' || isNaN(targetY)) {
+        try {
+          const evalPosRes = await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: {
+              expression: `(() => {
+                const activeDialog = document.querySelector('div[role="dialog"], div[role="alertdialog"], div[aria-modal="true"]');
+                if (activeDialog) {
+                  const rect = activeDialog.getBoundingClientRect();
+                  if (rect.width > 50 && rect.height > 50) {
+                    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                  }
+                }
+                return { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
+              })()`,
+            },
+          });
+          const posVal = evalPosRes?.value || (evalPosRes as any)?.result?.value;
+          if (posVal && typeof posVal.x === 'number') {
+            targetX = posVal.x;
+            targetY = posVal.y;
+          }
+        } catch (e) {}
+      }
+      if (typeof targetX !== 'number') targetX = 500;
+      if (typeof targetY !== 'number') targetY = 400;
+
+      // 2. Mô phỏng hành vi lăn chuột người thật:
+      // Mỗi nấc lăn chuột được chia thành các vi bước (micro-ticks) mượt mà có gia tốc và giảm tốc
+      for (let notch = 0; notch < totalNotches; notch++) {
+        if (stopSignalRef.current) break;
+
+        const microDeltas = [
+          Math.floor(Math.random() * 8) + 20,  // Vi bước 1: bắt đầu xoay bánh lăn (~24px)
+          Math.floor(Math.random() * 12) + 38, // Vi bước 2: đạt đỉnh gia tốc (~44px)
+          Math.floor(Math.random() * 10) + 30, // Vi bước 3: giảm tốc tự nhiên (~35px)
+          Math.floor(Math.random() * 6) + 14,  // Vi bước 4: dừng mượt mà (~17px)
+        ];
+
+        for (const tick of microDeltas) {
+          if (stopSignalRef.current) break;
+          const dy = tick * direction;
+
+          let wheelOk = false;
+          if ((window as any).electronAPI?.cdpAction) {
+            const res = await (window as any).electronAPI.cdpAction({
+              port,
+              action: 'mouseWheel',
+              payload: {
+                x: targetX,
+                y: targetY,
+                deltaX: 0,
+                deltaY: dy,
+              },
+            });
+            if (res?.success) wheelOk = true;
+          }
+
+          if (!wheelOk) {
+            await (window as any).electronAPI?.cdpAction({
+              port,
+              action: 'evaluate',
+              payload: {
+                expression: `(() => {
+                  try {
+                    let el = document.elementFromPoint(${targetX}, ${targetY});
+                    while (el && el !== document.body && el !== document.documentElement) {
+                      const s = window.getComputedStyle(el);
+                      if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) break;
+                      el = el.parentElement;
+                    }
+                    if (!el || el === document.body || el === document.documentElement) {
+                      el = document.scrollingElement || document.documentElement || window;
+                    }
+                    el.scrollBy(0, ${dy});
+                  } catch(e) {}
+                })()`,
+              },
+            }).catch(() => {});
+          }
+
+          // Khoảng trễ tự nhiên giữa các vi bước lăn chuột (20ms - 35ms)
+          await sleep(Math.floor(Math.random() * 15) + 20);
+        }
+
+        // Khoảng nghỉ tự nhiên giữa các lần miết ngón tay xoay chuột (80ms - 160ms)
+        if (notch < totalNotches - 1) {
+          await sleep(Math.floor(Math.random() * 80) + 80);
+        }
+      }
+
+      updateThreadLog(threadId, 'success', `✔ Mouse scrolled ${totalNotches} nấc thành công (mượt như người thật)`);
       await sleep(150);
     }
     // Wait URL Changed (type 43)

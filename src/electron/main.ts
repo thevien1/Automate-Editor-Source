@@ -1634,6 +1634,31 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       return { success: true, x: posX, y: posY };
     }
 
+    if (action === 'mouseWheel') {
+      const { x, y, deltaX, deltaY } = payload || {};
+      const posX = Math.round(parseFloat(x) || 500);
+      const posY = Math.round(parseFloat(y) || 400);
+      const dX = Math.round(parseFloat(deltaX) || 0);
+      const dY = Math.round(parseFloat(deltaY) || 0);
+
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        try {
+          await sendWs(page.webSocketDebuggerUrl, 'Input.dispatchMouseEvent', {
+            type: 'mouseWheel',
+            x: posX,
+            y: posY,
+            deltaX: dX,
+            deltaY: dY,
+          });
+          return { success: true };
+        } catch (e: any) {
+          return { success: false, error: e.message };
+        }
+      }
+      return { success: false, error: 'No active Chrome page found.' };
+    }
+
     if (action === 'clickCoordinates') {
       const { x, y } = payload || {};
       const posX = parseFloat(x) || 0;
