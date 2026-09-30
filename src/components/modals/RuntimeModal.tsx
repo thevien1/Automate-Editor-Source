@@ -4411,7 +4411,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
     // Random text (type 8)
     else if (actType === 8 || actName === 'random text') {
-      const len = parseInt(resolveStr(getRawVal('TEXT_LEN', '8')), 10) || 8;
+      const rawLen = resolveStr(getRawVal('TEXT_LEN', '8')).trim();
+      let len = 8;
+      if (rawLen.includes(',') || rawLen.includes('-')) {
+        const parts = rawLen.split(/[,-]/);
+        const minL = parseInt(parts[0], 10) || 8;
+        const maxL = parseInt(parts[1], 10) || minL;
+        const low = Math.min(minL, maxL);
+        const high = Math.max(minL, maxL);
+        len = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
+      } else {
+        len = parseInt(rawLen, 10) || 8;
+      }
       const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
       let res = '';
       for (let i = 0; i < len; i++) res += chars.charAt(Math.floor(Math.random() * chars.length));
@@ -4420,7 +4431,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       const cleanName = varName.replace(/^\$/, '');
       vars[varName] = res;
       vars[cleanName] = res;
-      updateThreadLog(threadId, 'success', `✔ Random text › ${len} chars`);
+      updateThreadLog(threadId, 'success', `✔ Random text › "${res}" (${len} chars)`);
+      updateThreadLog(threadId, 'arrow', `   ↳ ${varName} = ${res}`);
     }
     // Split text (type 9)
     else if (actType === 9 || actName === 'split text') {
@@ -4699,7 +4711,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     // File read random line (type 184)
     else if (actType === 184 || actName === 'file read random line') {
       const filePath = resolveStr(getRawVal('FILE_PATH', ''));
-      const varName = act.output_variable_name || 'random_line';
+      const rawVar = act.output_variable_name || 'random_line';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
       try {
         let line = '';
         if ((window as any).electronAPI?.fileAction) {
@@ -4714,8 +4728,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           }
         }
         vars[varName] = line;
-        vars[varName.replace(/^\$/, '')] = line;
+        vars[cleanName] = line;
         updateThreadLog(threadId, 'success', `✔ File read random line › ${filePath}`);
+        updateThreadLog(threadId, 'arrow', `   ↳ ${varName} = "${line}"`);
       } catch (e: any) {
         const failRes = await handleActionFailure('File read random line', e.message);
         if (failRes === 'ERROR_STOP') return 'ERROR_STOP';

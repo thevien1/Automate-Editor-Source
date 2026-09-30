@@ -875,8 +875,18 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           stopSignalRef.current = true;
           break;
         } else if (actType === 8 || actName === 'random text') {
-          const rawLen = getRawInputValue(act.raw_input, 'TEXT_LEN', '');
-          const len = parseInt(resolveVars(rawLen, vars), 10) || 8;
+          const rawLen = resolveVars(getRawInputValue(act.raw_input, 'TEXT_LEN', ''), vars).trim();
+          let len = 8;
+          if (rawLen.includes(',') || rawLen.includes('-')) {
+            const parts = rawLen.split(/[,-]/);
+            const minL = parseInt(parts[0], 10) || 8;
+            const maxL = parseInt(parts[1], 10) || minL;
+            const low = Math.min(minL, maxL);
+            const high = Math.max(minL, maxL);
+            len = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
+          } else {
+            len = parseInt(rawLen, 10) || 8;
+          }
           const chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
           let res = '';
           for (let i = 0; i < len; i++) {
