@@ -3248,68 +3248,83 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       if (typeof targetX !== 'number') targetX = 500;
       if (typeof targetY !== 'number') targetY = 400;
 
-      // 2. Mô phỏng hành vi lăn chuột người thật:
-      // Mỗi nấc lăn chuột được chia thành các vi bước (micro-ticks) mượt mà có gia tốc và giảm tốc
+      // 2. Mô phỏng hành vi lăn chuột người thật tối ưu cho đa luồng và khung cuộn nhỏ:
       for (let notch = 0; notch < totalNotches; notch++) {
         if (stopSignalRef.current) break;
 
-        // Mỗi nấc lăn chuột (~300 - 340px) có gia tốc miết và hãm đà quán tính tự nhiên
-        const microDeltas = [
-          Math.floor(Math.random() * 16) + 55,  // Vi bước 1: bắt đầu xoay bánh lăn (~62px)
-          Math.floor(Math.random() * 22) + 115, // Vi bước 2: đạt đỉnh gia tốc con lăn (~125px)
-          Math.floor(Math.random() * 16) + 75,  // Vi bước 3: quán tính lướt tiếp (~82px)
-          Math.floor(Math.random() * 16) + 45,  // Vi bước 4: dừng mượt mà hãm đà (~52px)
-        ];
+        await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: `(async () => {
+              const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+              const rand = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
 
-        for (const tick of microDeltas) {
-          if (stopSignalRef.current) break;
-          const dy = tick * direction;
+              // 1. Tự động tìm đúng khung cuộn (Hỗ trợ dialog nhỏ, popup bình luận, hoặc toàn trang)
+              let target = null;
+              const activeModal = document.querySelector('div[role="dialog"], div[role="alertdialog"], div[aria-modal="true"]');
+              if (activeModal) {
+                const walker = document.createTreeWalker(activeModal, NodeFilter.SHOW_ELEMENT);
+                let n;
+                while ((n = walker.nextNode())) {
+                  const s = window.getComputedStyle(n);
+                  if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && n.scrollHeight > n.clientHeight + 10) {
+                    target = n;
+                    break;
+                  }
+                }
+                if (!target && activeModal.scrollHeight > activeModal.clientHeight) {
+                  target = activeModal;
+                }
+              }
 
-          let wheelOk = false;
-          if ((window as any).electronAPI?.cdpAction) {
-            const res = await (window as any).electronAPI.cdpAction({
-              port,
-              action: 'mouseWheel',
-              payload: {
-                x: targetX,
-                y: targetY,
-                deltaX: 0,
-                deltaY: dy,
-              },
-            });
-            if (res?.success) wheelOk = true;
-          }
+              if (!target && typeof ${targetX} === 'number' && typeof ${targetY} === 'number') {
+                let el = document.elementFromPoint(${targetX}, ${targetY});
+                while (el && el !== document.body && el !== document.documentElement) {
+                  const s = window.getComputedStyle(el);
+                  if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 10) {
+                    target = el;
+                    break;
+                  }
+                  el = el.parentElement;
+                }
+              }
 
-          if (!wheelOk) {
-            await (window as any).electronAPI?.cdpAction({
-              port,
-              action: 'evaluate',
-              payload: {
-                expression: `(() => {
-                  try {
-                    let el = document.elementFromPoint(${targetX}, ${targetY});
-                    while (el && el !== document.body && el !== document.documentElement) {
-                      const s = window.getComputedStyle(el);
-                      if ((s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight) break;
-                      el = el.parentElement;
-                    }
-                    if (!el || el === document.body || el === document.documentElement) {
-                      el = document.scrollingElement || document.documentElement || window;
-                    }
-                    el.scrollBy(0, ${dy});
-                  } catch(e) {}
-                })()`,
-              },
-            }).catch(() => {});
-          }
+              const isWindow = !target || target === document.body || target === document.documentElement;
+              const scrollTarget = isWindow ? (document.scrollingElement || document.documentElement || window) : target;
+              const containerH = isWindow ? window.innerHeight : target.clientHeight;
 
-          // Khoảng trễ tự nhiên giữa các vi bước lăn chuột (8ms - 15ms chuẩn 60fps siêu mượt)
-          await sleep(Math.floor(Math.random() * 8) + 8);
-        }
+              // 2. Tự động thích ứng nếu "luồng nó nhỏ" (cửa sổ thu nhỏ hoặc dialog nhỏ):
+              // Nếu khung nhỏ (< 450px), cuộn khoảng 35% - 65% chiều cao để không bị trôi mất bài
+              let dist;
+              if (containerH < 450) {
+                dist = rand(Math.round(containerH * 0.35), Math.round(containerH * 0.65)) * ${direction};
+              } else {
+                dist = rand(320, 520) * ${direction};
+              }
 
-        // Khoảng nghỉ tự nhiên giữa các lần miết ngón tay xoay chuột (40ms - 75ms)
+              // 3. Cuộn mượt từng nấc nhỏ chuẩn 60fps trực tiếp trong trang
+              const steps = rand(10, 15);
+              const stepDist = dist / steps;
+
+              for (let s = 0; s < steps; s++) {
+                if (scrollTarget === window) {
+                  window.scrollBy(0, stepDist);
+                } else {
+                  scrollTarget.scrollBy(0, stepDist);
+                }
+                await sleep(rand(14, 25));
+              }
+
+              return { success: true, scrolled: dist };
+            })()`,
+          },
+        }).catch(() => {});
+
+        // Dừng lại đọc ngẫu nhiên giữa các lần lăn chuột (nếu cuộn nhiều nấc)
         if (notch < totalNotches - 1) {
-          await sleep(Math.floor(Math.random() * 35) + 40);
+          const pauseTime = Math.floor(Math.random() * 800) + 700; // 700ms - 1500ms
+          await sleep(pauseTime);
         }
       }
 
