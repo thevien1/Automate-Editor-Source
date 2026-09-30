@@ -4387,10 +4387,27 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     }
     // Delay (type 7)
     else if (actType === 7 || actName === 'delay') {
-      const ms = parseInt(getRawVal('MIN', '1000'), 10) || 1000;
-      updateThreadLog(threadId, 'info', `▶ Delay › ${ms}ms`, `Waiting ${ms}ms`);
-      await sleep(Math.min(ms, 3000));
-      updateThreadLog(threadId, 'success', `✔ Delay completed`);
+      const minStr = resolveStr(getRawVal('MIN', '1000'));
+      const maxStr = resolveStr(getRawVal('MAX', ''));
+      let minVal = parseInt(minStr, 10);
+      let maxVal = parseInt(maxStr, 10);
+      if (isNaN(minVal) && isNaN(maxVal)) {
+        minVal = 1000;
+        maxVal = 1000;
+      } else if (isNaN(minVal)) {
+        minVal = maxVal;
+      } else if (isNaN(maxVal)) {
+        maxVal = minVal;
+      }
+      const low = Math.min(minVal, maxVal);
+      const high = Math.max(minVal, maxVal);
+      const waitMs = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
+      updateThreadLog(threadId, 'info', `▶ Delay › ${waitMs}ms${low !== high ? ` [${low}..${high}]` : ''}`, `Waiting ${waitMs}ms`);
+      const startSleep = Date.now();
+      while (Date.now() - startSleep < waitMs && !stopSignalRef.current) {
+        await sleep(Math.min(100, waitMs - (Date.now() - startSleep)));
+      }
+      updateThreadLog(threadId, 'success', `✔ Delay completed › ${waitMs}ms`);
     }
     // Random text (type 8)
     else if (actType === 8 || actName === 'random text') {
@@ -5278,10 +5295,27 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       updateThreadLog(threadId, 'success', `✔ ${act.display_text || 'Action'}`);
     }
 
-    // Delay after completion
+    // Delay after completion (supports fixed value or min,max / min-max random range per thread)
     if (act.delay && !stopSignalRef.current) {
-      const d = parseInt(act.delay.split(',')[0], 10) || 0;
-      if (d > 0) await sleep(Math.min(d, 3000));
+      let dMs = 0;
+      const rawDelay = resolveStr(act.delay).trim();
+      if (rawDelay.includes(',') || rawDelay.includes('-')) {
+        const parts = rawDelay.split(/[,-]/);
+        const minD = parseInt(parts[0], 10) || 0;
+        const maxD = parseInt(parts[1], 10) || minD;
+        const low = Math.min(minD, maxD);
+        const high = Math.max(minD, maxD);
+        dMs = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
+      } else {
+        dMs = parseInt(rawDelay, 10) || 0;
+      }
+      if (dMs > 0 && !stopSignalRef.current) {
+        updateThreadLog(threadId, 'info', `⏳ Delay sau hành động › ${dMs}ms`, `Delay ${dMs}ms`);
+        const startSleep = Date.now();
+        while (Date.now() - startSleep < dMs && !stopSignalRef.current) {
+          await sleep(Math.min(100, dMs - (Date.now() - startSleep)));
+        }
+      }
     }
   };
 

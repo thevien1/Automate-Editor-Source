@@ -855,11 +855,16 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           } else if (isNaN(maxVal)) {
             maxVal = minVal;
           }
-          if (maxVal < minVal) maxVal = minVal;
-          const waitMs = minVal === maxVal ? minVal : Math.floor(Math.random() * (maxVal - minVal + 1)) + minVal;
-          await sleep(Math.min(waitMs, 30000));
+          const low = Math.min(minVal, maxVal);
+          const high = Math.max(minVal, maxVal);
+          const waitMs = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
+          addLog('info', `▶ Delay › ${waitMs}ms${low !== high ? ` [${low}..${high}]` : ''}`);
+          const startSleep = Date.now();
+          while (Date.now() - startSleep < waitMs && !stopSignalRef.current) {
+            await sleep(Math.min(100, waitMs - (Date.now() - startSleep)));
+          }
           if (stopSignalRef.current) break;
-          addLog('success', `✔ Delay › ${waitMs}ms`);
+          addLog('success', `✔ Delay completed › ${waitMs}ms`);
         } else if (actType === 76 || actName === 'stop') {
           addLog('success', '✔ Stop › Flow stopped');
           break;
@@ -3797,19 +3802,26 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           addLog('success', `✔ ${name}${target ? ` › ${target}` : ''}`);
         }
 
-        // Delay after completion (ms)
+        // Delay after completion (ms) (supports fixed value or min,max / min-max random range)
         if (act.delay && !stopSignalRef.current) {
           let dMs = 0;
-          if (act.delay.includes(',')) {
-            const [minS, maxS] = act.delay.split(',');
-            const minD = parseInt(minS, 10) || 0;
-            const maxD = parseInt(maxS, 10) || minD;
-            dMs = Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+          const rawDelay = resolveVars(act.delay, vars).trim();
+          if (rawDelay.includes(',') || rawDelay.includes('-')) {
+            const parts = rawDelay.split(/[,-]/);
+            const minD = parseInt(parts[0], 10) || 0;
+            const maxD = parseInt(parts[1], 10) || minD;
+            const low = Math.min(minD, maxD);
+            const high = Math.max(minD, maxD);
+            dMs = low === high ? low : Math.floor(Math.random() * (high - low + 1)) + low;
           } else {
-            dMs = parseInt(act.delay, 10) || 0;
+            dMs = parseInt(rawDelay, 10) || 0;
           }
-          if (dMs > 0) {
-            await sleep(Math.min(dMs, 5000));
+          if (dMs > 0 && !stopSignalRef.current) {
+            addLog('info', `⏳ Delay sau hành động › ${dMs}ms`);
+            const startSleep = Date.now();
+            while (Date.now() - startSleep < dMs && !stopSignalRef.current) {
+              await sleep(Math.min(100, dMs - (Date.now() - startSleep)));
+            }
           }
         }
       }
