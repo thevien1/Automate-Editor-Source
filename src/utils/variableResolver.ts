@@ -105,8 +105,8 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
     return '';
   });
 
-  // 3.6. Resolve JSON dot property access: $var.prop, ${var.prop}, {{var.prop}}, $var.prop[0]
-  res = res.replace(/(\$|\$\{|\{\{)?([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+(?:\[[0-9]+\])?)(\}|\}\})?/g, (match, prefix, varName, propPath, suffix) => {
+  // 3.6. Resolve JSON dot property access: $var.prop, ${var.prop}, {{var.prop}}, $var.prop[0], $var.prop[$loopIndex]
+  res = res.replace(/(\$|\$\{|\{\{)?([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+(?:\[[^\]]+\])?)(\}|\}\})?/g, (match, prefix, varName, propPath, suffix) => {
     if (!prefix) return match;
     if (prefix === '${' && suffix !== '}') return match;
     if (prefix === '{{' && suffix !== '}}') return match;
@@ -128,11 +128,23 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
 
     if (!obj) return match;
 
-    const propMatch = propPath.match(/^([a-zA-Z0-9_]+)(?:\[([0-9]+)\])?$/);
+    const propMatch = propPath.match(/^([a-zA-Z0-9_]+)(?:\[([^\]]+)\])?$/);
     if (!propMatch) return match;
 
     const propKey = propMatch[1];
-    const arrayIdx = propMatch[2] !== undefined ? parseInt(propMatch[2], 10) : null;
+    let arrayIdx: number | null = null;
+    if (propMatch[2] !== undefined) {
+      let rawIdx = propMatch[2].trim();
+      if (rawIdx.startsWith('$')) {
+        rawIdx = varsMap[rawIdx] ?? varsMap[rawIdx.replace(/^\$/, '')] ?? rawIdx;
+      } else if (varsMap[rawIdx] !== undefined) {
+        rawIdx = varsMap[rawIdx];
+      } else if (varsMap[`$${rawIdx}`] !== undefined) {
+        rawIdx = varsMap[`$${rawIdx}`];
+      }
+      const parsed = parseInt(rawIdx, 10);
+      if (!isNaN(parsed)) arrayIdx = parsed;
+    }
 
     if (obj[propKey] !== undefined) {
       let val = obj[propKey];
