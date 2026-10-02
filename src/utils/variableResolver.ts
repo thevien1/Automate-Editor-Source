@@ -16,9 +16,9 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
   res = res.replace(/\$\{\s*(\$?[a-zA-Z0-9_]+\[[^\]]+\])\s*\}/g, '$1');
 
   // 2. Count function helper: Count($arr) or Count(arr)
-  res = res.replace(/Count\(\s*\$?([a-zA-Z0-9_]+)\s*\)/gi, (_, arrName) => {
+  res = res.replace(/Count\(\s*\$?([a-zA-Z0-9_]+)\s*\)/gi, (match, arrName) => {
     const raw = varsMap[`$${arrName}`] ?? varsMap[arrName];
-    if (!raw) return '0';
+    if (raw === undefined) return match;
     try {
       const parsed = typeof raw === 'string' && (raw.startsWith('[') || raw.startsWith('{')) ? JSON.parse(raw) : raw;
       if (Array.isArray(parsed)) return String(parsed.length);
@@ -30,7 +30,13 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
   });
 
   // 3. Resolve array indexing: $arr[$loopIndex], $arr[0], arr[$i], etc.
-  res = res.replace(/\$?([a-zA-Z0-9_]+)\[([^\]]+)\]/g, (match, arrName, rawIdx) => {
+  res = res.replace(/(\$)?([a-zA-Z0-9_]+)\[([^\]]+)\]/g, (match, hasDollar, arrName, rawIdx) => {
+    // Only resolve if arrName is defined in varsMap. Otherwise it is pure code/text (e.g. articles[0], images[0]) -> keep untouched!
+    const inVars = varsMap[arrName] !== undefined || varsMap[`$${arrName}`] !== undefined || varsMap[`${arrName}[${rawIdx.trim()}]`] !== undefined || varsMap[`$${arrName}[${rawIdx.trim()}]`] !== undefined;
+    if (!inVars) {
+      return match;
+    }
+
     let idxStr = rawIdx.trim();
     if (idxStr.startsWith('$')) {
       idxStr = varsMap[idxStr] ?? varsMap[idxStr.replace(/^\$/, '')] ?? idxStr;
@@ -69,10 +75,11 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
         if (idx >= 0 && idx < lines.length) {
           return lines[idx];
         }
+        return '';
       }
     }
 
-    return '';
+    return match;
   });
 
   // 4. Resolve normal variable references: ${varName}, {{varName}} and $varName
@@ -80,9 +87,9 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
   for (const [k, v] of entries) {
     if (k.includes('[') || k.includes(']')) continue;
     const rawK = k.startsWith('$') ? k.slice(1) : k;
-    res = res.replace(new RegExp(`\\$\\{${rawK}\\}`, 'g'), v);
-    res = res.replace(new RegExp(`\\{\\{${rawK}\\}\\}`, 'g'), v);
-    res = res.replace(new RegExp(`\\$${rawK}(?![a-zA-Z0-9_])`, 'g'), v);
+    res = res.replace(new RegExp(`\\$\\{${rawK}\\}`, 'g'), () => v);
+    res = res.replace(new RegExp(`\\{\\{${rawK}\\}\\}`, 'g'), () => v);
+    res = res.replace(new RegExp(`\\$${rawK}(?![a-zA-Z0-9_])`, 'g'), () => v);
   }
 
   return res;
