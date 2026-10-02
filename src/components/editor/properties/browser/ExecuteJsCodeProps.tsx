@@ -3,37 +3,31 @@ import { ActionPropsCommon } from '../types';
 import { CommonActionFooter } from '../CommonActionFooter';
 import { FileText, FolderOpen, Copy, Check, Terminal, Sparkles } from '../../../common/Icons';
 
-export const FB_POST_EXTRACTOR_JS = `// Trích xuất nội dung và toàn bộ ảnh bài viết Facebook (GPM Automate chuẩn)
-let post = document.querySelector('div[role="dialog"]') ||
-           document.querySelector('div[aria-label*="Bài viết"]') ||
-           document.querySelector('div[data-pagelet*="FeedUnit"]');
+export const FB_POST_EXTRACTOR_JS = `// =======================================================
+// TRÍCH XUẤT NỘI DUNG VÀ ẢNH BÀI VIẾT FACEBOOK (DIALOG & FEED)
+// =======================================================
 
-if (!post) {
-  const articles = Array.from(document.querySelectorAll('div[role="article"], div[data-pagelet*="FeedUnit"]'));
-  if (articles.length > 0) {
-    post = articles.find(el => {
-      const r = el.getBoundingClientRect();
-      return r.top >= -100 && r.top <= window.innerHeight * 0.7;
-    }) || articles[0];
-  }
-}
+// 1. Ưu tiên Dialog đang mở trên cùng, nếu không có lấy bài viết trên Feed
+const dialogs = document.querySelectorAll('div[role="dialog"]');
+const root = dialogs.length > 0
+  ? dialogs[dialogs.length - 1]
+  : (document.querySelector('div[role="article"], div[data-pagelet*="FeedUnit"]') || document.body);
 
-const root = post || document.body;
-
-// 1. Tự động click 'Xem thêm' / 'See more' nếu có
-const btns = root.querySelectorAll('div[role="button"]');
-for (const btn of btns) {
+// 2. Click "Xem thêm" / "See more" nếu nội dung bài viết bị ẩn
+const seeMoreBtns = root.querySelectorAll('div[role="button"]');
+for (const btn of seeMoreBtns) {
   const txt = (btn.innerText || '').trim().toLowerCase();
-  if (txt === 'xem thêm' || txt === 'see more') {
+  const label = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
+  if (txt === 'xem thêm' || txt === 'see more' || label === 'xem thêm' || label === 'see more') {
     try { btn.click(); } catch(e) {}
     break;
   }
 }
 
-// 2. Bóc tách nội dung văn bản (Content)
+// 3. Trích xuất nội dung văn bản (Content)
 let content = '';
-const msgEl = root.querySelector('div[data-ad-preview="message"]') ||
-              root.querySelector('div[dir="auto"][style*="text-align"]') ||
+const msgEl = root.querySelector('div[data-ad-rendering-role="story_message"]') ||
+              root.querySelector('div[data-ad-preview="message"]') ||
               root.querySelector('div[data-ad-comet-preview="message"]');
 
 if (msgEl) {
@@ -42,33 +36,44 @@ if (msgEl) {
   const autoEls = Array.from(root.querySelectorAll('div[dir="auto"]'));
   for (const el of autoEls) {
     const t = el.innerText.trim();
-    if (t.length > content.length && !t.includes('Thích') && !t.includes('Bình luận') && !t.includes('Chia sẻ')) {
+    if (t.length > content.length && 
+        !t.includes('Thích') && 
+        !t.includes('Bình luận') && 
+        !t.includes('Chia sẻ') && 
+        !t.includes('Xem bản dịch') &&
+        !t.includes('Bài viết của')) {
       content = t;
     }
   }
 }
 
-// 3. Bóc tách toàn bộ ảnh bài viết (Lọc bỏ Avatar & Icon cảm xúc)
+// 4. Trích xuất ảnh bài viết (Ảnh feed / Media đính kèm / Thumbnail)
 const imgSet = new Set();
 const allImgs = Array.from(root.querySelectorAll('img'));
+
 for (const img of allImgs) {
   const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
   if (!src || src.startsWith('data:image/svg')) continue;
-  if (src.includes('emoji.php') || src.includes('rsrc.php') || src.includes('/images/video/')) continue;
-  
+  if (src.includes('emoji.php') || src.includes('rsrc.php')) continue;
+
   const rect = img.getBoundingClientRect();
   const w = img.naturalWidth || rect.width;
   const h = img.naturalHeight || rect.height;
-  if (w > 0 && h > 0 && (w <= 80 || h <= 80)) continue;
-  
-  if (src.includes('scontent') || src.includes('fbcdn.net') || img.closest('a[href*="/photo"]') || img.closest('div[data-visualcompletion="media-vc-image"]')) {
+  if (w > 0 && h > 0 && (w <= 85 || h <= 85)) continue;
+
+  const isFeedImg = img.getAttribute('data-imgperflogname') === 'feedImage';
+  const isInImageBlock = !!img.closest('div[data-ad-rendering-role="image"]');
+  const isInPhotoLink = !!img.closest('a[href*="/photo"]');
+  const isCdnMedia = (src.includes('scontent') || src.includes('fbcdn.net') || src.includes('external-')) && !img.closest('svg');
+
+  if (isFeedImg || isInImageBlock || isInPhotoLink || isCdnMedia) {
     imgSet.add(src);
   }
 }
 
 const images = Array.from(imgSet);
 
-// 4. Bắt buộc có lệnh return theo chuẩn GPM Automate
+// 5. Trả về kết quả JSON chuẩn GPM Automate
 return JSON.stringify({
   content: content,
   images: images,
