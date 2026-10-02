@@ -4,21 +4,25 @@ import { CommonActionFooter } from '../CommonActionFooter';
 import { FileText, FolderOpen, Copy, Check, Terminal, Sparkles } from '../../../common/Icons';
 
 export const FB_POST_EXTRACTOR_JS = `// =======================================================
-// TRÍCH XUẤT NỘI DUNG VÀ ẢNH BÀI VIẾT FACEBOOK (DIALOG & FEED)
+// TRÍCH XUẤT NỘI DUNG VÀ ẢNH FACEBOOK DIALOG (ĐA NGÔN NGỮ)
 // =======================================================
 
-// 1. Ưu tiên Dialog đang mở trên cùng, nếu không có lấy bài viết trên Feed
+// 1. Khóa chặt phạm vi vào Dialog đang hiển thị ngoài cùng
 const dialogs = document.querySelectorAll('div[role="dialog"]');
-const root = dialogs.length > 0
-  ? dialogs[dialogs.length - 1]
-  : (document.querySelector('div[role="article"], div[data-pagelet*="FeedUnit"]') || document.body);
+const root = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document.body;
 
-// 2. Click "Xem thêm" / "See more" nếu nội dung bài viết bị ẩn
+// 2. Click "Xem thêm" / "See more" hỗ trợ mọi quốc gia
 const seeMoreBtns = root.querySelectorAll('div[role="button"]');
+const seeMoreKeywords = [
+  'xem thêm', 'see more', 'ver más', 'voir plus', 'ver mais', 
+  'mehr anzeigen', 'altro', 'ещё', '查看更多', 'もっと見る', '더 보기', 'ดูเพิ่มเติม', 'lihat selengkapnya'
+];
+
 for (const btn of seeMoreBtns) {
   const txt = (btn.innerText || '').trim().toLowerCase();
   const label = (btn.getAttribute('aria-label') || '').trim().toLowerCase();
-  if (txt === 'xem thêm' || txt === 'see more' || label === 'xem thêm' || label === 'see more') {
+  const isMatch = seeMoreKeywords.some(kw => txt === kw || label === kw || txt.includes(kw) || label.includes(kw));
+  if (isMatch) {
     try { btn.click(); } catch(e) {}
     break;
   }
@@ -33,47 +37,67 @@ const msgEl = root.querySelector('div[data-ad-rendering-role="story_message"]') 
 if (msgEl) {
   content = msgEl.innerText.trim();
 } else {
+  // Bộ lọc từ khóa hệ thống đa ngôn ngữ (loại bỏ like, comment, share, header)
+  const excludePatterns = [
+    'thích', 'like', 'me gusta', 'j’aime', 'curtir', 'gefällt mir', 'mi piace', 'нравится', '赞', 'いいね', '좋아요',
+    'bình luận', 'comment', 'comentar', 'comentario', 'commentaire', 'kommentar', 'commento', 'комментарий', '评论', 'コメント', '댓글',
+    'chia sẻ', 'share', 'compartir', 'partager', 'compartilhar', 'teilen', 'condividi', 'поделиться', '分享', 'シェア', '공유',
+    'xem bản dịch', 'see translation', 'ver traducción', 'voir la traduction', 'ver tradução', 'übersetzung anzeigen',
+    'bài viết của', "'s post", 'publicación de', 'publication de', 'publicação de', 'beitrag von'
+  ];
+
   const autoEls = Array.from(root.querySelectorAll('div[dir="auto"]'));
   for (const el of autoEls) {
     const t = el.innerText.trim();
-    if (t.length > content.length && 
-        !t.includes('Thích') && 
-        !t.includes('Bình luận') && 
-        !t.includes('Chia sẻ') && 
-        !t.includes('Xem bản dịch') &&
-        !t.includes('Bài viết của')) {
+    const tLower = t.toLowerCase();
+    const isExcluded = excludePatterns.some(p => tLower.includes(p));
+    
+    if (t.length > content.length && !isExcluded) {
       content = t;
     }
   }
 }
 
-// 4. Trích xuất ảnh bài viết (Ảnh feed / Media đính kèm / Thumbnail)
+// 4. Trích xuất ảnh bài viết (Hỗ trợ Ảnh đơn, Lưới Album, Thumbnail chia sẻ link)
 const imgSet = new Set();
 const allImgs = Array.from(root.querySelectorAll('img'));
 
 for (const img of allImgs) {
   const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
   if (!src || src.startsWith('data:image/svg')) continue;
+  
+  // 4.1. Bỏ qua icon cảm xúc, emoji và hình trang trí Facebook
   if (src.includes('emoji.php') || src.includes('rsrc.php')) continue;
 
+  // 4.2. Bỏ qua avatar người dùng (nằm trong thẻ SVG mask hoặc container avatar)
+  if (img.closest('svg') || img.closest('mask') || img.closest('div[class*="x1vqgdyp"]')) continue;
+
+  // 4.3. Lọc theo kích thước hiển thị trực tiếp (Nếu có)
   const rect = img.getBoundingClientRect();
-  const w = img.naturalWidth || rect.width;
-  const h = img.naturalHeight || rect.height;
-  if (w > 0 && h > 0 && (w <= 85 || h <= 85)) continue;
+  const w = img.naturalWidth || rect.width || parseInt(img.getAttribute('width') || '0', 10);
+  const h = img.naturalHeight || rect.height || parseInt(img.getAttribute('height') || '0', 10);
+  
+  // Chỉ bỏ qua nếu chắc chắn kích thước là icon rất nhỏ (dưới 50px)
+  if (w > 0 && h > 0 && (w < 50 || h < 50)) continue;
 
+  // 4.4. Nhận diện ảnh bài viết theo cấu trúc thực tế:
+  // - Ảnh có data-imgperflogname="feedImage"
+  // - Nằm trong khối data-ad-rendering-role="image" (ảnh thumbnail link video/báo)
+  // - Nằm trong thẻ a trỏ link /photo/ (ảnh đơn hoặc lưới album)
+  // - Ảnh từ CDN scontent/fbcdn/external không thuộc avatar
   const isFeedImg = img.getAttribute('data-imgperflogname') === 'feedImage';
-  const isInImageBlock = !!img.closest('div[data-ad-rendering-role="image"]');
-  const isInPhotoLink = !!img.closest('a[href*="/photo"]');
-  const isCdnMedia = (src.includes('scontent') || src.includes('fbcdn.net') || src.includes('external-')) && !img.closest('svg');
+  const isInImageRole = !!img.closest('div[data-ad-rendering-role="image"]');
+  const isInPhotoLink = !!img.closest('a[href*="/photo"]') || !!img.closest('a[href*="/photos/"]');
+  const isCdnValid = src.includes('scontent') || src.includes('fbcdn.net') || src.includes('external-');
 
-  if (isFeedImg || isInImageBlock || isInPhotoLink || isCdnMedia) {
+  if (isFeedImg || isInImageRole || isInPhotoLink || (isCdnValid && !img.closest('div[role="button"]'))) {
     imgSet.add(src);
   }
 }
 
 const images = Array.from(imgSet);
 
-// 5. Trả về kết quả JSON chuẩn GPM Automate
+// 5. Trả về kết quả
 return JSON.stringify({
   content: content,
   images: images,

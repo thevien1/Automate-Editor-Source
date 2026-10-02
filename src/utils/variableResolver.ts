@@ -95,6 +95,9 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
       const obj = typeof rawVal === 'string' ? JSON.parse(rawVal) : rawVal;
       if (obj && typeof obj === 'object' && obj[propKey] !== undefined) {
         const val = obj[propKey];
+        if (Array.isArray(val)) {
+          return val.every((x: any) => typeof x === 'string' || typeof x === 'number') ? val.join('\n') : JSON.stringify(val);
+        }
         return typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
       }
     } catch (e) {}
@@ -139,6 +142,9 @@ export function resolveVariableString(str: string, varsMap: Record<string, strin
         } else {
           return '';
         }
+      }
+      if (Array.isArray(val)) {
+        return val.every((x: any) => typeof x === 'string' || typeof x === 'number') ? val.join('\n') : JSON.stringify(val);
       }
       return typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
     }
