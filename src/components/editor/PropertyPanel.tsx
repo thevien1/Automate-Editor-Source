@@ -34,6 +34,7 @@ import { HttpMailProps } from './properties/http/HttpMailProps';
 import { SwitchProps } from './properties/navigation/SwitchProps';
 import { CookieProps } from './properties/cookie/CookieProps';
 import { CallWorkflowProps } from './properties/workflow/CallWorkflowProps';
+import { ExecuteJsCodeProps } from './properties/browser/ExecuteJsCodeProps';
 import { GenericActionProps } from './properties/GenericActionProps';
 import { VariablesPanel } from './VariablesPanel';
 
@@ -183,6 +184,11 @@ export const PropertyPanel: React.FC = () => {
       [36, 37, 38, 73, 39, 40, 41, 42, 43].includes(type as number)
     ) {
       return <NavigationProps {...commonProps} />;
+    }
+
+    // Execute JS Code (type 68)
+    if (name === 'execute js code' || name.includes('execute js') || name.includes('chạy mã javascript') || type === 68) {
+      return <ExecuteJsCodeProps {...commonProps} />;
     }
 
     // Element Actions

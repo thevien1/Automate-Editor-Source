@@ -3358,19 +3358,37 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           vars[cleanName] = currentUrl;
           addLog('success', '✔ Get URL');
           addLog('arrow', `   ↳ ${varName} = "${currentUrl}"`);
-        } else if (actType === 68 || actName === 'execute js code') {
+        } else if (actType === 68 || actName === 'execute js code' || actName.includes('javascript')) {
           const code = getRawInputValue(act.raw_input, 'FILE_OR_CODE', 'return document.title;');
-          const resolvedCode = resolveVars(code, vars);
+          let resolvedCode = resolveVars(code, vars);
+
+          // Kiểm tra nếu là đường dẫn file .js trên đĩa
+          const trimmed = resolvedCode.trim().replace(/^["']|["']$/g, '');
+          if ((trimmed.endsWith('.js') || trimmed.includes('\\') || trimmed.includes('/')) && (window as any).electronAPI?.fileAction) {
+            try {
+              const fileRes = await (window as any).electronAPI.fileAction({ action: 'read', payload: { path: trimmed } });
+              if (fileRes?.success && fileRes?.text) {
+                resolvedCode = resolveVars(fileRes.text, vars);
+              }
+            } catch (e) {}
+          }
+
           const rawVar = act.output_variable_name || 'js_result';
           const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
           const cleanName = varName.replace(/^\$/, '');
-          const wrappedCode = `(() => { try { ${resolvedCode.includes('return') ? resolvedCode : 'return ' + resolvedCode} } catch(e) { return 'ERROR: ' + e.message; } })()`;
+          const wrappedCode = `(async () => { try { ${resolvedCode.includes('return') ? resolvedCode : 'return ' + resolvedCode} } catch(e) { return 'ERROR: ' + (e?.message || String(e)); } })()`;
           const res = await evaluateInChrome(wrappedCode);
-          const jsVal = res.success ? String(res.value ?? '') : (res.error || '');
+          let jsVal = '';
+          if (res.success) {
+            const val = res.value;
+            jsVal = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
+          } else {
+            jsVal = res.error || '';
+          }
           vars[varName] = jsVal;
           vars[cleanName] = jsVal;
           addLog('success', '✔ Execute JS code');
-          addLog('arrow', `   ↳ ${varName} = "${jsVal}"`);
+          addLog('arrow', `   ↳ ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
         } else if (actType === 58 || actName === 'scroll to top') {
           await evaluateInChrome('window.scrollTo(0, 0)');
           addLog('success', '✔ Scroll to top');

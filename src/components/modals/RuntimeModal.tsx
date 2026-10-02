@@ -3331,6 +3331,81 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       updateThreadLog(threadId, 'success', `✔ Mouse scrolled ${totalNotches} nấc thành công (mượt như người thật)`);
       await sleep(150);
     }
+    // Execute JS code (type 68)
+    else if (actType === 68 || actName === 'execute js code' || actName.includes('javascript')) {
+      const rawCode = getRawVal('FILE_OR_CODE', 'return document.title;');
+      let resolvedCode = resolveStr(rawCode);
+      const rawVar = act.output_variable_name || 'js_result';
+      const varName = rawVar.startsWith('$') ? rawVar : `$${rawVar}`;
+      const cleanName = varName.replace(/^\$/, '');
+      updateThreadLog(threadId, 'info', `▶ Execute JS code › Thực thi mã JavaScript`, 'Execute JS code');
+
+      // Kiểm tra nếu là đường dẫn file .js trên đĩa
+      const trimmed = resolvedCode.trim().replace(/^["']|["']$/g, '');
+      if ((trimmed.endsWith('.js') || trimmed.includes('\\') || trimmed.includes('/')) && (window as any).electronAPI?.fileAction) {
+        try {
+          const fileRes = await (window as any).electronAPI.fileAction({ action: 'read', payload: { path: trimmed } });
+          if (fileRes?.success && fileRes?.text) {
+            resolvedCode = resolveStr(fileRes.text);
+          }
+        } catch (e) {}
+      }
+
+      let jsVal = '';
+      if ((window as any).electronAPI?.cdpAction) {
+        const wrappedCode = `(async () => {
+          try {
+            ${resolvedCode.includes('return') ? resolvedCode : 'return ' + resolvedCode}
+          } catch(e) {
+            return 'ERROR: ' + (e?.message || String(e));
+          }
+        })()`;
+
+        const evalRes = await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: { expression: wrappedCode },
+        });
+
+        if (evalRes?.success) {
+          const val = evalRes.value;
+          jsVal = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
+        } else {
+          jsVal = evalRes?.error || 'Execution failed';
+        }
+      }
+
+      vars[varName] = jsVal;
+      vars[cleanName] = jsVal;
+      updateThreadLog(threadId, 'success', `✔ Execute JS code › ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
+      await sleep(100);
+    }
+    // Scroll to top (type 58)
+    else if (actType === 58 || actName === 'scroll to top') {
+      updateThreadLog(threadId, 'info', `▶ Scroll to top › Cuộn lên đầu trang`, 'Scroll to top');
+      if ((window as any).electronAPI?.cdpAction) {
+        await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: { expression: 'window.scrollTo({ top: 0, behavior: "smooth" });' },
+        });
+      }
+      updateThreadLog(threadId, 'success', `✔ Scroll to top thành công`);
+      await sleep(200);
+    }
+    // Scroll to bottom (type 59)
+    else if (actType === 59 || actName === 'scroll to bottom') {
+      updateThreadLog(threadId, 'info', `▶ Scroll to bottom › Cuộn xuống cuối trang`, 'Scroll to bottom');
+      if ((window as any).electronAPI?.cdpAction) {
+        await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: { expression: 'window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });' },
+        });
+      }
+      updateThreadLog(threadId, 'success', `✔ Scroll to bottom thành công`);
+      await sleep(200);
+    }
     // Wait URL Changed (type 43)
     else if (actType === 43 || actName === 'wait url changed') {
       const rawCurrentUrl = getRawVal('CURRENT_URL', '').trim();

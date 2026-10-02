@@ -1,0 +1,234 @@
+import React, { useState } from 'react';
+import { ActionPropsCommon } from '../types';
+import { CommonActionFooter } from '../CommonActionFooter';
+import { FileText, FolderOpen, Copy, Check, Terminal, Sparkles } from '../../../common/Icons';
+
+export const FB_POST_EXTRACTOR_JS = `// Trích xuất nội dung và toàn bộ ảnh bài viết Facebook (GPM Automate chuẩn)
+let post = document.querySelector('div[role="dialog"]') ||
+           document.querySelector('div[aria-label*="Bài viết"]') ||
+           document.querySelector('div[data-pagelet*="FeedUnit"]');
+
+if (!post) {
+  const articles = Array.from(document.querySelectorAll('div[role="article"], div[data-pagelet*="FeedUnit"]'));
+  if (articles.length > 0) {
+    post = articles.find(el => {
+      const r = el.getBoundingClientRect();
+      return r.top >= -100 && r.top <= window.innerHeight * 0.7;
+    }) || articles[0];
+  }
+}
+
+const root = post || document.body;
+
+// 1. Tự động click 'Xem thêm' / 'See more' nếu có
+const btns = root.querySelectorAll('div[role="button"]');
+for (const btn of btns) {
+  const txt = (btn.innerText || '').trim().toLowerCase();
+  if (txt === 'xem thêm' || txt === 'see more') {
+    try { btn.click(); } catch(e) {}
+    break;
+  }
+}
+
+// 2. Bóc tách nội dung văn bản (Content)
+let content = '';
+const msgEl = root.querySelector('div[data-ad-preview="message"]') ||
+              root.querySelector('div[dir="auto"][style*="text-align"]') ||
+              root.querySelector('div[data-ad-comet-preview="message"]');
+
+if (msgEl) {
+  content = msgEl.innerText.trim();
+} else {
+  const autoEls = Array.from(root.querySelectorAll('div[dir="auto"]'));
+  for (const el of autoEls) {
+    const t = el.innerText.trim();
+    if (t.length > content.length && !t.includes('Thích') && !t.includes('Bình luận') && !t.includes('Chia sẻ')) {
+      content = t;
+    }
+  }
+}
+
+// 3. Bóc tách toàn bộ ảnh bài viết (Lọc bỏ Avatar & Icon cảm xúc)
+const imgSet = new Set();
+const allImgs = Array.from(root.querySelectorAll('img'));
+for (const img of allImgs) {
+  const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
+  if (!src || src.startsWith('data:image/svg')) continue;
+  if (src.includes('emoji.php') || src.includes('rsrc.php') || src.includes('/images/video/')) continue;
+  
+  const rect = img.getBoundingClientRect();
+  const w = img.naturalWidth || rect.width;
+  const h = img.naturalHeight || rect.height;
+  if (w > 0 && h > 0 && (w <= 80 || h <= 80)) continue;
+  
+  if (src.includes('scontent') || src.includes('fbcdn.net') || img.closest('a[href*="/photo"]') || img.closest('div[data-visualcompletion="media-vc-image"]')) {
+    imgSet.add(src);
+  }
+}
+
+const images = Array.from(imgSet);
+
+// 4. Bắt buộc có lệnh return theo chuẩn GPM Automate
+return JSON.stringify({
+  content: content,
+  images: images,
+  first_image: images[0] || "",
+  image_count: images.length
+});`;
+
+const CODE_PRESETS = [
+  {
+    name: '🔥 Facebook: Lấy Content & Toàn bộ Ảnh',
+    code: FB_POST_EXTRACTOR_JS,
+  },
+  {
+    name: '📄 Lấy Title trang',
+    code: 'return document.title;',
+  },
+  {
+    name: '🔗 Lấy URL trang hiện tại',
+    code: 'return window.location.href;',
+  },
+  {
+    name: '📜 Cuộn trang xuống mượt mà',
+    code: 'window.scrollBy({ top: 600, behavior: "smooth" });\nreturn "scrolled";',
+  },
+  {
+    name: '🖱 Click phần tử bằng Selector',
+    code: 'const el = document.querySelector("button[type=\'submit\']");\nif (el) { el.click(); return "clicked"; }\nreturn "not_found";',
+  },
+  {
+    name: '🍪 Lấy Cookie toàn bộ trang',
+    code: 'return document.cookie;',
+  },
+];
+
+export const ExecuteJsCodeProps: React.FC<ActionPropsCommon> = ({
+  actionNode,
+  getRawVal,
+  handleRawInputByKey,
+  updateNode,
+}) => {
+  const [copied, setCopied] = useState(false);
+  const codeVal = getRawVal('FILE_OR_CODE', 'return document.title;');
+
+  const handleBrowseFile = async () => {
+    try {
+      if ((window as any).electronAPI?.openFileDialog) {
+        const res = await (window as any).electronAPI.openFileDialog({
+          title: 'Chọn file JavaScript (.js)',
+          filters: [{ name: 'JavaScript Files', extensions: ['js'] }],
+        });
+        if (res && res.filePath) {
+          handleRawInputByKey('FILE_OR_CODE', res.filePath);
+        }
+      }
+    } catch (e) {
+      console.error('Error opening file dialog:', e);
+    }
+  };
+
+  const handleCopyCode = () => {
+    navigator.clipboard.writeText(codeVal);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Code or File Path */}
+      <div>
+        <div className="flex items-center justify-between mb-1.5">
+          <label className="text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] flex items-center gap-1.5">
+            <Terminal className="w-3.5 h-3.5 text-[#1677ff] dark:text-[#38bdf8]" />
+            Đường dẫn tới file js hoặc code
+          </label>
+          <div className="flex items-center space-x-1">
+            <button
+              type="button"
+              onClick={handleBrowseFile}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border border-[#d9d9d9] dark:border-[#1e293b] text-[#475569] dark:text-[#94a3b8] hover:text-[#1677ff] dark:hover:text-[#38bdf8] hover:border-[#1677ff] dark:hover:border-[#38bdf8] transition-colors"
+              title="Chọn file .js từ máy tính"
+            >
+              <FolderOpen className="w-3 h-3" />
+              <span>Browse .js</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleCopyCode}
+              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium rounded border border-[#d9d9d9] dark:border-[#1e293b] text-[#475569] dark:text-[#94a3b8] hover:text-[#1677ff] dark:hover:border-[#38bdf8] transition-colors"
+              title="Sao chép toàn bộ code"
+            >
+              {copied ? <Check className="w-3 h-3 text-emerald-500" /> : <Copy className="w-3 h-3" />}
+              <span>{copied ? 'Đã chép' : 'Copy'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Code Snippets Dropdown */}
+        <div className="mb-2">
+          <div className="relative">
+            <select
+              value=""
+              onChange={(e) => {
+                if (e.target.value) {
+                  handleRawInputByKey('FILE_OR_CODE', e.target.value);
+                  e.target.value = '';
+                }
+              }}
+              className="w-full px-2.5 py-1 text-[11px] bg-[#f8fafc] dark:bg-[#070d18] text-[#1e293b] dark:text-[#cbd5e1] border border-[#e2e8f0] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none cursor-pointer appearance-none pr-7"
+            >
+              <option value="" disabled>
+                ⚡ Chèn mã mẫu có sẵn (Facebook, DOM, URL...)...
+              </option>
+              {CODE_PRESETS.map((preset, idx) => (
+                <option key={idx} value={preset.code}>
+                  {preset.name}
+                </option>
+              ))}
+            </select>
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none text-[#64748b]">
+              <Sparkles className="w-3 h-3 text-[#1677ff] dark:text-[#38bdf8]" />
+            </div>
+          </div>
+        </div>
+
+        {/* Multiline Code Textarea */}
+        <div className="relative">
+          <textarea
+            value={codeVal}
+            onChange={(e) => handleRawInputByKey('FILE_OR_CODE', e.target.value)}
+            rows={12}
+            spellCheck={false}
+            placeholder={`// Viết mã JavaScript ở đây\n// Bắt buộc phải kết thúc bằng return <giá_trị>;\nreturn document.title;`}
+            className="w-full px-3 py-2 text-xs font-mono bg-[#fdfdfd] dark:bg-[#0a0f1d] text-[#0f172a] dark:text-[#38bdf8] border border-[#cbd5e1] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none resize-y leading-relaxed"
+          />
+        </div>
+
+        <div className="mt-1.5 p-2 bg-[#f0f9ff] dark:bg-[#081b2e] border border-[#bae6fd] dark:border-[#0369a1]/40 rounded text-[10px] text-[#0369a1] dark:text-[#7dd3fc] leading-tight flex items-start gap-1.5">
+          <span className="font-bold">⚠️ Lưu ý GPM:</span>
+          <span>Bắt buộc có lệnh <b>return</b> ở cuối để lưu kết quả vào biến đầu ra. Biến string nhúng dạng <code className="font-mono bg-white/60 dark:bg-black/40 px-1 rounded">`$var`</code>, biến số nhúng dạng <code className="font-mono bg-white/60 dark:bg-black/40 px-1 rounded">$index</code>.</span>
+        </div>
+      </div>
+
+      {/* Output Variable Name */}
+      <div>
+        <label className="block text-[11px] font-medium text-[#475569] dark:text-[#94a3b8] mb-1.5">
+          Tên biến đầu ra (Output Variable Name)
+        </label>
+        <div className="relative">
+          <input
+            type="text"
+            value={actionNode.output_variable_name || ''}
+            onChange={(e) => updateNode(actionNode.id, { output_variable_name: e.target.value })}
+            placeholder="vd: post_data hoặc js_result"
+            className="w-full px-3 py-1.5 text-xs font-mono bg-white dark:bg-[#0f172a] text-[#1e293b] dark:text-[#f1f5f9] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md hover:border-[#1677ff] dark:hover:border-[#38bdf8] focus:border-[#1677ff] dark:focus:border-[#38bdf8] focus:outline-none"
+          />
+        </div>
+      </div>
+
+      {/* Common Footer (Delay, Continue on Error, Note) */}
+      <CommonActionFooter actionNode={actionNode} updateNode={updateNode} />
+    </div>
+  );
+};

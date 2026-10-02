@@ -2,7 +2,8 @@
   "if": {
     "color": "#a855f7",
     "iconType": "bootstrap",
-    "iconValue": "diagram-3"
+    "iconValue": "diagram-3",
+    "scale": 1
   },
   "normal block": {
     "color": "#0284c7",
@@ -78,6 +79,12 @@
     "color": "#1677ff",
     "iconType": "svg",
     "iconValue": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 24 24\" height=\"100px\" fill=\"#1677ff\"><title>arrange-bring-to-front</title><path d=\"M2,2H11V6H9V4H4V9H6V11H2V2M22,13V22H13V18H15V20H20V15H18V13H22M8,8H16V16H8V8Z\" /></svg>",
+    "scale": 1
+  },
+  "execute js code": {
+    "color": "#1677ff",
+    "iconType": "svg",
+    "iconValue": "<i class=\"bi bi-code-slash\"></i>",
     "scale": 1
   }
 }
