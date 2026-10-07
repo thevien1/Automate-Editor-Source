@@ -4,14 +4,31 @@ import { CommonActionFooter } from '../CommonActionFooter';
 import { FileText, FolderOpen, Copy, Check, Terminal, Sparkles } from '../../../common/Icons';
 
 export const FB_POST_EXTRACTOR_JS = `// =======================================================
-// TRÍCH XUẤT NỘI DUNG VÀ ẢNH FACEBOOK DIALOG (ĐA NGÔN NGỮ)
+// TRÍCH XUẤT NỘI DUNG VÀ ẢNH FACEBOOK (MODAL & PERMALINK)
 // =======================================================
 
-// 1. Khóa chặt phạm vi vào Dialog đang hiển thị ngoài cùng
-const dialogs = document.querySelectorAll('div[role="dialog"]');
-const root = dialogs.length > 0 ? dialogs[dialogs.length - 1] : document.body;
+// 1. Xác định container chứa bài viết chính xác
+const allDialogs = Array.from(document.querySelectorAll('div[role="dialog"]'));
+// Chỉ lấy Dialog hiển thị bài viết thực tế (>300px), bỏ qua popup thông báo, chat ẩn hoặc tooltip 0x0
+const visibleDialogs = allDialogs.filter(d => {
+  const r = d.getBoundingClientRect();
+  const label = (d.getAttribute('aria-label') || '').toLowerCase();
+  return r.width > 300 && r.height > 250 && !label.includes('thông báo') && !label.includes('notification');
+});
 
-// 2. Click "Xem thêm" / "See more" hỗ trợ mọi quốc gia
+let root = null;
+if (visibleDialogs.length > 0) {
+  // Lấy Dialog bài viết đang hiển thị trên cùng
+  root = visibleDialogs[visibleDialogs.length - 1];
+} else {
+  // Nếu là trang permalink đơn (không mở popup), lấy theo main / article / feed
+  root = document.querySelector('div[role="main"]') || 
+         document.querySelector('div[role="article"]') || 
+         document.querySelector('div[data-pagelet*="FeedUnit"]') || 
+         document.body;
+}
+
+// 2. Click "Xem thêm" / "See more" hỗ trợ đa ngôn ngữ
 const seeMoreBtns = root.querySelectorAll('div[role="button"]');
 const seeMoreKeywords = [
   'xem thêm', 'see more', 'ver más', 'voir plus', 'ver mais', 
@@ -32,7 +49,8 @@ for (const btn of seeMoreBtns) {
 let content = '';
 const msgEl = root.querySelector('div[data-ad-rendering-role="story_message"]') ||
               root.querySelector('div[data-ad-preview="message"]') ||
-              root.querySelector('div[data-ad-comet-preview="message"]');
+              root.querySelector('div[data-ad-comet-preview="message"]') ||
+              root.querySelector('div[dir="auto"][style*="text-align"]');
 
 if (msgEl) {
   content = msgEl.innerText.trim();
@@ -58,7 +76,7 @@ if (msgEl) {
   }
 }
 
-// 4. Trích xuất ảnh bài viết (Hỗ trợ Ảnh đơn, Lưới Album, Thumbnail chia sẻ link)
+// 4. Trích xuất toàn bộ ảnh bài viết
 const imgSet = new Set();
 const allImgs = Array.from(root.querySelectorAll('img'));
 
@@ -66,38 +84,59 @@ for (const img of allImgs) {
   const src = img.currentSrc || img.src || img.getAttribute('data-src') || '';
   if (!src || src.startsWith('data:image/svg')) continue;
   
-  // 4.1. Bỏ qua icon cảm xúc, emoji và hình trang trí Facebook
+  // 4.1. Bỏ qua icon cảm xúc, emoji và hình trang trí hệ thống
   if (src.includes('emoji.php') || src.includes('rsrc.php')) continue;
 
-  // 4.2. Bỏ qua avatar người dùng (nằm trong thẻ SVG mask hoặc container avatar)
+  // 4.2. Bỏ qua thanh biểu tượng cảm xúc (reactions toolbar)
+  if (img.closest('div[role="toolbar"]') || img.closest('div[aria-label*="reaction"]') || img.closest('div[aria-label*="Cảm xúc"]')) continue;
+
+  // 4.3. Bỏ qua avatar người dùng (nằm trong thẻ SVG mask hoặc container avatar)
   if (img.closest('svg') || img.closest('mask') || img.closest('div[class*="x1vqgdyp"]')) continue;
 
-  // 4.3. Lọc theo kích thước hiển thị trực tiếp (Nếu có)
+  // 4.4. Lọc kích thước: Bỏ qua nếu hiển thị hoặc natural quá nhỏ (< 70px)
   const rect = img.getBoundingClientRect();
   const w = img.naturalWidth || rect.width || parseInt(img.getAttribute('width') || '0', 10);
   const h = img.naturalHeight || rect.height || parseInt(img.getAttribute('height') || '0', 10);
-  
-  // Chỉ bỏ qua nếu chắc chắn kích thước là icon rất nhỏ (dưới 50px)
-  if (w > 0 && h > 0 && (w < 50 || h < 50)) continue;
+  if (w > 0 && h > 0 && (w < 70 || h < 70)) continue;
 
-  // 4.4. Nhận diện ảnh bài viết theo cấu trúc thực tế:
-  // - Ảnh có data-imgperflogname="feedImage"
-  // - Nằm trong khối data-ad-rendering-role="image" (ảnh thumbnail link video/báo)
-  // - Nằm trong thẻ a trỏ link /photo/ (ảnh đơn hoặc lưới album)
-  // - Ảnh từ CDN scontent/fbcdn/external không thuộc avatar
+  // 4.5. Nhận diện ảnh bài viết:
   const isFeedImg = img.getAttribute('data-imgperflogname') === 'feedImage';
   const isInImageRole = !!img.closest('div[data-ad-rendering-role="image"]');
   const isInPhotoLink = !!img.closest('a[href*="/photo"]') || !!img.closest('a[href*="/photos/"]');
   const isCdnValid = src.includes('scontent') || src.includes('fbcdn.net') || src.includes('external-');
 
-  if (isFeedImg || isInImageRole || isInPhotoLink || (isCdnValid && !img.closest('div[role="button"]'))) {
+  if (isFeedImg || isInImageRole || isInPhotoLink || isCdnValid) {
     imgSet.add(src);
+  }
+}
+
+// 4b. Quét thêm background-image (cho trường hợp album dạng lưới nhiều ảnh)
+const bgEls = Array.from(root.querySelectorAll('div[style*="background-image"], i[style*="background-image"], a[style*="background-image"]'));
+for (const el of bgEls) {
+  const style = el.getAttribute('style') || '';
+  if (style.includes('url(')) {
+    const rawUrl = (style.split('url(')[1] || '').split(')')[0].replace(/['"]/g, '').trim();
+    if (rawUrl.startsWith('https://') && (rawUrl.includes('scontent') || rawUrl.includes('fbcdn.net')) && !rawUrl.includes('rsrc.php') && !rawUrl.includes('emoji.php')) {
+      const r = el.getBoundingClientRect();
+      if (r.width >= 70 && r.height >= 70) {
+        imgSet.add(rawUrl);
+      }
+    }
+  }
+}
+
+// 4c. Quét thêm ảnh đại diện video (poster) nếu bài viết là video
+const videos = Array.from(root.querySelectorAll('video[poster]'));
+for (const v of videos) {
+  const poster = v.getAttribute('poster') || '';
+  if (poster.startsWith('https://') && (poster.includes('scontent') || poster.includes('fbcdn.net'))) {
+    imgSet.add(poster);
   }
 }
 
 const images = Array.from(imgSet);
 
-// 5. Trả về kết quả
+// 5. Trả về kết quả JSON
 return JSON.stringify({
   content: content,
   images: images,

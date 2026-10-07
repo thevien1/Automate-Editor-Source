@@ -65,6 +65,27 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   if (!conditionStr || !conditionStr.trim()) return true;
   let expr = conditionStr.trim();
 
+  // Strip outer brackets if the user entered the condition wrapped in [ ... ]
+  if (expr.startsWith('[') && expr.endsWith(']')) {
+    let depth = 0;
+    let isOuter = true;
+    for (let i = 0; i < expr.length - 1; i++) {
+      if (expr[i] === '[') depth++;
+      else if (expr[i] === ']') depth--;
+      if (depth === 0) {
+        isOuter = false;
+        break;
+      }
+    }
+    if (isOuter && depth === 1) {
+      expr = expr.slice(1, -1).trim();
+    }
+  }
+
+  // Unwrap {{...}} and ${...}
+  expr = expr.replace(/\{\{\s*([^{}]+)\s*\}\}/g, '$1');
+  expr = expr.replace(/\$\{\s*([^}]+)\s*\}/g, '$$1');
+
   // Protect string literals before converting '=' so that '=' inside strings is untouched
   const strings: string[] = [];
   expr = expr.replace(/"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'/g, (match) => {
@@ -79,7 +100,93 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   // Restore string literals
   expr = expr.replace(/__STR_LITERAL_(\d+)__/g, (_, idx) => strings[Number(idx)]);
 
-  // Resolve array indexing in conditions: $arr[0], $arr[$i], $arr[$loopIndex], arr[0], etc.
+  const formatValForCondition = (val: any): string => {
+    if (val === undefined || val === null) return '""';
+    if (Array.isArray(val)) val = val.length;
+    const str = String(val).trim();
+    if (/^(true|false)$/i.test(str)) return str.toLowerCase() === 'true' ? 'true' : 'false';
+    if (/^-?\d+(\.\d+)?$/.test(str)) return str;
+    return JSON.stringify(str);
+  };
+
+  const extractNestedProp = (raw: any, propPath: string): any => {
+    if (raw === undefined || raw === null) return undefined;
+    let obj: any = raw;
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+        try { obj = JSON.parse(trimmed); } catch (e) { return undefined; }
+      } else {
+        return undefined;
+      }
+    }
+    if (typeof obj !== 'object' || obj === null) return undefined;
+
+    const segments = propPath.split('.');
+    let cur = obj;
+    for (let i = 0; i < segments.length; i++) {
+      if (cur === undefined || cur === null) return undefined;
+      const seg = segments[i].trim();
+      const bracketMatch = seg.match(/^([a-zA-Z0-9_]+)\[([^\]]+)\]$/);
+      if (bracketMatch) {
+        const key = bracketMatch[1];
+        let idxStr = bracketMatch[2].trim();
+        if (idxStr.startsWith('$')) {
+          idxStr = vars[idxStr] ?? vars[idxStr.replace(/^\$/, '')] ?? idxStr;
+        } else if (vars[idxStr] !== undefined) {
+          idxStr = vars[idxStr];
+        } else if (vars[`$${idxStr}`] !== undefined) {
+          idxStr = vars[`$${idxStr}`];
+        }
+        const idx = parseInt(idxStr, 10);
+        cur = cur[key];
+        if (Array.isArray(cur) && !isNaN(idx)) {
+          cur = cur[idx];
+        } else {
+          return undefined;
+        }
+      } else {
+        if ((seg === 'length' || seg.toLowerCase() === 'count') && Array.isArray(cur)) {
+          cur = cur.length;
+        } else {
+          cur = cur[seg];
+        }
+      }
+    }
+    return cur;
+  };
+
+  // 1. Resolve JSON bracket property: $var['prop'] or $var["prop"]
+  expr = expr.replace(/(\$)?([a-zA-Z0-9_]+)\[['"]([a-zA-Z0-9_]+)['"]\]/g, (match, hasDollar, varName, propKey) => {
+    const directKey1 = `$${varName}[${propKey}]`;
+    const directKey2 = `${varName}[${propKey}]`;
+    if (vars[directKey1] !== undefined) return formatValForCondition(vars[directKey1]);
+    if (vars[directKey2] !== undefined) return formatValForCondition(vars[directKey2]);
+
+    const raw = vars[`$${varName}`] ?? vars[varName];
+    if (raw !== undefined) {
+      const val = extractNestedProp(raw, propKey);
+      return formatValForCondition(val);
+    }
+    return match;
+  });
+
+  // 2. Resolve JSON dot property and nested access: $var.prop, $var.prop.sub, $var.prop[0], $var.prop[$i]
+  expr = expr.replace(/(\$)?([a-zA-Z0-9_]+)\.([a-zA-Z0-9_]+(?:\[[^\]]+\])?(?:\.[a-zA-Z0-9_]+)*)/g, (match, hasDollar, varName, propPath) => {
+    const fullKey1 = `$${varName}.${propPath}`;
+    const fullKey2 = `${varName}.${propPath}`;
+    if (vars[fullKey1] !== undefined) return formatValForCondition(vars[fullKey1]);
+    if (vars[fullKey2] !== undefined) return formatValForCondition(vars[fullKey2]);
+
+    const raw = vars[`$${varName}`] ?? vars[varName];
+    if (raw !== undefined) {
+      const val = extractNestedProp(raw, propPath);
+      return formatValForCondition(val);
+    }
+    return match;
+  });
+
+  // 3. Resolve array indexing in conditions: $arr[0], $arr[$i], $arr[$loopIndex], arr[0], etc.
   expr = expr.replace(/\$?([a-zA-Z0-9_]+)\[([^\]]+)\]/g, (match, arrName, rawIdx) => {
     let idxStr = rawIdx.trim();
     if (idxStr.startsWith('$')) {
@@ -124,18 +231,23 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
     }
 
     if (val === undefined) return '""';
-    if (/^(true|false)$/i.test(val)) return val.toLowerCase() === 'true' ? 'true' : 'false';
-    if (/^-?\d+(\.\d+)?$/.test(val)) return val;
-    return JSON.stringify(val);
+    return formatValForCondition(val);
   });
 
-  // Replace variables: longest variable names first to avoid partial replacements
+  // 4. Replace standalone variables: longest variable names first to avoid partial replacements
   const keys = Object.keys(vars).filter((k) => !k.includes('[') && !k.includes(']')).sort((a, b) => b.length - a.length);
   for (const k of keys) {
     const rawK = k.startsWith('$') ? k.slice(1) : k;
     const val = (vars[k] ?? '').trim();
-    const regex = new RegExp(`\\$${rawK}\\b`, 'g');
 
+    // 4a. If user wrapped the variable in quotes like "$myVar" or '$myVar', replace the entire quoted string with JSON.stringify
+    const quotedRegex = new RegExp(`(["'])\\$${rawK}\\b\\1`, 'g');
+    expr = expr.replace(quotedRegex, () => {
+      return JSON.stringify(val);
+    });
+
+    // 4b. Otherwise replace unquoted $myVar
+    const regex = new RegExp(`\\$${rawK}\\b`, 'g');
     expr = expr.replace(regex, () => {
       // If variable holds a boolean string, replace with literal boolean keyword
       if (/^(true|false)$/i.test(val)) {
@@ -151,6 +263,7 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   }
 
   // Any remaining unassigned $vars become empty string ""
+  expr = expr.replace(/(["'])\$[a-zA-Z0-9_]+\1/g, '""');
   expr = expr.replace(/\$[a-zA-Z0-9_]+/g, '""');
 
   // Normalize standalone True / False literals to true / false

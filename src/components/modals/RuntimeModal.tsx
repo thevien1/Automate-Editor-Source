@@ -535,7 +535,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [closeBrowserOnDone, setCloseBrowserOnDone] = useState<boolean>(false);
   const [performanceLimit, setPerformanceLimit] = useState<boolean>(false);
   const [hideWindowWhenDone, setHideWindowWhenDone] = useState<boolean>(false);
-  const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(true);
+  const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(() => {
+    const saved = localStorage.getItem('gpm_use_virtual_mouse');
+    return saved !== null ? saved === 'true' : true;
+  });
   const [restartOnError, setRestartOnError] = useState<boolean>(false);
   const [retryCount, setRetryCount] = useState<number>(3);
 
@@ -1856,13 +1859,31 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
     // If Use Virtual Mouse is enabled, inject persistent virtual mouse into this Chrome thread
     if (useVirtualMouse && (window as any).electronAPI?.cdpAction) {
-      updateThreadLog(threadId, 'info', `🖱 Initializing independent Virtual Mouse for Worker #${threadId}...`);
+      updateThreadLog(threadId, 'info', `🖱 Khởi tạo chuột ảo (con trỏ đỏ) cho Worker #${threadId}...`);
       await (window as any).electronAPI.cdpAction({
         port: activePort,
         action: 'initVirtualMouse',
         payload: { script: VIRTUAL_MOUSE_SCRIPT },
       }).catch(() => {});
-      updateThreadLog(threadId, 'success', `✔ Virtual Mouse active (Persistent red cursor)`);
+      // Cưỡng bức hiển thị con chuột đỏ ngay lập tức trên trang Chrome trước khi chạy bất kỳ node nào
+      await (window as any).electronAPI?.cdpAction({
+        port: activePort,
+        action: 'evaluate',
+        payload: {
+          expression: `(() => {
+            try {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              if (window.__gpmVirtualMouse) {
+                window.__gpmVirtualMouse.init();
+              }
+              return true;
+            } catch(e) { return false; }
+          })()`,
+        },
+      }).catch(() => {});
+      updateThreadLog(threadId, 'success', `✔ Chuột ảo đã hiển thị trên Chrome`);
+    } else {
+      updateThreadLog(threadId, 'info', `⚡ Chế độ siêu tốc (Không dùng chuột ảo)`);
     }
 
     // Collect workflow nodes to execute
@@ -2142,7 +2163,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             const cond = block.condition || '';
             await sleep(20);
             const condMet = await evaluateGpmConditionAsync(cond, threadVars, checkXPathInChrome);
-            updateThreadLog(threadId, 'info', `🔍 If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
+            const displayCond = resolveLoopVar(cond);
+            updateThreadLog(threadId, 'info', `🔍 If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
             lastConditionBranchMet = condMet;
             if (condMet) {
               const res = await executeThreadNodes(block.nodes);
@@ -2153,7 +2175,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             await sleep(20);
             if (!lastConditionBranchMet) {
               const condMet = await evaluateGpmConditionAsync(cond, threadVars, checkXPathInChrome);
-              updateThreadLog(threadId, 'info', `🔍 Else If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
+              const displayCond = resolveLoopVar(cond);
+              updateThreadLog(threadId, 'info', `🔍 Else If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
               if (condMet) {
                 lastConditionBranchMet = true;
                 const res = await executeThreadNodes(block.nodes);
@@ -2577,11 +2600,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       if (pageLoaded) {
         // Re-inject virtual mouse after page load if virtual mouse is on
         if (useVirtualMouse) {
-          await sleep(300);
+          await sleep(200);
           await (window as any).electronAPI?.cdpAction({
             port,
             action: 'evaluate',
-            payload: { expression: VIRTUAL_MOUSE_SCRIPT },
+            payload: {
+              expression: `(() => {
+                try {
+                  ${VIRTUAL_MOUSE_SCRIPT};
+                  if (window.__gpmVirtualMouse) {
+                    window.__gpmVirtualMouse.init();
+                  }
+                  return true;
+                } catch(e) { return false; }
+              })()`,
+            },
           }).catch(() => {});
         }
         updateThreadLog(threadId, 'success', `✔ Navigate › ${url} (${elapsedSec}s)`);
@@ -3034,16 +3067,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         const x = parseFloat(xStr) || 0;
         const y = parseFloat(yStr) || 0;
         updateThreadLog(threadId, 'info', `▶ Mouse move › [${x}, ${y}]`);
-        await (window as any).electronAPI?.cdpAction({
-          port,
-          action: 'evaluate',
-          payload: {
-            expression: `(async () => {
-              ${VIRTUAL_MOUSE_SCRIPT};
-              return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
-            })()`,
-          },
-        });
+        if (useVirtualMouse) {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: {
+              expression: `(async () => {
+                ${VIRTUAL_MOUSE_SCRIPT};
+                return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
+              })()`,
+            },
+          });
+        }
         if ((window as any).electronAPI?.cdpAction) {
           await (window as any).electronAPI.cdpAction({
             port,
@@ -3054,9 +3089,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           vars.$lastMouseY = String(y);
         }
         updateThreadLog(threadId, 'success', `✔ Mouse moved to [${x}, ${y}]`);
-        } else {
-          updateThreadLog(threadId, 'info', `▶ Mouse move › XPath: ${xpath || '(empty)'}`);
-          if (xpath) {
+      } else {
+        updateThreadLog(threadId, 'info', `▶ Mouse move › XPath: ${xpath || '(empty)'}`);
+        if (xpath) {
+          if (useVirtualMouse) {
             const evalMoveRes = await (window as any).electronAPI?.cdpAction({
               port,
               action: 'evaluate',
@@ -3120,11 +3156,42 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               vars.$lastMouseX = String(coords.x);
               vars.$lastMouseY = String(coords.y);
             }
-
-            updateThreadLog(threadId, 'success', `✔ Mouse moved to element`);
+          } else {
+            // Fast direct move without animation
+            const evalMoveRes = await (window as any).electronAPI?.cdpAction({
+              port,
+              action: 'evaluate',
+              payload: {
+                expression: `(() => {
+                  try {
+                    const res = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const el = res.singleNodeValue;
+                    if (!el) return { success: false };
+                    if (typeof el.scrollIntoView === 'function') {
+                      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                    }
+                    const rect = el.getBoundingClientRect();
+                    return { success: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                  } catch(e) { return { success: false }; }
+                })()`,
+              },
+            });
+            const coords = evalMoveRes?.value || evalMoveRes?.result?.value;
+            if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port,
+                action: 'mouseMove',
+                payload: { x: coords.x, y: coords.y },
+              }).catch(() => {});
+              vars.$lastMouseX = String(coords.x);
+              vars.$lastMouseY = String(coords.y);
+            }
           }
+
+          updateThreadLog(threadId, 'success', `✔ Mouse moved to element`);
         }
-        await sleep(150);
+      }
+      await sleep(useVirtualMouse ? 150 : 0);
       }
     // Mouse press and hold (type 51)
     else if (actType === 51 || actName === 'mouse press and hold') {
@@ -3135,66 +3202,105 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       const isCoords = pressType === 'PRESS_POS' || pressType === 'Press by coordinates' || (!xpath && pos && pressType !== 'PRESS_XPATH' && pressType !== 'Press by Xpath');
 
       updateThreadLog(threadId, 'info', `▶ Mouse press and hold (${isCoords ? pos : (xpath || 'current')})`);
-      await (window as any).electronAPI?.cdpAction({
-        port,
-        action: 'evaluate',
-        payload: {
-          expression: `(async () => {
-            ${VIRTUAL_MOUSE_SCRIPT};
-            let tx = window.__gpmVirtualMouse.getPos().x;
-            let ty = window.__gpmVirtualMouse.getPos().y;
-            ${isCoords ? `
-            if (${JSON.stringify(pos)}) {
-              tx = ${parseFloat(pos.split(',')[0]) || 0};
-              ty = ${parseFloat(pos.split(',')[1]) || 0};
-            }
-            ` : `
-            if (${JSON.stringify(xpath)}) {
-              const res = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-              const el = res.singleNodeValue;
-              if (el) {
-                if (typeof el.scrollIntoView === 'function') {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-                  await new Promise(r => setTimeout(r, 200));
-                }
-                const rect = el.getBoundingClientRect();
-                tx = Math.round(rect.left + rect.width / 2);
-                ty = Math.round(rect.top + rect.height / 2);
+      if (useVirtualMouse) {
+        await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: `(async () => {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              let tx = window.__gpmVirtualMouse.getPos().x;
+              let ty = window.__gpmVirtualMouse.getPos().y;
+              ${isCoords ? `
+              if (${JSON.stringify(pos)}) {
+                tx = ${parseFloat(pos.split(',')[0]) || 0};
+                ty = ${parseFloat(pos.split(',')[1]) || 0};
               }
-            }
-            `}
-            await window.__gpmVirtualMouse.moveTo(tx, ty, 250);
-            const targetEl = document.elementFromPoint(tx, ty) || document.body;
-            if (targetEl) {
-              targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, buttons: 1 }));
-            }
-            return { success: true };
-          })()`,
-        },
-      });
+              ` : `
+              if (${JSON.stringify(xpath)}) {
+                const res = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                const el = res.singleNodeValue;
+                if (el) {
+                  if (typeof el.scrollIntoView === 'function') {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                    await new Promise(r => setTimeout(r, 200));
+                  }
+                  const rect = el.getBoundingClientRect();
+                  tx = Math.round(rect.left + rect.width / 2);
+                  ty = Math.round(rect.top + rect.height / 2);
+                }
+              }
+              `}
+              await window.__gpmVirtualMouse.moveTo(tx, ty, 250);
+              const targetEl = document.elementFromPoint(tx, ty) || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, buttons: 1 }));
+              }
+              return { success: true };
+            })()`,
+          },
+        });
+      } else {
+        // Fast direct mousedown
+        await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: `(() => {
+              try {
+                let targetEl = document.activeElement || document.body;
+                ${xpath ? `
+                const el = document.evaluate(${JSON.stringify(xpath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (el) targetEl = el;
+                ` : ''}
+                if (targetEl) {
+                  targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, buttons: 1 }));
+                }
+                return { success: true };
+              } catch(e) { return { success: false }; }
+            })()`,
+          },
+        });
+      }
       updateThreadLog(threadId, 'success', `✔ Mouse pressed and held`);
-      await sleep(150);
+      await sleep(useVirtualMouse ? 150 : 0);
     }
     // Mouse release (type 52)
     else if (actType === 52 || actName === 'mouse release') {
       updateThreadLog(threadId, 'info', `▶ Mouse release`);
-      await (window as any).electronAPI?.cdpAction({
-        port,
-        action: 'evaluate',
-        payload: {
-          expression: `(async () => {
-            ${VIRTUAL_MOUSE_SCRIPT};
-            const pos = window.__gpmVirtualMouse.getPos();
-            const targetEl = document.elementFromPoint(pos.x, pos.y) || document.body;
-            if (targetEl) {
-              targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: pos.x, clientY: pos.y, buttons: 0 }));
-            }
-            return { success: true };
-          })()`,
-        },
-      });
+      if (useVirtualMouse) {
+        await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: `(async () => {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              const pos = window.__gpmVirtualMouse.getPos();
+              const targetEl = document.elementFromPoint(pos.x, pos.y) || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: pos.x, clientY: pos.y, buttons: 0 }));
+              }
+              return { success: true };
+            })()`,
+          },
+        });
+      } else {
+        await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: `(() => {
+              const targetEl = document.activeElement || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, buttons: 0 }));
+              }
+              return { success: true };
+            })()`,
+          },
+        });
+      }
       updateThreadLog(threadId, 'success', `✔ Mouse released`);
-      await sleep(150);
+      await sleep(useVirtualMouse ? 150 : 0);
     }
     // Mouse scroll (type 53)
     else if (actType === 53 || actName === 'mouse scroll') {
@@ -3370,6 +3476,16 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         if (evalRes?.success) {
           const val = evalRes.value;
           jsVal = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
+          try {
+            const parsed = typeof val === 'object' && val !== null ? val : JSON.parse(jsVal);
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              for (const [pk, pv] of Object.entries(parsed)) {
+                const pStr = typeof pv === 'object' && pv !== null ? (Array.isArray(pv) && pv.every((x: any) => typeof x === 'string' || typeof x === 'number') ? pv.join('\n') : JSON.stringify(pv)) : String(pv ?? '');
+                vars[`${varName}.${pk}`] = pStr;
+                vars[`${cleanName}.${pk}`] = pStr;
+              }
+            }
+          } catch (e) {}
         } else {
           jsVal = evalRes?.error || 'Execution failed';
         }
@@ -3379,6 +3495,32 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       vars[cleanName] = jsVal;
       updateThreadLog(threadId, 'success', `✔ Execute JS code › ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
       await sleep(100);
+    }
+    // File upload (type 55)
+    else if (actType === 55 || actName === 'file upload') {
+      const rawPath = getRawVal('FILE_PATH', '');
+      const resolvedPath = resolveStr(rawPath).trim();
+      const rawXPath = (act.element_xpath || getRawVal('XPATH', '')).trim();
+      const resolvedXPath = resolveStr(rawXPath).trim();
+
+      updateThreadLog(threadId, 'info', `▶ File upload › "${resolvedPath}"`, 'File upload');
+      if (!resolvedPath) {
+        const failRes = await handleActionFailure('File upload', 'Đường dẫn tệp rỗng');
+        if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+      } else {
+        const upRes = await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'uploadFile',
+          payload: { xpath: resolvedXPath, files: resolvedPath },
+        });
+        if (upRes?.success) {
+          updateThreadLog(threadId, 'success', `✔ Tải tệp lên thành công: "${resolvedPath}"`);
+        } else {
+          const failRes = await handleActionFailure('File upload', upRes?.error || 'Tải tệp lên thất bại');
+          if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+        }
+      }
+      await sleep(500);
     }
     // Scroll to top (type 58)
     else if (actType === 58 || actName === 'scroll to top') {
@@ -4105,118 +4247,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
       const effectiveType = (rawType === 'Text' || !isKnownSingleOrCombo) ? 'Text' : rawType;
 
-      // 1. Nếu có XPath: TỰ ĐỘNG TÌM KIẾM, CUỘN TỚI PHẦN TỬ VÀ CLICK FOCUS BẰNG CDP (Không cần bước Mouse click trước đó!)
-      if (xpath) {
-        updateThreadLog(threadId, 'info', `🔍 Tự động tìm & kích hoạt ô nhập › ${xpath}`, 'Focus input');
-        let foundCoords: { x: number; y: number } | null = null;
-        const startFind = Date.now();
+      const rawDelay = (delayPress || '').trim();
+      const isPaste = rawDelay === '-1';
 
-        while (Date.now() - startFind < 15000 && !stopSignalRef.current) {
-          const evalRes = await (window as any).electronAPI?.cdpAction({
-            port,
-            action: 'evaluate',
-            payload: {
-              targetId: vars.$activePopupTargetId,
-              contextId: vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined,
-              expression: `(() => {
-                try {
-                  let doc = document;
-                  let offX = 0;
-                  let offY = 0;
-                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
-                  if (fx) {
-                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                    if (fr) {
-                      const rectF = fr.getBoundingClientRect();
-                      offX = Math.round(rectF.left);
-                      offY = Math.round(rectF.top);
-                      try {
-                        if (fr.contentDocument) doc = fr.contentDocument;
-                        else if (fr.contentWindow) doc = fr.contentWindow.document;
-                      } catch(e) {}
-                    }
-                  }
-                  const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                  const el = res.singleNodeValue;
-                  if (!el) return { found: false };
-                  if (typeof el.scrollIntoView === 'function') {
-                    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-                  }
-                  if (typeof el.focus === 'function') el.focus();
-                  const rect = el.getBoundingClientRect();
-                  return {
-                    found: true,
-                    x: Math.round(rect.left + rect.width / 2) + offX,
-                    y: Math.round(rect.top + rect.height / 2) + offY,
-                  };
-                } catch(e) {
-                  return { found: false, error: e.message };
-                }
-              })()`,
-            },
-          });
-          const val = evalRes?.value || evalRes?.result?.value;
-          if (val && val.found && val.x > 0 && val.y > 0) {
-            foundCoords = { x: val.x, y: val.y };
-            break;
-          }
-          await sleep(350);
-        }
+      // 1. NẾU DÁN NHANH (Paste, delay = -1): Dán tức thì, không đợi tìm tọa độ, không di chuyển chuột làm mất focus
+      if (effectiveType === 'Text' && isPaste) {
+        updateThreadLog(threadId, 'info', `▶ Key press (Dán nhanh) › "${resolvedKey}"`, 'Pasting text');
 
-        if (!foundCoords) {
-          const failRes = await handleActionFailure('Key press', `Không tìm thấy phần tử XPath sau 15s: [${xpath}]`);
-          if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
-        } else {
-          // Thực hiện click thực tế cấp CDP để ô input nhận focus chuẩn xác từ hệ điều hành / trình duyệt
-          if (useVirtualMouse) {
-            await (window as any).electronAPI?.cdpAction({
-              port,
-              action: 'evaluate',
-              payload: {
-                expression: getVirtualMouseClickCoordsScript(foundCoords.x, foundCoords.y),
-                targetId: vars.$activePopupTargetId,
-              },
-            }).catch(() => {});
-          } else {
-            await (window as any).electronAPI?.cdpAction({
-              port,
-              action: 'clickCoordinates',
-              payload: { x: foundCoords.x, y: foundCoords.y, targetId: vars.$activePopupTargetId },
-            }).catch(() => {});
-          }
-          // Chờ 150ms để hiệu ứng animation nổi (Floating Label của Google) hoàn tất
-          await sleep(150);
-        }
-      }
-
-      // 2. GÕ VĂN BẢN (Text)
-      if (effectiveType === 'Text') {
-        const rawDelay = (delayPress || '').trim();
-        const isPaste = rawDelay === '-1';
-
-        // Tính toán mô tả hiển thị log
-        let logDelayDesc = 'Gõ ngầm Chrome (Tự nhiên ~35-75ms)';
-        if (isPaste) {
-          logDelayDesc = 'Dán nhanh';
-        } else if (rawDelay === '0' || rawDelay === '0,0') {
-          logDelayDesc = 'Gõ tức thì (0ms)';
-        } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
-          logDelayDesc = `Gõ ngầm Chrome (Random ~${rawDelay}ms/phím)`;
-        } else if (rawDelay) {
-          const b = parseInt(rawDelay, 10);
-          if (!isNaN(b) && b > 0) {
-            logDelayDesc = `Gõ ngầm Chrome (Random ~${Math.max(10, Math.round(b * 0.7))}-${Math.round(b * 1.3)}ms)`;
-          }
-        }
-
-        updateThreadLog(
-          threadId,
-          'info',
-          `▶ Key press (${logDelayDesc}) › "${resolvedKey}"`,
-          'Typing text'
-        );
-
-        // Gõ hoàn toàn độc lập bên trong tiến trình Chrome (không dùng bàn phím máy tính của người dùng)
+        // Dán trực tiếp và tức thì vào phần tử (Hỗ trợ cả Facebook contenteditable và input/textarea thông thường)
         const evalRes = await (window as any).electronAPI?.cdpAction({
           port,
           action: 'evaluate',
@@ -4238,57 +4276,272 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                 }
                 let el = ${xpath ? `doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue` : `doc.activeElement`};
                 if (!el && ${JSON.stringify(xpath || '')}) {
-                  return { success: false, error: 'Element not found' };
+                  return { success: false, notFound: true };
                 }
 
                 if (el) {
-                  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center' });
+                  if (typeof el.scrollIntoView === 'function') {
+                    try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch(e) {}
+                  }
                   if (typeof el.focus === 'function') el.focus();
-                  if (typeof el.click === 'function') el.click();
                 }
 
                 const text = ${JSON.stringify(resolvedKey)};
-                const delayRaw = ${JSON.stringify(rawDelay)};
+                let pasted = false;
 
-                // Tính hàm lấy độ trễ ngẫu nhiên cho từng ký tự
-                const isPasteMode = delayRaw === '-1';
-                let getCharDelay = () => Math.floor(Math.random() * 41) + 35;
-
-                if (isPasteMode) {
-                  getCharDelay = () => -1;
-                } else if (delayRaw === '0' || delayRaw === '0,0') {
-                  getCharDelay = () => 0;
-                } else if (delayRaw.includes(',') || delayRaw.includes('-')) {
-                  const parts = delayRaw.includes(',') ? delayRaw.split(',') : delayRaw.split('-');
-                  const minD = Math.max(0, parseInt(parts[0], 10) || 0);
-                  const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
-                  getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
-                } else if (delayRaw) {
-                  const base = parseInt(delayRaw, 10);
-                  if (!isNaN(base) && base > 0) {
-                    const minD = Math.max(10, Math.round(base * 0.7));
-                    const maxD = Math.round(base * 1.3);
-                    getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
-                  } else if (base === 0) {
-                    getCharDelay = () => 0;
-                  }
+                // Xử lý ô nhập dạng contenteditable (Facebook comment, Facebook post, chat input...)
+                const isContentEdit = el && (el.isContentEditable || el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox' || (el.closest && el.closest('[contenteditable="true"]')));
+                if (isContentEdit) {
+                  const targetEl = (el.isContentEditable || el.getAttribute('contenteditable') === 'true') ? el : (el.closest('[contenteditable="true"]') || el);
+                  if (typeof targetEl.focus === 'function') targetEl.focus();
+                  try {
+                    document.execCommand('insertText', false, text);
+                    pasted = true;
+                  } catch(e) {}
+                  try {
+                    targetEl.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                    targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  } catch(e) {}
                 }
 
-                const protoSetter = el ? Object.getOwnPropertyDescriptor(
-                  el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-                  'value'
-                )?.set : null;
-
+                // Xử lý ô nhập input / textarea thông thường
                 if (el && ('value' in el)) {
-                  if (isPasteMode || getCharDelay() === 0) {
-                    // Dán nhanh (Paste)
-                    if (protoSetter) protoSetter.call(el, text);
-                    else el.value = text;
-                    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-                  } else {
-                    // Gõ từng ký tự với độ trễ random độc lập bên trong Chrome
+                  const protoSetter = Object.getOwnPropertyDescriptor(
+                    el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                    'value'
+                  )?.set;
+                  if (protoSetter) protoSetter.call(el, text);
+                  else el.value = text;
+                  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                  pasted = true;
+                }
+
+                return { success: true, pasted };
+              } catch(e) {
+                return { success: false, error: e.message };
+              }
+            })()`,
+          },
+        });
+
+        // Bổ trợ qua lệnh CDP typeText (Input.insertText tức thì) để đảm bảo trình duyệt nhận 100%
+        const evalVal = evalRes?.value || evalRes?.result?.value;
+        if (!evalVal?.pasted || !xpath) {
+          if ((window as any).electronAPI?.cdpAction) {
+            await (window as any).electronAPI.cdpAction({
+              port,
+              action: 'typeText',
+              payload: { text: resolvedKey, delay: '-1', targetId: vars.$activePopupTargetId },
+            }).catch(() => {});
+          }
+        }
+
+        // Nếu người dùng chọn hiện chuột ảo, đưa chuột ảo tới vị trí đó một cách nhẹ nhàng (không chặn luồng dán)
+        if (useVirtualMouse && xpath) {
+          (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: {
+              expression: getVirtualMouseClickXPathScript(xpath, vars.$currentFrameXPath),
+              targetId: vars.$activePopupTargetId,
+            },
+          }).catch(() => {});
+        }
+
+        updateThreadLog(threadId, 'success', `✔ Typed: "${resolvedKey}" (Dán nhanh)`);
+      } else {
+        // Focus vào ô nhập liệu
+        if (xpath) {
+          if (useVirtualMouse) {
+            updateThreadLog(threadId, 'info', `🔍 Tự động tìm & kích hoạt ô nhập › ${xpath}`, 'Focus input');
+            let foundCoords: { x: number; y: number } | null = null;
+            const startFind = Date.now();
+
+            while (Date.now() - startFind < 15000 && !stopSignalRef.current) {
+              const evalRes = await (window as any).electronAPI?.cdpAction({
+                port,
+                action: 'evaluate',
+                payload: {
+                  targetId: vars.$activePopupTargetId,
+                  contextId: vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined,
+                  expression: `(() => {
+                    try {
+                      let doc = document;
+                      let offX = 0;
+                      let offY = 0;
+                      const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                      if (fx) {
+                        const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                        if (fr) {
+                          const rectF = fr.getBoundingClientRect();
+                          offX = Math.round(rectF.left);
+                          offY = Math.round(rectF.top);
+                          try {
+                            if (fr.contentDocument) doc = fr.contentDocument;
+                            else if (fr.contentWindow) doc = fr.contentWindow.document;
+                          } catch(e) {}
+                        }
+                      }
+                      const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                      const el = res.singleNodeValue;
+                      if (!el) return { found: false };
+                      if (typeof el.scrollIntoView === 'function') {
+                        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                      }
+                      if (typeof el.focus === 'function') el.focus();
+                      const rect = el.getBoundingClientRect();
+                      return {
+                        found: true,
+                        x: Math.round(rect.left + rect.width / 2) + offX,
+                        y: Math.round(rect.top + rect.height / 2) + offY,
+                      };
+                    } catch(e) {
+                      return { found: false, error: e.message };
+                    }
+                  })()`,
+                },
+              });
+              const val = evalRes?.value || evalRes?.result?.value;
+              if (val && val.found && val.x > 0 && val.y > 0) {
+                foundCoords = { x: val.x, y: val.y };
+                break;
+              }
+              await sleep(350);
+            }
+
+            if (!foundCoords) {
+              const failRes = await handleActionFailure('Key press', `Không tìm thấy phần tử XPath sau 15s: [${xpath}]`);
+              if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+            } else {
+              await (window as any).electronAPI?.cdpAction({
+                port,
+                action: 'evaluate',
+                payload: {
+                  expression: getVirtualMouseClickCoordsScript(foundCoords.x, foundCoords.y),
+                  targetId: vars.$activePopupTargetId,
+                },
+              }).catch(() => {});
+              await (window as any).electronAPI?.cdpAction({
+                port,
+                action: 'clickCoordinates',
+                payload: { x: foundCoords.x, y: foundCoords.y, targetId: vars.$activePopupTargetId },
+              }).catch(() => {});
+              await sleep(150);
+            }
+          } else {
+            // Chế độ siêu tốc: focus trực tiếp trong DOM trong 0ms
+            await (window as any).electronAPI?.cdpAction({
+              port,
+              action: 'evaluate',
+              payload: {
+                targetId: vars.$activePopupTargetId,
+                contextId: vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined,
+                expression: `(() => {
+                  try {
+                    let doc = document;
+                    const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                    if (fx) {
+                      const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                      if (fr) {
+                        try {
+                          if (fr.contentDocument) doc = fr.contentDocument;
+                          else if (fr.contentWindow) doc = fr.contentWindow.document;
+                        } catch(e) {}
+                      }
+                    }
+                    const res = doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const el = res.singleNodeValue;
+                    if (el) {
+                      if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                      if (typeof el.focus === 'function') el.focus();
+                    }
+                  } catch(e) {}
+                })()`,
+              },
+            });
+          }
+        }
+
+        // GÕ VĂN BẢN (Text)
+        if (effectiveType === 'Text') {
+          let logDelayDesc = 'Gõ ngầm Chrome (Tự nhiên ~35-75ms)';
+          if (rawDelay === '0' || rawDelay === '0,0') {
+            logDelayDesc = 'Gõ tức thì (0ms)';
+          } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
+            logDelayDesc = `Gõ ngầm Chrome (Random ~${rawDelay}ms/phím)`;
+          } else if (rawDelay) {
+            const b = parseInt(rawDelay, 10);
+            if (!isNaN(b) && b > 0) {
+              logDelayDesc = `Gõ ngầm Chrome (Random ~${Math.max(10, Math.round(b * 0.7))}-${Math.round(b * 1.3)}ms)`;
+            }
+          }
+
+          updateThreadLog(
+            threadId,
+            'info',
+            `▶ Key press (${logDelayDesc}) › "${resolvedKey}"`,
+            'Typing text'
+          );
+
+          const evalRes = await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'evaluate',
+            payload: {
+              targetId: vars.$activePopupTargetId,
+              contextId: vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined,
+              expression: `(async () => {
+                try {
+                  let doc = document;
+                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                  if (fx) {
+                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (fr) {
+                      try {
+                        if (fr.contentDocument) doc = fr.contentDocument;
+                        else if (fr.contentWindow) doc = fr.contentWindow.document;
+                      } catch(e) {}
+                    }
+                  }
+                  let el = ${xpath ? `doc.evaluate(${JSON.stringify(xpath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue` : `doc.activeElement`};
+                  if (!el && ${JSON.stringify(xpath || '')}) {
+                    return { success: false, error: 'Element not found' };
+                  }
+
+                  if (el) {
+                    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center' });
+                    if (typeof el.focus === 'function') el.focus();
+                  }
+
+                  const text = ${JSON.stringify(resolvedKey)};
+                  const delayRaw = ${JSON.stringify(rawDelay)};
+
+                  let getCharDelay = () => Math.floor(Math.random() * 41) + 35;
+                  if (delayRaw === '0' || delayRaw === '0,0') {
+                    getCharDelay = () => 0;
+                  } else if (delayRaw.includes(',') || delayRaw.includes('-')) {
+                    const parts = delayRaw.includes(',') ? delayRaw.split(',') : delayRaw.split('-');
+                    const minD = Math.max(0, parseInt(parts[0], 10) || 0);
+                    const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
+                    getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                  } else if (delayRaw) {
+                    const base = parseInt(delayRaw, 10);
+                    if (!isNaN(base) && base > 0) {
+                      const minD = Math.max(10, Math.round(base * 0.7));
+                      const maxD = Math.round(base * 1.3);
+                      getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                    } else if (base === 0) {
+                      getCharDelay = () => 0;
+                    }
+                  }
+
+                  const protoSetter = el ? Object.getOwnPropertyDescriptor(
+                    el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                    'value'
+                  )?.set : null;
+
+                  if (el && ('value' in el)) {
                     let current = '';
                     for (let i = 0; i < text.length; i++) {
                       const char = text[i];
@@ -4304,33 +4557,31 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       }
                     }
                     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                    return { success: true, value: el.value };
                   }
-                  return { success: true, value: el.value };
+                  return { success: true, notInput: true };
+                } catch(e) {
+                  return { success: false, error: e.message };
                 }
-                return { success: true, notInput: true };
-              } catch(e) {
-                return { success: false, error: e.message };
-              }
-            })()`,
-          },
-        });
+              })()`,
+            },
+          });
 
-        // Nếu không có XPath hoặc phần tử không phải ô input DOM thông thường, bổ trợ qua lệnh CDP typeText
-        const evalVal = evalRes?.value || evalRes?.result?.value;
-        if (!xpath || evalVal?.notInput) {
-          if ((window as any).electronAPI?.cdpAction) {
-            await (window as any).electronAPI.cdpAction({
-              port,
-              action: 'typeText',
-              payload: { text: resolvedKey, delay: rawDelay },
-            });
+          const evalVal = evalRes?.value || evalRes?.result?.value;
+          if (!xpath || evalVal?.notInput) {
+            if ((window as any).electronAPI?.cdpAction) {
+              await (window as any).electronAPI.cdpAction({
+                port,
+                action: 'typeText',
+                payload: { text: resolvedKey, delay: rawDelay },
+              });
+            }
           }
-        }
 
-        updateThreadLog(threadId, 'success', `✔ Typed: "${resolvedKey}" (${logDelayDesc})`);
-      }
-      // 3. PHÍM ĐƠN LẺ (Single key) & TỔ HỢP PHÍM (Combo key)
-      else {
+          updateThreadLog(threadId, 'success', `✔ Typed: "${resolvedKey}" (${logDelayDesc})`);
+        }
+        // 3. PHÍM ĐƠN LẺ (Single key) & TỔ HỢP PHÍM (Combo key)
+        else {
         const lower = resolvedKey.toLowerCase().trim();
         updateThreadLog(threadId, 'info', `▶ Key press (${effectiveType}) › "${resolvedKey}"`, 'Sending key');
 
@@ -4423,6 +4674,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
         updateThreadLog(threadId, 'success', `✔ Sent key: "${resolvedKey}" (${effectiveType})`);
       }
+    }
       await sleep(150);
     }
     // Read mail code (type 35)
@@ -6786,7 +7038,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                             <input
                               type="checkbox"
                               checked={useVirtualMouse}
-                              onChange={(e) => setUseVirtualMouse(e.target.checked)}
+                              onChange={(e) => {
+                                setUseVirtualMouse(e.target.checked);
+                                localStorage.setItem('gpm_use_virtual_mouse', String(e.target.checked));
+                              }}
                               className="rounded text-[#1677ff] w-4 h-4 cursor-pointer"
                             />
                             <div className="w-4 h-4 flex items-center justify-center">

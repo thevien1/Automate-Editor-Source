@@ -9,6 +9,7 @@
 export const VIRTUAL_MOUSE_SCRIPT = `
 (() => {
   if (window.__gpmVirtualMouse) {
+    try { window.__gpmVirtualMouse.init(); } catch(e) {}
     return window.__gpmVirtualMouse;
   }
 
@@ -70,6 +71,9 @@ export const VIRTUAL_MOUSE_SCRIPT = `
         } catch (styleErr) {}
 
         parent.appendChild(cursorEl);
+      } else if (cursorEl) {
+        cursorEl.style.display = 'block';
+        cursorEl.style.transform = 'translate(' + curX + 'px,' + curY + 'px)';
       }
       return cursorEl;
     } catch (e) {
@@ -340,6 +344,14 @@ export const VIRTUAL_MOUSE_SCRIPT = `
     clickXPath,
     clickCoordinates,
     getPos: () => ({ x: curX, y: curY }),
+    show: () => {
+      const c = ensureCursor();
+      if (c) c.style.display = 'block';
+    },
+    hide: () => {
+      const c = document.getElementById(ID);
+      if (c) c.style.display = 'none';
+    },
   };
 
   if (document.readyState === 'loading') {
@@ -347,6 +359,17 @@ export const VIRTUAL_MOUSE_SCRIPT = `
   } else {
     try { ensureCursor(); } catch(e) {}
   }
+  document.addEventListener('readystatechange', () => { try { ensureCursor(); } catch(e) {} });
+
+  try {
+    if (!window.__gpmCursorInterval) {
+      window.__gpmCursorInterval = setInterval(() => {
+        if (!document.getElementById(ID)) {
+          ensureCursor();
+        }
+      }, 500);
+    }
+  } catch(e) {}
 
   return window.__gpmVirtualMouse;
 })();

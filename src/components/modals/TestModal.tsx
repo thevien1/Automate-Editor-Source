@@ -241,6 +241,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
   const [logs, setLogs] = useState<TestLog[]>([]);
   const [copied, setCopied] = useState(false);
   const [detectingPort, setDetectingPort] = useState(false);
+  const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(() => {
+    const saved = localStorage.getItem('gpm_use_virtual_mouse');
+    return saved !== null ? saved === 'true' : true;
+  });
 
   const stopSignalRef = useRef<boolean>(false);
   const logsContainerRef = useRef<HTMLDivElement | null>(null);
@@ -460,7 +464,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const cond = block.condition || '';
           await sleep(20);
           const condMet = await evaluateGpmConditionAsync(cond, vars, checkXPathInChromeTest);
-          addLog('info', `🔍 If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
+          const displayCond = resolveVars(cond, vars);
+          addLog('info', `🔍 If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
           lastConditionBranchMet = condMet;
 
           if (condMet) {
@@ -474,7 +479,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           await sleep(20);
           if (!lastConditionBranchMet) {
             const condMet = await evaluateGpmConditionAsync(cond, vars, checkXPathInChromeTest);
-            addLog('info', `🔍 Else If [${cond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
+            const displayCond = resolveVars(cond, vars);
+            addLog('info', `🔍 Else If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
             if (condMet) {
               lastConditionBranchMet = true;
               const res = await executeNodes(block.nodes, vars, addLog);
@@ -2760,6 +2766,17 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
             if (pageLoaded) {
               addLog('success', `✔ Navigate › ${resolvedUrl} (${elapsedSec}s)`);
+              if (useVirtualMouse) {
+                await evaluateInChrome(`(() => {
+                  try {
+                    ${VIRTUAL_MOUSE_SCRIPT};
+                    if (window.__gpmVirtualMouse) {
+                      window.__gpmVirtualMouse.init();
+                    }
+                    return true;
+                  } catch(e) { return false; }
+                })()`).catch(() => {});
+              }
             } else {
               const detail = errorMsg || `Timed out after ${timeoutSec}s`;
               if (contOnError) {
@@ -3029,26 +3046,47 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
 
-            const evalRes = await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
-            if (evalRes.success) {
-              addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
+            if (useVirtualMouse) {
+              const evalRes = await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
+              if (evalRes.success) {
+                addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
+              } else {
+                addLog('error', `✕ Clicked coordinates [${x}, ${y}] failed`);
+              }
             } else {
-              addLog('error', `✕ Clicked coordinates [${x}, ${y}] failed`);
+              // Fast direct click without mouse simulation
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'clickCoordinates',
+                  payload: { x, y, targetId: vars.$activePopupTargetId },
+                }).catch(() => {});
+              }
+              addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
             }
           } else if (isCurrentPos) {
-            await evaluateInChrome(`(async () => {
-              if (window.__gpmVirtualMouse) {
-                const pos = window.__gpmVirtualMouse.getPos();
-                return await window.__gpmVirtualMouse.clickAt(pos.x, pos.y);
-              }
-              if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
-                (document.activeElement as any).click();
-              }
-              return { success: true };
-            })()`);
+            if (useVirtualMouse) {
+              await evaluateInChrome(`(async () => {
+                if (window.__gpmVirtualMouse) {
+                  const pos = window.__gpmVirtualMouse.getPos();
+                  return await window.__gpmVirtualMouse.clickAt(pos.x, pos.y);
+                }
+                if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
+                  (document.activeElement as any).click();
+                }
+                return { success: true };
+              })()`);
+            } else {
+              await evaluateInChrome(`(() => {
+                if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
+                  (document.activeElement as any).click();
+                }
+                return { success: true };
+              })()`);
+            }
             addLog('success', `✔ Mouse click › Current position clicked`);
           } else {
-            // Default: Click by XPath using Virtual Mouse
+            // Click by XPath
             if (!resolvedXPath) {
               if (!contOnError) {
                 addLog('error', `✕ Mouse click failed: XPath is empty`);
@@ -3057,11 +3095,59 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 addLog('info', `⚠ Mouse click › XPath is empty (Skipped)`);
               }
             } else {
-              addLog('info', `▶ Mouse click › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
-              let evalRes = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath, vars.$currentFrameXPath), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
-              if (!evalRes.success || !evalRes.value?.success) {
-                // Fallback to direct DOM click if virtual mouse script encounters any page-specific restriction
-                const fallbackRes = await evaluateInChrome(`(() => {
+              addLog('info', `▶ ${useVirtualMouse ? 'Virtual Mouse click' : 'Mouse click'} › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
+              if (useVirtualMouse) {
+                let evalRes = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath, vars.$currentFrameXPath), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+                if (!evalRes.success || !evalRes.value?.success) {
+                  // Fallback to direct DOM click if virtual mouse script encounters any page-specific restriction
+                  const fallbackRes = await evaluateInChrome(`(() => {
+                    try {
+                      let doc = document;
+                      const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                      if (fx) {
+                        const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                        if (fr) {
+                          try {
+                            if (fr.contentDocument) doc = fr.contentDocument;
+                            else if (fr.contentWindow) doc = fr.contentWindow.document;
+                          } catch(e) {}
+                        }
+                      }
+                      const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                      const el = res.singleNodeValue;
+                      if (!el) return { success: false, error: 'Element not found: ' + ${JSON.stringify(resolvedXPath)} };
+                      if (typeof el.scrollIntoView === 'function') {
+                        try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                      }
+                      if (typeof el.click === 'function') {
+                        el.click();
+                      } else {
+                        el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                      }
+                      return { success: true };
+                    } catch(e) {
+                      return { success: false, error: e.message };
+                    }
+                  })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+                  if (fallbackRes.success && fallbackRes.value?.success) {
+                    evalRes = fallbackRes;
+                  }
+                }
+
+                if (evalRes.success && evalRes.value?.success) {
+                  addLog('success', `✔ Clicked element (${resolvedXPath})`);
+                } else {
+                  const errDetail = evalRes.value?.error || evalRes.error || 'Element not found';
+                  if (contOnError) {
+                    addLog('info', `⚠ Mouse click › ${errDetail} (Continue on error)`);
+                  } else {
+                    addLog('error', `✕ Mouse click failed: ${errDetail} (${resolvedXPath})`);
+                    break;
+                  }
+                }
+              } else {
+                // Fast direct DOM click
+                const fbRes = await evaluateInChrome(`(() => {
                   try {
                     let doc = document;
                     const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
@@ -3078,7 +3164,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     const el = res.singleNodeValue;
                     if (!el) return { success: false, error: 'Element not found: ' + ${JSON.stringify(resolvedXPath)} };
                     if (typeof el.scrollIntoView === 'function') {
-                      try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
                     }
                     if (typeof el.click === 'function') {
                       el.click();
@@ -3090,25 +3176,22 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     return { success: false, error: e.message };
                   }
                 })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
-                if (fallbackRes.success && fallbackRes.value?.success) {
-                  evalRes = fallbackRes;
-                }
-              }
 
-              if (evalRes.success && evalRes.value?.success) {
-                addLog('success', `✔ Clicked element (${resolvedXPath})`);
-              } else {
-                const errDetail = evalRes.value?.error || evalRes.error || 'Element not found';
-                if (contOnError) {
-                  addLog('info', `⚠ Mouse click › ${errDetail} (Continue on error)`);
+                if (fbRes.success && fbRes.value?.success) {
+                  addLog('success', `✔ Clicked element (${resolvedXPath})`);
                 } else {
-                  addLog('error', `✕ Mouse click failed: ${errDetail} (${resolvedXPath})`);
-                  break;
+                  const errDetail = fbRes.value?.error || fbRes.error || 'Element not found';
+                  if (contOnError) {
+                    addLog('info', `⚠ Mouse click › ${errDetail} (Continue on error)`);
+                  } else {
+                    addLog('error', `✕ Mouse click failed: ${errDetail} (${resolvedXPath})`);
+                    break;
+                  }
                 }
               }
             }
           }
-          await sleep(40);
+          await sleep(useVirtualMouse ? 40 : 0);
         } else if (actType === 49 || actName === 'mouse try to click') {
           const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
           const clickType = getRawInputValue(act.raw_input, 'CLICK_TYPE', 'Click by Xpath');
@@ -3133,27 +3216,65 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               const [xStr, yStr] = resolvedPos.split(',');
               const x = parseFloat(xStr) || 0;
               const y = parseFloat(yStr) || 0;
-              await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
+              if (useVirtualMouse) {
+                await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
+              } else {
+                if ((window as any).electronAPI?.cdpAction) {
+                  await (window as any).electronAPI.cdpAction({
+                    port: port.trim() || '43076',
+                    action: 'clickCoordinates',
+                    payload: { x, y, targetId: vars.$activePopupTargetId },
+                  }).catch(() => {});
+                }
+              }
             } else if (isCurrentPos) {
-              await evaluateInChrome(`(async () => {
-                if (window.__gpmVirtualMouse) {
-                  const p = window.__gpmVirtualMouse.getPos();
-                  return await window.__gpmVirtualMouse.clickAt(p.x, p.y);
-                }
-                if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
-                  (document.activeElement as any).click();
-                }
-                return { success: true };
-              })()`);
+              if (useVirtualMouse) {
+                await evaluateInChrome(`(async () => {
+                  if (window.__gpmVirtualMouse) {
+                    const p = window.__gpmVirtualMouse.getPos();
+                    return await window.__gpmVirtualMouse.clickAt(p.x, p.y);
+                  }
+                  if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
+                    (document.activeElement as any).click();
+                  }
+                  return { success: true };
+                })()`);
+              } else {
+                await evaluateInChrome(`(() => {
+                  if (document.activeElement && typeof (document.activeElement as any).click === 'function') {
+                    (document.activeElement as any).click();
+                  }
+                  return { success: true };
+                })()`);
+              }
             } else if (resolvedXPath) {
-              const res = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath));
-              if (!res.success || !res.value?.success) {
+              if (useVirtualMouse) {
+                const res = await evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath));
+                if (!res.success || !res.value?.success) {
+                  await evaluateInChrome(`(() => {
+                    try {
+                      const el = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                      if (el) {
+                        if (typeof el.scrollIntoView === 'function') {
+                          try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                        }
+                        if (typeof el.click === 'function') {
+                          el.click();
+                        } else {
+                          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                        }
+                      }
+                    } catch(e) {}
+                  })()`);
+                }
+              } else {
+                // Fast direct click without mouse simulation
                 await evaluateInChrome(`(() => {
                   try {
                     const el = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
                     if (el) {
                       if (typeof el.scrollIntoView === 'function') {
-                        try { el.scrollIntoView({ block: 'center' }); } catch(e) {}
+                        try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch(e) {}
                       }
                       if (typeof el.click === 'function') {
                         el.click();
@@ -3382,6 +3503,16 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           if (res.success) {
             const val = res.value;
             jsVal = typeof val === 'object' && val !== null ? JSON.stringify(val) : String(val ?? '');
+            try {
+              const parsed = typeof val === 'object' && val !== null ? val : JSON.parse(jsVal);
+              if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+                for (const [pk, pv] of Object.entries(parsed)) {
+                  const pStr = typeof pv === 'object' && pv !== null ? (Array.isArray(pv) && pv.every((x: any) => typeof x === 'string' || typeof x === 'number') ? pv.join('\n') : JSON.stringify(pv)) : String(pv ?? '');
+                  vars[`${varName}.${pk}`] = pStr;
+                  vars[`${cleanName}.${pk}`] = pStr;
+                }
+              }
+            } catch (e) {}
           } else {
             jsVal = res.error || '';
           }
@@ -3389,6 +3520,28 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           vars[cleanName] = jsVal;
           addLog('success', '✔ Execute JS code');
           addLog('arrow', `   ↳ ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
+        } else if (actType === 55 || actName === 'file upload') {
+          const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', '');
+          const resolvedPath = resolveVars(rawPath, vars).trim();
+          const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
+          const resolvedXPath = resolveVars(rawXPath, vars).trim();
+
+          addLog('info', `▶ File upload › "${resolvedPath}"`);
+          if (!resolvedPath) {
+            addLog('error', `❌ Đường dẫn tệp rỗng`);
+          } else if ((window as any).electronAPI?.cdpAction) {
+            const upRes = await (window as any).electronAPI.cdpAction({
+              port: port.trim() || '43076',
+              action: 'uploadFile',
+              payload: { xpath: resolvedXPath, files: resolvedPath },
+            });
+            if (upRes?.success) {
+              addLog('success', `✔ Tải tệp thành công lên trình duyệt: "${resolvedPath}"`);
+            } else {
+              addLog('error', `❌ Tải tệp thất bại: ${upRes?.error || 'Unknown error'}`);
+            }
+          }
+          await sleep(500);
         } else if (actType === 58 || actName === 'scroll to top') {
           await evaluateInChrome('window.scrollTo(0, 0)');
           addLog('success', '✔ Scroll to top');
@@ -3408,10 +3561,12 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const [xStr, yStr] = resolvedPos.split(',');
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
-            await evaluateInChrome(`(async () => {
-              ${VIRTUAL_MOUSE_SCRIPT};
-              return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
-            })()`);
+            if (useVirtualMouse) {
+              await evaluateInChrome(`(async () => {
+                ${VIRTUAL_MOUSE_SCRIPT};
+                return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
+              })()`);
+            }
             if ((window as any).electronAPI?.cdpAction) {
               await (window as any).electronAPI.cdpAction({
                 port: port.trim() || '43076',
@@ -3423,62 +3578,88 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             }
             addLog('success', `✔ Mouse move › [${x}, ${y}]`);
           } else {
-            const evalMoveRes = await evaluateInChrome(`(async () => {
-              ${VIRTUAL_MOUSE_SCRIPT};
-              const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-              const el = res.singleNodeValue;
-              if (!el) return { success: false, error: 'Element not found' };
-              if (typeof el.scrollIntoView === 'function') {
-                el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-                await new Promise(r => setTimeout(r, 200));
-              }
-              const rect = el.getBoundingClientRect();
-              const tx = Math.round(rect.left + rect.width / 2);
-              const ty = Math.round(rect.top + rect.height / 2);
-              await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
-
-              const targetEl = document.elementFromPoint(tx, ty) || el;
-              const evOpts = {
-                bubbles: true,
-                cancelable: true,
-                clientX: tx,
-                clientY: ty,
-                screenX: tx + (window.screenX || 0),
-                screenY: ty + (window.screenY || 0),
-                view: window,
-                pointerId: 1,
-                pointerType: 'mouse',
-                isPrimary: true,
-              };
-              try {
-                if (typeof PointerEvent !== 'undefined') {
-                  targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
-                  targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
-                  el.dispatchEvent(new PointerEvent('pointerover', evOpts));
-                  el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+            if (useVirtualMouse) {
+              const evalMoveRes = await evaluateInChrome(`(async () => {
+                ${VIRTUAL_MOUSE_SCRIPT};
+                const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                const el = res.singleNodeValue;
+                if (!el) return { success: false, error: 'Element not found' };
+                if (typeof el.scrollIntoView === 'function') {
+                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                  await new Promise(r => setTimeout(r, 200));
                 }
-              } catch(e) {}
-              try {
-                targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
-                targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
-                targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
-                el.dispatchEvent(new MouseEvent('mouseover', evOpts));
-                el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
-                el.dispatchEvent(new MouseEvent('mousemove', evOpts));
-              } catch(e) {}
+                const rect = el.getBoundingClientRect();
+                const tx = Math.round(rect.left + rect.width / 2);
+                const ty = Math.round(rect.top + rect.height / 2);
+                await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
 
-              return { success: true, x: tx, y: ty };
-            })()`);
+                const targetEl = document.elementFromPoint(tx, ty) || el;
+                const evOpts = {
+                  bubbles: true,
+                  cancelable: true,
+                  clientX: tx,
+                  clientY: ty,
+                  screenX: tx + (window.screenX || 0),
+                  screenY: ty + (window.screenY || 0),
+                  view: window,
+                  pointerId: 1,
+                  pointerType: 'mouse',
+                  isPrimary: true,
+                };
+                try {
+                  if (typeof PointerEvent !== 'undefined') {
+                    targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                    targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                    el.dispatchEvent(new PointerEvent('pointerover', evOpts));
+                    el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+                  }
+                } catch(e) {}
+                try {
+                  targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                  targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                  targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                  el.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                  el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                  el.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                } catch(e) {}
 
-            const coords = evalMoveRes?.value?.x !== undefined ? evalMoveRes.value : (evalMoveRes as any)?.result?.value;
-            if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
-              await (window as any).electronAPI.cdpAction({
-                port: port.trim() || '43076',
-                action: 'mouseMove',
-                payload: { x: coords.x, y: coords.y },
-              }).catch(() => {});
-              vars.$lastMouseX = String(coords.x);
-              vars.$lastMouseY = String(coords.y);
+                return { success: true, x: tx, y: ty };
+              })()`);
+
+              const coords = evalMoveRes?.value?.x !== undefined ? evalMoveRes.value : (evalMoveRes as any)?.result?.value;
+              if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'mouseMove',
+                  payload: { x: coords.x, y: coords.y },
+                }).catch(() => {});
+                vars.$lastMouseX = String(coords.x);
+                vars.$lastMouseY = String(coords.y);
+              }
+            } else {
+              // Fast direct move without animation
+              const evalMoveRes = await evaluateInChrome(`(() => {
+                try {
+                  const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  const el = res.singleNodeValue;
+                  if (!el) return { success: false };
+                  if (typeof el.scrollIntoView === 'function') {
+                    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                  }
+                  const rect = el.getBoundingClientRect();
+                  return { success: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                } catch(e) { return { success: false }; }
+              })()`);
+              const coords = evalMoveRes?.value;
+              if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: port.trim() || '43076',
+                  action: 'mouseMove',
+                  payload: { x: coords.x, y: coords.y },
+                }).catch(() => {});
+                vars.$lastMouseX = String(coords.x);
+                vars.$lastMouseY = String(coords.y);
+              }
             }
 
             addLog('success', `✔ Mouse move › ${resolvedXPath || 'XPath'}`);
@@ -3492,48 +3673,75 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
           const isCoords = pressType === 'PRESS_POS' || pressType === 'Press by coordinates' || (!resolvedXPath && resolvedPos && pressType !== 'PRESS_XPATH' && pressType !== 'Press by Xpath');
 
-          await evaluateInChrome(`(async () => {
-            ${VIRTUAL_MOUSE_SCRIPT};
-            let tx = window.__gpmVirtualMouse.getPos().x;
-            let ty = window.__gpmVirtualMouse.getPos().y;
-            ${isCoords ? `
-            if (${JSON.stringify(resolvedPos)}) {
-              tx = ${parseFloat(resolvedPos.split(',')[0]) || 0};
-              ty = ${parseFloat(resolvedPos.split(',')[1]) || 0};
-            }
-            ` : `
-            if (${JSON.stringify(resolvedXPath)}) {
-              const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-              const el = res.singleNodeValue;
-              if (el) {
-                if (typeof el.scrollIntoView === 'function') {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-                  await new Promise(r => setTimeout(r, 200));
-                }
-                const rect = el.getBoundingClientRect();
-                tx = Math.round(rect.left + rect.width / 2);
-                ty = Math.round(rect.top + rect.height / 2);
+          if (useVirtualMouse) {
+            await evaluateInChrome(`(async () => {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              let tx = window.__gpmVirtualMouse.getPos().x;
+              let ty = window.__gpmVirtualMouse.getPos().y;
+              ${isCoords ? `
+              if (${JSON.stringify(resolvedPos)}) {
+                tx = ${parseFloat(resolvedPos.split(',')[0]) || 0};
+                ty = ${parseFloat(resolvedPos.split(',')[1]) || 0};
               }
-            }
-            `}
-            await window.__gpmVirtualMouse.moveTo(tx, ty, 250);
-            const targetEl = document.elementFromPoint(tx, ty) || document.body;
-            if (targetEl) {
-              targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, buttons: 1 }));
-            }
-            return { success: true };
-          })()`);
+              ` : `
+              if (${JSON.stringify(resolvedXPath)}) {
+                const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                const el = res.singleNodeValue;
+                if (el) {
+                  if (typeof el.scrollIntoView === 'function') {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                    await new Promise(r => setTimeout(r, 200));
+                  }
+                  const rect = el.getBoundingClientRect();
+                  tx = Math.round(rect.left + rect.width / 2);
+                  ty = Math.round(rect.top + rect.height / 2);
+                }
+              }
+              `}
+              await window.__gpmVirtualMouse.moveTo(tx, ty, 250);
+              const targetEl = document.elementFromPoint(tx, ty) || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, clientX: tx, clientY: ty, buttons: 1 }));
+              }
+              return { success: true };
+            })()`);
+          } else {
+            // Fast direct mousedown
+            await evaluateInChrome(`(() => {
+              try {
+                let targetEl = document.activeElement || document.body;
+                ${resolvedXPath ? `
+                const el = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                if (el) targetEl = el;
+                ` : ''}
+                if (targetEl) {
+                  targetEl.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, buttons: 1 }));
+                }
+                return { success: true };
+              } catch(e) { return { success: false }; }
+            })()`);
+          }
           addLog('success', `✔ Mouse press and hold`);
         } else if (actType === 52 || actName === 'mouse release') {
-          await evaluateInChrome(`(async () => {
-            ${VIRTUAL_MOUSE_SCRIPT};
-            const pos = window.__gpmVirtualMouse.getPos();
-            const targetEl = document.elementFromPoint(pos.x, pos.y) || document.body;
-            if (targetEl) {
-              targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: pos.x, clientY: pos.y, buttons: 0 }));
-            }
-            return { success: true };
-          })()`);
+          if (useVirtualMouse) {
+            await evaluateInChrome(`(async () => {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              const pos = window.__gpmVirtualMouse.getPos();
+              const targetEl = document.elementFromPoint(pos.x, pos.y) || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: pos.x, clientY: pos.y, buttons: 0 }));
+              }
+              return { success: true };
+            })()`);
+          } else {
+            await evaluateInChrome(`(() => {
+              const targetEl = document.activeElement || document.body;
+              if (targetEl) {
+                targetEl.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, buttons: 0 }));
+              }
+              return { success: true };
+            })()`);
+          }
           addLog('success', `✔ Mouse release`);
         } else if (actType === 53 || actName === 'mouse scroll') {
           const rawScrollVal = resolveVars(getRawInputValue(act.raw_input, 'SCROLL_NUM', '1'), vars).trim();
@@ -3677,98 +3885,14 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           const delayPress = getRawInputValue(act.raw_input, 'DELAY_PRESS', getRawInputValue(act.raw_input, 'DELAY_EACH_CHAR', '-1'));
           const activePort = port.trim() || '43076';
 
-          // 1. Nếu có XPath: Tự động tìm kiếm, cuộn tới và click focus bằng CDP
-          if (resolvedXPath) {
-            addLog('info', `🔍 Tự động tìm & kích hoạt ô nhập › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
-            let foundCoords: { x: number; y: number } | null = null;
-            const startFind = Date.now();
+          const rawDelay = (delayPress || '').trim();
+          const isPaste = rawDelay === '-1';
 
-            while (Date.now() - startFind < 15000 && !stopSignalRef.current) {
-              const evalRes = await evaluateInChrome(`(() => {
-                try {
-                  let doc = document;
-                  let offX = 0;
-                  let offY = 0;
-                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
-                  if (fx) {
-                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                    if (fr) {
-                      const rectF = fr.getBoundingClientRect();
-                      offX = Math.round(rectF.left);
-                      offY = Math.round(rectF.top);
-                      try {
-                        if (fr.contentDocument) doc = fr.contentDocument;
-                        else if (fr.contentWindow) doc = fr.contentWindow.document;
-                      } catch(e) {}
-                    }
-                  }
-                  const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                  const el = res.singleNodeValue;
-                  if (!el) return { found: false };
-                  if (typeof el.scrollIntoView === 'function') {
-                    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
-                  }
-                  if (typeof el.focus === 'function') el.focus();
-                  const rect = el.getBoundingClientRect();
-                  return {
-                    found: true,
-                    x: Math.round(rect.left + rect.width / 2) + offX,
-                    y: Math.round(rect.top + rect.height / 2) + offY,
-                  };
-                } catch(e) {
-                  return { found: false, error: e.message };
-                }
-              })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+          // 1. NẾU DÁN NHANH (Paste, delay = -1): Dán tức thì, không đợi tìm tọa độ, không di chuyển chuột làm mất focus
+          if (effectiveType === 'Text' && isPaste) {
+            addLog('info', `▶ Key press (Dán nhanh) › "${resolvedKey}"`);
 
-              const val = evalRes?.value;
-              if (val && val.found && val.x > 0 && val.y > 0) {
-                foundCoords = { x: val.x, y: val.y };
-                break;
-              }
-              await sleep(350);
-            }
-
-            if (!foundCoords) {
-              addLog('error', `✕ Không tìm thấy XPath sau 15s: [${resolvedXPath}]`);
-            } else {
-              // Di chuyển chuột ảo đến đúng ô nhập liệu
-              await evaluateInChrome(getVirtualMouseClickCoordsScript(foundCoords.x, foundCoords.y), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined).catch(() => {});
-
-              // Click CDP coordinates
-              if ((window as any).electronAPI?.cdpAction) {
-                await (window as any).electronAPI.cdpAction({
-                  port: activePort,
-                  action: 'clickCoordinates',
-                  payload: { x: foundCoords.x, y: foundCoords.y, targetId: vars.$activePopupTargetId },
-                }).catch(() => {});
-              }
-              await sleep(150);
-            }
-          }
-
-          // 2. GÕ VĂN BẢN (Text)
-          if (effectiveType === 'Text') {
-            const rawDelay = (delayPress || '').trim();
-            const isPaste = rawDelay === '-1';
-
-            // Tính toán mô tả hiển thị log
-            let logDelayDesc = 'Gõ ngầm Chrome (Tự nhiên ~35-75ms)';
-            if (isPaste) {
-              logDelayDesc = 'Dán nhanh';
-            } else if (rawDelay === '0' || rawDelay === '0,0') {
-              logDelayDesc = 'Gõ tức thì (0ms)';
-            } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
-              logDelayDesc = `Gõ ngầm Chrome (Random ~${rawDelay}ms/phím)`;
-            } else if (rawDelay) {
-              const b = parseInt(rawDelay, 10);
-              if (!isNaN(b) && b > 0) {
-                logDelayDesc = `Gõ ngầm Chrome (Random ~${Math.max(10, Math.round(b * 0.7))}-${Math.round(b * 1.3)}ms)`;
-              }
-            }
-
-            addLog('info', `▶ Key press (${logDelayDesc}) › "${resolvedKey}"`);
-
-            // Gõ hoàn toàn độc lập bên trong tiến trình Chrome (không dùng bàn phím máy tính của người dùng)
+            // Dán trực tiếp và tức thì vào phần tử (Hỗ trợ cả Facebook contenteditable và input/textarea thông thường)
             const evalRes = await evaluateInChrome(`(async () => {
               try {
                 let doc = document;
@@ -3784,57 +3908,231 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 }
                 let el = ${resolvedXPath ? `doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue` : `doc.activeElement`};
                 if (!el && ${JSON.stringify(resolvedXPath || '')}) {
-                  return { success: false, error: 'Element not found' };
+                  return { success: false, notFound: true };
                 }
 
                 if (el) {
-                  if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center' });
+                  if (typeof el.scrollIntoView === 'function') {
+                    try { el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' }); } catch(e) {}
+                  }
                   if (typeof el.focus === 'function') el.focus();
-                  if (typeof el.click === 'function') el.click();
                 }
 
                 const text = ${JSON.stringify(resolvedKey)};
-                const delayRaw = ${JSON.stringify(rawDelay)};
+                let pasted = false;
 
-                // Tính hàm lấy độ trễ ngẫu nhiên cho từng ký tự
-                const isPasteMode = delayRaw === '-1';
-                let getCharDelay = () => Math.floor(Math.random() * 41) + 35;
-
-                if (isPasteMode) {
-                  getCharDelay = () => -1;
-                } else if (delayRaw === '0' || delayRaw === '0,0') {
-                  getCharDelay = () => 0;
-                } else if (delayRaw.includes(',') || delayRaw.includes('-')) {
-                  const parts = delayRaw.includes(',') ? delayRaw.split(',') : delayRaw.split('-');
-                  const minD = Math.max(0, parseInt(parts[0], 10) || 0);
-                  const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
-                  getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
-                } else if (delayRaw) {
-                  const base = parseInt(delayRaw, 10);
-                  if (!isNaN(base) && base > 0) {
-                    const minD = Math.max(10, Math.round(base * 0.7));
-                    const maxD = Math.round(base * 1.3);
-                    getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
-                  } else if (base === 0) {
-                    getCharDelay = () => 0;
-                  }
+                // Xử lý ô nhập dạng contenteditable (Facebook comment, Facebook post, chat input...)
+                const isContentEdit = el && (el.isContentEditable || el.getAttribute('contenteditable') === 'true' || el.getAttribute('role') === 'textbox' || (el.closest && el.closest('[contenteditable="true"]')));
+                if (isContentEdit) {
+                  const targetEl = (el.isContentEditable || el.getAttribute('contenteditable') === 'true') ? el : (el.closest('[contenteditable="true"]') || el);
+                  if (typeof targetEl.focus === 'function') targetEl.focus();
+                  try {
+                    document.execCommand('insertText', false, text);
+                    pasted = true;
+                  } catch(e) {}
+                  try {
+                    targetEl.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                    targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  } catch(e) {}
                 }
 
-                const protoSetter = el ? Object.getOwnPropertyDescriptor(
-                  el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
-                  'value'
-                )?.set : null;
-
+                // Xử lý ô nhập input / textarea thông thường
                 if (el && ('value' in el)) {
-                  if (isPasteMode || getCharDelay() === 0) {
-                    // Dán nhanh (Paste)
-                    if (protoSetter) protoSetter.call(el, text);
-                    else el.value = text;
-                    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                    el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                    el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
-                  } else {
-                    // Gõ từng ký tự với độ trễ random độc lập bên trong Chrome
+                  const protoSetter = Object.getOwnPropertyDescriptor(
+                    el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                    'value'
+                  )?.set;
+                  if (protoSetter) protoSetter.call(el, text);
+                  else el.value = text;
+                  el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  el.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                  el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                  pasted = true;
+                }
+
+                return { success: true, pasted };
+              } catch(e) {
+                return { success: false, error: e.message };
+              }
+            })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+
+            // Bổ trợ qua lệnh CDP typeText (Input.insertText tức thì) để đảm bảo trình duyệt nhận 100%
+            if (!evalRes?.value?.pasted || !resolvedXPath) {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'typeText',
+                  payload: { text: resolvedKey, delay: '-1', targetId: vars.$activePopupTargetId },
+                }).catch(() => {});
+              }
+            }
+
+            // Nếu người dùng chọn hiện chuột ảo, đưa chuột ảo tới vị trí đó một cách nhẹ nhàng (không chặn luồng dán)
+            if (useVirtualMouse && resolvedXPath) {
+              evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath), vars.$activePopupTargetId).catch(() => {});
+            }
+
+            addLog('success', `✔ Typed: "${resolvedKey}" (Dán nhanh)`);
+          } else {
+            // Focus vào ô nhập liệu
+            if (resolvedXPath) {
+              if (useVirtualMouse) {
+                addLog('info', `🔍 Tự động tìm & kích hoạt ô nhập › ${resolvedXPath}${isInheritedXPath ? ' (Tự động lấy từ Wait element)' : ''}`);
+                let foundCoords: { x: number; y: number } | null = null;
+                const startFind = Date.now();
+
+                while (Date.now() - startFind < 15000 && !stopSignalRef.current) {
+                  const evalRes = await evaluateInChrome(`(() => {
+                    try {
+                      let doc = document;
+                      let offX = 0;
+                      let offY = 0;
+                      const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                      if (fx) {
+                        const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                        if (fr) {
+                          const rectF = fr.getBoundingClientRect();
+                          offX = Math.round(rectF.left);
+                          offY = Math.round(rectF.top);
+                          try {
+                            if (fr.contentDocument) doc = fr.contentDocument;
+                            else if (fr.contentWindow) doc = fr.contentWindow.document;
+                          } catch(e) {}
+                        }
+                      }
+                      const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                      const el = res.singleNodeValue;
+                      if (!el) return { found: false };
+                      if (typeof el.scrollIntoView === 'function') {
+                        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                      }
+                      if (typeof el.focus === 'function') el.focus();
+                      const rect = el.getBoundingClientRect();
+                      return {
+                        found: true,
+                        x: Math.round(rect.left + rect.width / 2) + offX,
+                        y: Math.round(rect.top + rect.height / 2) + offY,
+                      };
+                    } catch(e) {
+                      return { found: false, error: e.message };
+                    }
+                  })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+
+                  const val = evalRes?.value;
+                  if (val && val.found && val.x > 0 && val.y > 0) {
+                    foundCoords = { x: val.x, y: val.y };
+                    break;
+                  }
+                  await sleep(350);
+                }
+
+                if (!foundCoords) {
+                  addLog('error', `✕ Không tìm thấy XPath sau 15s: [${resolvedXPath}]`);
+                } else {
+                  // Di chuyển chuột ảo đến đúng ô nhập liệu
+                  await evaluateInChrome(getVirtualMouseClickCoordsScript(foundCoords.x, foundCoords.y), vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined).catch(() => {});
+                  if ((window as any).electronAPI?.cdpAction) {
+                    await (window as any).electronAPI.cdpAction({
+                      port: activePort,
+                      action: 'clickCoordinates',
+                      payload: { x: foundCoords.x, y: foundCoords.y, targetId: vars.$activePopupTargetId },
+                    }).catch(() => {});
+                  }
+                  await sleep(150);
+                }
+              } else {
+                // Chế độ siêu tốc: focus trực tiếp trong DOM trong 0ms
+                await evaluateInChrome(`(() => {
+                  try {
+                    let doc = document;
+                    const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                    if (fx) {
+                      const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                      if (fr) {
+                        try {
+                          if (fr.contentDocument) doc = fr.contentDocument;
+                          else if (fr.contentWindow) doc = fr.contentWindow.document;
+                        } catch(e) {}
+                      }
+                    }
+                    const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                    const el = res.singleNodeValue;
+                    if (el) {
+                      if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+                      if (typeof el.focus === 'function') el.focus();
+                    }
+                  } catch(e) {}
+                })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+              }
+            }
+
+            // GÕ VĂN BẢN (Text)
+            if (effectiveType === 'Text') {
+              let logDelayDesc = 'Gõ ngầm Chrome (Tự nhiên ~35-75ms)';
+              if (rawDelay === '0' || rawDelay === '0,0') {
+                logDelayDesc = 'Gõ tức thì (0ms)';
+              } else if (rawDelay.includes(',') || rawDelay.includes('-')) {
+                logDelayDesc = `Gõ ngầm Chrome (Random ~${rawDelay}ms/phím)`;
+              } else if (rawDelay) {
+                const b = parseInt(rawDelay, 10);
+                if (!isNaN(b) && b > 0) {
+                  logDelayDesc = `Gõ ngầm Chrome (Random ~${Math.max(10, Math.round(b * 0.7))}-${Math.round(b * 1.3)}ms)`;
+                }
+              }
+
+              addLog('info', `▶ Key press (${logDelayDesc}) › "${resolvedKey}"`);
+
+              const evalRes = await evaluateInChrome(`(async () => {
+                try {
+                  let doc = document;
+                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                  if (fx) {
+                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (fr) {
+                      try {
+                        if (fr.contentDocument) doc = fr.contentDocument;
+                        else if (fr.contentWindow) doc = fr.contentWindow.document;
+                      } catch(e) {}
+                    }
+                  }
+                  let el = ${resolvedXPath ? `doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue` : `doc.activeElement`};
+                  if (!el && ${JSON.stringify(resolvedXPath || '')}) {
+                    return { success: false, error: 'Element not found' };
+                  }
+
+                  if (el) {
+                    if (typeof el.scrollIntoView === 'function') el.scrollIntoView({ block: 'center', inline: 'center' });
+                    if (typeof el.focus === 'function') el.focus();
+                  }
+
+                  const text = ${JSON.stringify(resolvedKey)};
+                  const delayRaw = ${JSON.stringify(rawDelay)};
+
+                  let getCharDelay = () => Math.floor(Math.random() * 41) + 35;
+                  if (delayRaw === '0' || delayRaw === '0,0') {
+                    getCharDelay = () => 0;
+                  } else if (delayRaw.includes(',') || delayRaw.includes('-')) {
+                    const parts = delayRaw.includes(',') ? delayRaw.split(',') : delayRaw.split('-');
+                    const minD = Math.max(0, parseInt(parts[0], 10) || 0);
+                    const maxD = Math.max(minD, parseInt(parts[1], 10) || minD);
+                    getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                  } else if (delayRaw) {
+                    const base = parseInt(delayRaw, 10);
+                    if (!isNaN(base) && base > 0) {
+                      const minD = Math.max(10, Math.round(base * 0.7));
+                      const maxD = Math.round(base * 1.3);
+                      getCharDelay = () => Math.floor(Math.random() * (maxD - minD + 1)) + minD;
+                    } else if (base === 0) {
+                      getCharDelay = () => 0;
+                    }
+                  }
+
+                  const protoSetter = el ? Object.getOwnPropertyDescriptor(
+                    el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
+                    'value'
+                  )?.set : null;
+
+                  if (el && ('value' in el)) {
                     let current = '';
                     for (let i = 0; i < text.length; i++) {
                       const char = text[i];
@@ -3850,29 +4148,27 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                       }
                     }
                     el.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                    return { success: true, value: el.value };
                   }
-                  return { success: true, value: el.value };
+                  return { success: true, notInput: true };
+                } catch(e) {
+                  return { success: false, error: e.message };
                 }
-                return { success: true, notInput: true };
-              } catch(e) {
-                return { success: false, error: e.message };
-              }
-            })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
+              })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
 
-            // Nếu không có XPath hoặc phần tử không phải ô input DOM thông thường, bổ trợ qua lệnh CDP typeText
-            const evalVal = evalRes?.value;
-            if (!resolvedXPath || evalVal?.notInput) {
-              if ((window as any).electronAPI?.cdpAction) {
-                await (window as any).electronAPI.cdpAction({
-                  port: activePort,
-                  action: 'typeText',
-                  payload: { text: resolvedKey, delay: rawDelay, targetId: vars.$activePopupTargetId },
-                });
+              const evalVal = evalRes?.value;
+              if (!resolvedXPath || evalVal?.notInput) {
+                if ((window as any).electronAPI?.cdpAction) {
+                  await (window as any).electronAPI.cdpAction({
+                    port: activePort,
+                    action: 'typeText',
+                    payload: { text: resolvedKey, delay: rawDelay, targetId: vars.$activePopupTargetId },
+                  });
+                }
               }
-            }
 
-            addLog('success', `✔ Typed: "${resolvedKey}" (${logDelayDesc})`);
-          } else {
+              addLog('success', `✔ Typed: "${resolvedKey}" (${logDelayDesc})`);
+            } else {
             const lower = resolvedKey.toLowerCase().trim();
             addLog('info', `▶ Key press (${effectiveType}) › "${resolvedKey}"`);
 
@@ -3942,7 +4238,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
 
             addLog('success', `✔ Sent key: "${resolvedKey}" (${effectiveType})`);
           }
-        } else {
+        }
+      } else {
           // Generic action
           const target = act.element_xpath || act.output_variable_name || '';
           const name = act.display_text || 'Action';
@@ -4000,13 +4297,9 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       let nodesToRun: WorkflowNode[] = [];
 
       if (target) {
-        if ('nodes' in target && Array.isArray((target as any).nodes)) {
-          // If a block is selected (e.g. Normal block, For, While), run all nodes inside this block
-          nodesToRun = (target as any).nodes;
-        } else {
-          // If a single action is selected, run ONLY this action in isolation
-          nodesToRun = [target];
-        }
+        // If a block or action is selected, run it as [target]
+        // This ensures For, While, If blocks properly execute their loop and condition logic!
+        nodesToRun = [target];
       } else {
         if (currentProject?.script.main_logic?.nodes?.length) {
           nodesToRun = currentProject.script.main_logic.nodes;
@@ -4104,13 +4397,28 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           return;
         }
 
-        // Initialize persistent virtual mouse on this Chrome instance
-        if ((window as any).electronAPI?.cdpAction) {
-          await (window as any).electronAPI.cdpAction({
-            port: cleanPort,
-            action: 'initVirtualMouse',
-            payload: { script: VIRTUAL_MOUSE_SCRIPT },
-          }).catch(() => {});
+        // Initialize persistent virtual mouse on this Chrome instance if selected
+        if (useVirtualMouse) {
+          addLog('info', '🖱 Khởi tạo chuột ảo (con trỏ đỏ)...');
+          if ((window as any).electronAPI?.cdpAction) {
+            await (window as any).electronAPI.cdpAction({
+              port: cleanPort,
+              action: 'initVirtualMouse',
+              payload: { script: VIRTUAL_MOUSE_SCRIPT },
+            }).catch(() => {});
+          }
+          await evaluateInChrome(`(() => {
+            try {
+              ${VIRTUAL_MOUSE_SCRIPT};
+              if (window.__gpmVirtualMouse) {
+                window.__gpmVirtualMouse.init();
+              }
+              return true;
+            } catch(e) { return false; }
+          })()`).catch(() => {});
+          addLog('success', '✔ Chuột ảo đã hiển thị trên Chrome');
+        } else {
+          addLog('info', '⚡ Chế độ siêu tốc (Không dùng chuột ảo)');
         }
       }
 
@@ -4393,6 +4701,21 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     ▾
                   </div>
                 </div>
+
+                {/* Use Virtual Mouse Checkbox */}
+                <label className="flex items-center space-x-1.5 cursor-pointer text-xs text-[#334155] dark:text-[#cbd5e1] select-none shrink-0 px-1 py-1 hover:text-[#1677ff] dark:hover:text-[#38bdf8] transition-colors" title="Bật/tắt con chuột ảo màu đỏ trên Chrome">
+                  <input
+                    type="checkbox"
+                    checked={useVirtualMouse}
+                    onChange={(e) => {
+                      setUseVirtualMouse(e.target.checked);
+                      localStorage.setItem('gpm_use_virtual_mouse', String(e.target.checked));
+                    }}
+                    disabled={isRunning}
+                    className="rounded text-[#1677ff] w-4 h-4 cursor-pointer"
+                  />
+                  <span className="font-medium">Use virtual mouse</span>
+                </label>
 
                 {/* Start / Stop Button */}
                 {isRunning ? (

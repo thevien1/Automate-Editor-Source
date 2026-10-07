@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useProject } from '../../context/ProjectContext';
-import { Folder, Plus, Trash2, X, FilePlus } from '../common/Icons';
+import { Folder, Plus, Trash2, X, FilePlus, ChevronLeft, ChevronRight } from '../common/Icons';
 
 export const WorkflowTabs: React.FC = () => {
   const {
@@ -21,6 +21,24 @@ export const WorkflowTabs: React.FC = () => {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const isMouseDownRef = useRef(false);
+  const startXRef = useRef(0);
+  const scrollLeftRef = useRef(0);
+  const isDraggingRef = useRef(false);
+
+  // Check scroll position to show/hide scroll buttons
+  const checkScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const hasOverflow = el.scrollWidth > el.clientWidth + 1;
+    setCanScrollLeft(el.scrollLeft > 2);
+    setCanScrollRight(hasOverflow && el.scrollLeft < el.scrollWidth - el.clientWidth - 2);
+  };
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -34,6 +52,42 @@ export const WorkflowTabs: React.FC = () => {
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [isDropdownOpen]);
+
+  // Mouse wheel listener with passive: false to allow horizontal scrolling
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    checkScroll();
+
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY !== 0) {
+        e.preventDefault();
+        el.scrollLeft += e.deltaY;
+      }
+    };
+
+    el.addEventListener('wheel', onWheel, { passive: false });
+    el.addEventListener('scroll', checkScroll);
+    window.addEventListener('resize', checkScroll);
+
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      el.removeEventListener('scroll', checkScroll);
+      window.removeEventListener('resize', checkScroll);
+    };
+  }, []);
+
+  // Auto-scroll to active tab when it changes
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const activeEl = el.querySelector('[data-active="true"]') as HTMLElement;
+    if (activeEl) {
+      activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+    }
+    setTimeout(checkScroll, 250);
+  }, [activeWorkflowTab]);
 
   // Auto focus input when modal opens
   useEffect(() => {
@@ -114,16 +168,71 @@ export const WorkflowTabs: React.FC = () => {
     e.target.value = '';
   };
 
+  const handleScrollLeft = () => {
+    scrollContainerRef.current?.scrollBy({ left: -220, behavior: 'smooth' });
+  };
+
+  const handleScrollRight = () => {
+    scrollContainerRef.current?.scrollBy({ left: 220, behavior: 'smooth' });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0 && e.button !== 1) return;
+    isMouseDownRef.current = true;
+    startXRef.current = e.pageX - (scrollContainerRef.current?.offsetLeft || 0);
+    scrollLeftRef.current = scrollContainerRef.current?.scrollLeft || 0;
+    isDraggingRef.current = false;
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isMouseDownRef.current || !scrollContainerRef.current) return;
+    const x = e.pageX - (scrollContainerRef.current.offsetLeft || 0);
+    const walk = x - startXRef.current;
+    if (Math.abs(walk) > 4) {
+      isDraggingRef.current = true;
+      scrollContainerRef.current.scrollLeft = scrollLeftRef.current - walk;
+    }
+  };
+
+  const handleMouseUp = () => {
+    isMouseDownRef.current = false;
+    setTimeout(() => {
+      isDraggingRef.current = false;
+    }, 50);
+  };
+
   const subWorkflowNames = Object.keys(currentProject?.subWorkflows || {});
 
   return (
     <>
-      <div className="h-9 bg-white dark:bg-[#0a0f1d] border-b border-[#e2e8f0] dark:border-[#162236] flex items-center justify-between px-3 select-none transition-colors relative z-30">
-        <div className="flex items-center space-x-1 overflow-x-auto no-scrollbar py-1">
+      <div className="h-9 bg-white dark:bg-[#0a0f1d] border-b border-[#e2e8f0] dark:border-[#162236] flex items-center justify-between px-2 select-none transition-colors relative z-30">
+        {/* Left Scroll Button (shown when tabs overflow to the left) */}
+        {canScrollLeft && (
+          <button
+            onClick={handleScrollLeft}
+            className="w-5 h-6 flex items-center justify-center rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] transition-colors shrink-0 mr-1 cursor-pointer"
+            title="Cuộn sang trái (hoặc lăn chuột)"
+          >
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+        )}
+
+        {/* Scrollable Tabs Container */}
+        <div
+          ref={scrollContainerRef}
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+          onMouseLeave={handleMouseUp}
+          className="flex-1 min-w-0 flex items-center space-x-1 overflow-x-auto no-scrollbar py-1 scroll-smooth"
+        >
           {/* Main Workflow Tab */}
           <button
-            onClick={() => setActiveWorkflowTab('main')}
-            className={`flex items-center space-x-2 px-3 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+            data-active={activeWorkflowTab === 'main' ? 'true' : 'false'}
+            onClick={() => {
+              if (!isDraggingRef.current) setActiveWorkflowTab('main');
+            }}
+            className={`shrink-0 flex items-center space-x-2 px-3 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
               activeWorkflowTab === 'main'
                 ? 'bg-[#e6f4ff] dark:bg-[#0e1e3b] text-[#1677ff] dark:text-[#38bdf8] border border-[#91caff] dark:border-[#1d4ed8]/50 shadow-2xs font-semibold'
                 : 'text-[#64748b] dark:text-[#94a3b8] hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] border border-transparent'
@@ -145,8 +254,11 @@ export const WorkflowTabs: React.FC = () => {
             return (
               <div
                 key={name}
-                onClick={() => setActiveWorkflowTab(name)}
-                className={`group flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
+                data-active={isActive ? 'true' : 'false'}
+                onClick={() => {
+                  if (!isDraggingRef.current) setActiveWorkflowTab(name);
+                }}
+                className={`shrink-0 group flex items-center space-x-1.5 px-3 py-1 rounded text-xs font-medium transition-colors cursor-pointer ${
                   isActive
                     ? 'bg-[#e6f4ff] dark:bg-[#0e1e3b] text-[#1677ff] dark:text-[#38bdf8] border border-[#91caff] dark:border-[#1d4ed8]/50 shadow-2xs font-semibold'
                     : 'text-[#64748b] dark:text-[#94a3b8] hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] border border-transparent'
@@ -193,6 +305,17 @@ export const WorkflowTabs: React.FC = () => {
             );
           })}
         </div>
+
+        {/* Right Scroll Button (shown when tabs overflow to the right) */}
+        {canScrollRight && (
+          <button
+            onClick={handleScrollRight}
+            className="w-5 h-6 flex items-center justify-center rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] transition-colors shrink-0 ml-1 cursor-pointer"
+            title="Cuộn sang phải (hoặc lăn chuột)"
+          >
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
+        )}
 
         {/* Right: + Button with Dropdown Menu (Positioned on the far right matching Image 1) */}
         <div className="relative shrink-0 ml-2" ref={dropdownRef}>

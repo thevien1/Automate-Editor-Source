@@ -1439,7 +1439,7 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           source: script,
         }).catch(() => {});
         await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
-          expression: script,
+          expression: `(() => { try { ${script}; if (window.__gpmVirtualMouse) { window.__gpmVirtualMouse.init(); } return true; } catch(e){ return false; } })()`,
           returnByValue: true,
         }).catch(() => {});
       }
@@ -1497,7 +1497,8 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       if (payload?.contextId !== undefined && payload?.contextId !== null) {
         evalParams.contextId = Number(payload.contextId);
       }
-      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', evalParams);
+      const evalTimeout = Number(payload?.timeoutMs) || 300000;
+      const wsRes = await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', evalParams, evalTimeout);
       if (!wsRes.success) {
         return { success: false, error: wsRes.error || 'Evaluation failed' };
       }
@@ -2130,6 +2131,91 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         return { success: true };
       }
       return { success: false, error: res?.error || 'Failed to clear cookies' };
+    }
+
+    if (action === 'uploadFile' || action === 'setFileInputFiles') {
+      const { xpath, files } = payload || {};
+      const fileList: string[] = Array.isArray(files) ? files : (files ? [String(files)] : []);
+      if (fileList.length === 0) {
+        return { success: false, error: 'No files provided to upload' };
+      }
+
+      // Check if files exist on disk
+      for (const f of fileList) {
+        if (!fs.existsSync(f)) {
+          return { success: false, error: `File not found on disk: ${f}` };
+        }
+      }
+
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+
+      // 1. Find the input element RemoteObject
+      const findScript = `(() => {
+        let el = null;
+        if (${JSON.stringify(xpath || '')}) {
+          try {
+            el = document.evaluate(${JSON.stringify(xpath || '')}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+          } catch (e) {}
+        }
+        if (!el) {
+          // Auto fallback: find active/visible file input or any file input accepting images
+          const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+          el = inputs.find(i => (i.getAttribute('accept') || '').includes('image/*') && i.hasAttribute('multiple'))
+            || inputs.find(i => (i.getAttribute('accept') || '').includes('image'))
+            || inputs[inputs.length - 1];
+        }
+        return el;
+      })()`;
+
+      const evalRes = await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+        expression: findScript,
+        returnByValue: false,
+      });
+
+      const objectId = evalRes?.result?.result?.objectId;
+      if (!objectId) {
+        return { success: false, error: 'Không tìm thấy thẻ <input type="file"> để tải tệp lên' };
+      }
+
+      // 2. Call DOM.setFileInputFiles
+      const setRes = await sendWs(page.webSocketDebuggerUrl, 'DOM.setFileInputFiles', {
+        files: fileList,
+        objectId,
+      });
+
+      if (!setRes.success) {
+        return { success: false, error: setRes.error || 'DOM.setFileInputFiles failed' };
+      }
+
+      // 3. Dispatch input and change events to notify the website
+      await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+        expression: `(() => {
+          try {
+            let el = null;
+            if (${JSON.stringify(xpath || '')}) {
+              try {
+                el = document.evaluate(${JSON.stringify(xpath || '')}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+              } catch(e) {}
+            }
+            if (!el) {
+              const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+              el = inputs.find(i => (i.getAttribute('accept') || '').includes('image/*') && i.hasAttribute('multiple'))
+                || inputs.find(i => (i.getAttribute('accept') || '').includes('image'))
+                || inputs[inputs.length - 1];
+            }
+            if (el) {
+              el.dispatchEvent(new Event('input', { bubbles: true }));
+              el.dispatchEvent(new Event('change', { bubbles: true }));
+            }
+          } catch(e) {}
+        })()`,
+        returnByValue: true,
+      }).catch(() => {});
+
+      return { success: true, count: fileList.length };
     }
 
     return { success: false, error: 'Unknown action' };
