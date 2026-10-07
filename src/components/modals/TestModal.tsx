@@ -3926,18 +3926,28 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 if (isContentEdit) {
                   const targetEl = (el.isContentEditable || el.getAttribute('contenteditable') === 'true') ? el : (el.closest('[contenteditable="true"]') || el);
                   if (typeof targetEl.focus === 'function') targetEl.focus();
+
+                  // 1. Thử dùng execCommand('insertText') - Trong Chromium, lệnh này tự kích hoạt native input event và được Lexical (Facebook) xử lý hoàn hảo
                   try {
-                    document.execCommand('insertText', false, text);
-                    pasted = true;
+                    pasted = document.execCommand('insertText', false, text);
                   } catch(e) {}
-                  try {
-                    targetEl.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                    targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
-                  } catch(e) {}
+
+                  // 2. CHỈ khi execCommand thất bại mới fallback sang synthetic input event (tránh bị dán nhân đôi 'hellohello')
+                  if (!pasted) {
+                    try {
+                      const inputEvt = new InputEvent('beforeinput', { bubbles: true, cancelable: true, composed: true, inputType: 'insertText', data: text });
+                      const notCancelled = targetEl.dispatchEvent(inputEvt);
+                      if (notCancelled) {
+                        try { document.execCommand('insertHTML', false, text); } catch(e) {}
+                      }
+                      targetEl.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true, inputType: 'insertText', data: text }));
+                      pasted = true;
+                    } catch(e) {}
+                  }
                 }
 
                 // Xử lý ô nhập input / textarea thông thường
-                if (el && ('value' in el)) {
+                if (!isContentEdit && el && ('value' in el)) {
                   const protoSetter = Object.getOwnPropertyDescriptor(
                     el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype,
                     'value'
@@ -3956,8 +3966,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               }
             })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
 
-            // Bổ trợ qua lệnh CDP typeText (Input.insertText tức thì) để đảm bảo trình duyệt nhận 100%
-            if (!evalRes?.value?.pasted || !resolvedXPath) {
+            // Bổ trợ qua lệnh CDP typeText CHỈ KHI evaluate DOM thất bại hoàn toàn (không gọi nếu đã dán thành công)
+            if (!evalRes?.value?.pasted) {
               if ((window as any).electronAPI?.cdpAction) {
                 await (window as any).electronAPI.cdpAction({
                   port: activePort,
@@ -3967,9 +3977,9 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               }
             }
 
-            // Nếu người dùng chọn hiện chuột ảo, đưa chuột ảo tới vị trí đó một cách nhẹ nhàng (không chặn luồng dán)
+            // Nếu người dùng chọn hiện chuột ảo, chỉ di chuyển chuột ảo tới vị trí đó một cách tự nhiên (KHÔNG click để tránh kích hoạt lại ô nhập)
             if (useVirtualMouse && resolvedXPath) {
-              evaluateInChrome(getVirtualMouseClickXPathScript(resolvedXPath), vars.$activePopupTargetId).catch(() => {});
+              evaluateInChrome(getVirtualMouseMoveXPathScript(resolvedXPath), vars.$activePopupTargetId).catch(() => {});
             }
 
             addLog('success', `✔ Typed: "${resolvedKey}" (Dán nhanh)`);
