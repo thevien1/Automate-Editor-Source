@@ -6,6 +6,8 @@ import {
   VIRTUAL_MOUSE_SCRIPT,
   getVirtualMouseClickXPathScript,
   getVirtualMouseClickCoordsScript,
+  getVirtualMouseMoveXPathScript,
+  getVirtualMouseMoveCoordsScript,
 } from '../../utils/virtualMouseScript';
 import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
 import { resolveVariableString } from '../../utils/variableResolver';
@@ -3562,16 +3564,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
             if (useVirtualMouse) {
-              await evaluateInChrome(`(async () => {
-                ${VIRTUAL_MOUSE_SCRIPT};
-                return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, 350);
-              })()`);
+              await evaluateInChrome(getVirtualMouseMoveCoordsScript(x, y, 350));
             }
             if ((window as any).electronAPI?.cdpAction) {
               await (window as any).electronAPI.cdpAction({
                 port: port.trim() || '43076',
                 action: 'mouseMove',
-                payload: { x, y },
+                payload: { x, y, targetId: vars.$activePopupTargetId },
               }).catch(() => {});
               vars.$lastMouseX = String(x);
               vars.$lastMouseY = String(y);
@@ -3579,83 +3578,70 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             addLog('success', `✔ Mouse move › [${x}, ${y}]`);
           } else {
             if (useVirtualMouse) {
-              const evalMoveRes = await evaluateInChrome(`(async () => {
-                ${VIRTUAL_MOUSE_SCRIPT};
-                const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-                const el = res.singleNodeValue;
-                if (!el) return { success: false, error: 'Element not found' };
-                if (typeof el.scrollIntoView === 'function') {
-                  el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
-                  await new Promise(r => setTimeout(r, 200));
-                }
-                const rect = el.getBoundingClientRect();
-                const tx = Math.round(rect.left + rect.width / 2);
-                const ty = Math.round(rect.top + rect.height / 2);
-                await window.__gpmVirtualMouse.moveTo(tx, ty, 350);
-
-                const targetEl = document.elementFromPoint(tx, ty) || el;
-                const evOpts = {
-                  bubbles: true,
-                  cancelable: true,
-                  clientX: tx,
-                  clientY: ty,
-                  screenX: tx + (window.screenX || 0),
-                  screenY: ty + (window.screenY || 0),
-                  view: window,
-                  pointerId: 1,
-                  pointerType: 'mouse',
-                  isPrimary: true,
-                };
-                try {
-                  if (typeof PointerEvent !== 'undefined') {
-                    targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
-                    targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
-                    el.dispatchEvent(new PointerEvent('pointerover', evOpts));
-                    el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
-                  }
-                } catch(e) {}
-                try {
-                  targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
-                  targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
-                  targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
-                  el.dispatchEvent(new MouseEvent('mouseover', evOpts));
-                  el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
-                  el.dispatchEvent(new MouseEvent('mousemove', evOpts));
-                } catch(e) {}
-
-                return { success: true, x: tx, y: ty };
-              })()`);
+              const evalMoveRes = await evaluateInChrome(
+                getVirtualMouseMoveXPathScript(resolvedXPath, vars.$currentFrameXPath),
+                vars.$activePopupTargetId,
+                vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined
+              );
 
               const coords = evalMoveRes?.value?.x !== undefined ? evalMoveRes.value : (evalMoveRes as any)?.result?.value;
               if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
                 await (window as any).electronAPI.cdpAction({
                   port: port.trim() || '43076',
                   action: 'mouseMove',
-                  payload: { x: coords.x, y: coords.y },
+                  payload: { x: coords.x, y: coords.y, targetId: vars.$activePopupTargetId },
                 }).catch(() => {});
                 vars.$lastMouseX = String(coords.x);
                 vars.$lastMouseY = String(coords.y);
               }
             } else {
-              // Fast direct move without animation
+              // Fast direct move without animation (randomized within element boundary to prevent bot detection)
               const evalMoveRes = await evaluateInChrome(`(() => {
                 try {
-                  const res = document.evaluate(${JSON.stringify(resolvedXPath)}, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+                  let doc = document;
+                  const fx = ${JSON.stringify(vars.$currentFrameXPath || '')};
+                  if (fx) {
+                    const fr = document.evaluate(fx, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (fr) {
+                      try {
+                        if (fr.contentDocument) doc = fr.contentDocument;
+                        else if (fr.contentWindow) doc = fr.contentWindow.document;
+                      } catch(e) {}
+                    }
+                  }
+                  const res = doc.evaluate(${JSON.stringify(resolvedXPath)}, doc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
                   const el = res.singleNodeValue;
                   if (!el) return { success: false };
                   if (typeof el.scrollIntoView === 'function') {
                     el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
                   }
                   const rect = el.getBoundingClientRect();
-                  return { success: true, x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                  const padX = rect.width > 20 ? Math.min(Math.max(4, rect.width * 0.18), 18) : (rect.width > 6 ? 2 : 0);
+                  const padY = rect.height > 20 ? Math.min(Math.max(4, rect.height * 0.18), 12) : (rect.height > 6 ? 2 : 0);
+                  const minX = rect.left + padX;
+                  const maxX = Math.max(minX, rect.left + rect.width - padX);
+                  const minY = rect.top + padY;
+                  const maxY = Math.max(minY, rect.top + rect.height - padY);
+                  const rx = minX + ((Math.random() + Math.random()) / 2) * (maxX - minX);
+                  const ry = minY + ((Math.random() + Math.random()) / 2) * (maxY - minY);
+                  const targetX = Math.round(rx);
+                  const targetY = Math.round(ry);
+                  const targetEl = document.elementFromPoint(targetX, targetY) || el;
+                  const evOpts = { bubbles: true, cancelable: true, clientX: targetX, clientY: targetY, view: window };
+                  try {
+                    targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
+                    targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+                    targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
+                  } catch(e) {}
+                  return { success: true, x: targetX, y: targetY };
                 } catch(e) { return { success: false }; }
-              })()`);
+              })()`, vars.$activePopupTargetId, vars.$currentFrameContextId ? Number(vars.$currentFrameContextId) : undefined);
               const coords = evalMoveRes?.value;
               if (coords && coords.x !== undefined && (window as any).electronAPI?.cdpAction) {
                 await (window as any).electronAPI.cdpAction({
                   port: port.trim() || '43076',
                   action: 'mouseMove',
-                  payload: { x: coords.x, y: coords.y },
+                  payload: { x: coords.x, y: coords.y, targetId: vars.$activePopupTargetId },
                 }).catch(() => {});
                 vars.$lastMouseX = String(coords.x);
                 vars.$lastMouseY = String(coords.y);
@@ -3693,8 +3679,14 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     await new Promise(r => setTimeout(r, 200));
                   }
                   const rect = el.getBoundingClientRect();
-                  tx = Math.round(rect.left + rect.width / 2);
-                  ty = Math.round(rect.top + rect.height / 2);
+                  const padX = rect.width > 20 ? Math.min(Math.max(4, rect.width * 0.18), 18) : (rect.width > 6 ? 2 : 0);
+                  const padY = rect.height > 20 ? Math.min(Math.max(4, rect.height * 0.18), 12) : (rect.height > 6 ? 2 : 0);
+                  const minX = rect.left + padX;
+                  const maxX = Math.max(minX, rect.left + rect.width - padX);
+                  const minY = rect.top + padY;
+                  const maxY = Math.max(minY, rect.top + rect.height - padY);
+                  tx = Math.round(minX + ((Math.random() + Math.random()) / 2) * (maxX - minX));
+                  ty = Math.round(minY + ((Math.random() + Math.random()) / 2) * (maxY - minY));
                 }
               }
               `}
@@ -3772,10 +3764,18 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                 if (activeDialog) {
                   const rect = activeDialog.getBoundingClientRect();
                   if (rect.width > 50 && rect.height > 50) {
-                    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+                    const padX = Math.min(rect.width * 0.25, 40);
+                    const padY = Math.min(rect.height * 0.25, 40);
+                    return {
+                      x: Math.round(rect.left + padX + Math.random() * (rect.width - 2 * padX)),
+                      y: Math.round(rect.top + padY + Math.random() * (rect.height - 2 * padY))
+                    };
                   }
                 }
-                return { x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) };
+                return {
+                  x: Math.round(window.innerWidth * (0.35 + Math.random() * 0.3)),
+                  y: Math.round(window.innerHeight * (0.35 + Math.random() * 0.3))
+                };
               })()`);
               const posVal = posRes?.value || (posRes as any)?.result?.value || posRes;
               if (posVal && typeof posVal.x === 'number') {
@@ -4008,10 +4008,18 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                       }
                       if (typeof el.focus === 'function') el.focus();
                       const rect = el.getBoundingClientRect();
+                      const padX = rect.width > 20 ? Math.min(Math.max(4, rect.width * 0.18), 18) : (rect.width > 6 ? 2 : 0);
+                      const padY = rect.height > 20 ? Math.min(Math.max(4, rect.height * 0.18), 12) : (rect.height > 6 ? 2 : 0);
+                      const minX = rect.left + padX;
+                      const maxX = Math.max(minX, rect.left + rect.width - padX);
+                      const minY = rect.top + padY;
+                      const maxY = Math.max(minY, rect.top + rect.height - padY);
+                      const rx = minX + ((Math.random() + Math.random()) / 2) * (maxX - minX);
+                      const ry = minY + ((Math.random() + Math.random()) / 2) * (maxY - minY);
                       return {
                         found: true,
-                        x: Math.round(rect.left + rect.width / 2) + offX,
-                        y: Math.round(rect.top + rect.height / 2) + offY,
+                        x: Math.round(rx) + offX,
+                        y: Math.round(ry) + offY,
                       };
                     } catch(e) {
                       return { found: false, error: e.message };

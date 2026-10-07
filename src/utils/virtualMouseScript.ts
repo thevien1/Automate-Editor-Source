@@ -111,7 +111,7 @@ export const VIRTUAL_MOUSE_SCRIPT = `
     } catch(e) {}
   }
 
-  // Smooth Bezier human-like movement
+  // Smooth Bezier human-like movement with micro human tremor
   function moveSmooth(targetX, targetY, durationMs = 400) {
     return new Promise((resolve) => {
       try { ensureCursor(); } catch(e) {}
@@ -121,11 +121,11 @@ export const VIRTUAL_MOUSE_SCRIPT = `
 
       const midX = (startX + targetX) / 2;
       const midY = (startY + targetY) / 2;
-      const deviation = Math.min(dist * 0.2, 50) * (Math.random() > 0.5 ? 1 : -1);
+      const deviation = Math.min(dist * 0.22, 55) * (Math.random() > 0.5 ? 1 : -1);
       const ctrlX = midX - (targetY - startY) * 0.15 + (Math.random() - 0.5) * 20;
       const ctrlY = midY + (targetX - startX) * 0.15 + deviation;
 
-      const steps = Math.max(12, Math.min(40, Math.floor(durationMs / 15)));
+      const steps = Math.max(12, Math.min(45, Math.floor(durationMs / 14)));
       let step = 0;
 
       const interval = setInterval(() => {
@@ -133,8 +133,13 @@ export const VIRTUAL_MOUSE_SCRIPT = `
         const t = step / steps;
         const easedT = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;
 
-        const x = Math.round((1 - easedT) * (1 - easedT) * startX + 2 * (1 - easedT) * easedT * ctrlX + easedT * easedT * targetX);
-        const y = Math.round((1 - easedT) * (1 - easedT) * startY + 2 * (1 - easedT) * easedT * ctrlY + easedT * easedT * targetY);
+        // Human tremor/micro-jitter (dampened to 0 at start and destination)
+        const jitterIntensity = Math.sin(t * Math.PI) * 1.2;
+        const jitterX = (Math.random() - 0.5) * jitterIntensity;
+        const jitterY = (Math.random() - 0.5) * jitterIntensity;
+
+        const x = Math.round((1 - easedT) * (1 - easedT) * startX + 2 * (1 - easedT) * easedT * ctrlX + easedT * easedT * targetX + jitterX);
+        const y = Math.round((1 - easedT) * (1 - easedT) * startY + 2 * (1 - easedT) * easedT * ctrlY + easedT * easedT * targetY + jitterY);
 
         setPos(x, y);
 
@@ -176,6 +181,36 @@ export const VIRTUAL_MOUSE_SCRIPT = `
         }
       }, Math.max(8, Math.floor(durationMs / steps)));
     });
+  }
+
+  // Calculates a natural random coordinate safely inside an element bounding box
+  // Prevents anti-bot systems (Cloudflare, Datadome, Facebook) from detecting fixed center clicks
+  function getRandomPointInRect(rect, offsetX, offsetY) {
+    offsetX = offsetX || 0;
+    offsetY = offsetY || 0;
+    const w = rect.width;
+    const h = rect.height;
+
+    // Safety margin from border to guarantee cursor remains cleanly inside element:
+    // If element is standard/large size (>20px), stay 15%-25% away from edges (max 18px margin)
+    // If element is small, stay at least 2px or 10% away
+    const padX = w > 20 ? Math.min(Math.max(4, w * 0.18), 18) : (w > 6 ? 2 : 0);
+    const padY = h > 20 ? Math.min(Math.max(4, h * 0.18), 12) : (h > 6 ? 2 : 0);
+
+    const minX = rect.left + padX;
+    const maxX = Math.max(minX, rect.left + w - padX);
+    const minY = rect.top + padY;
+    const maxY = Math.max(minY, rect.top + h - padY);
+
+    // Triangular random distribution (sum of 2 randoms / 2)
+    // Gives natural human variation across inner area while avoiding exact center spotting
+    const rx = minX + ((Math.random() + Math.random()) / 2) * (maxX - minX);
+    const ry = minY + ((Math.random() + Math.random()) / 2) * (maxY - minY);
+
+    return {
+      x: Math.round(rx + offsetX),
+      y: Math.round(ry + offsetY)
+    };
   }
 
   async function clickAt(x, y, explicitEl = null) {
@@ -284,6 +319,86 @@ export const VIRTUAL_MOUSE_SCRIPT = `
     return { success: true, x, y };
   }
 
+  async function moveXPath(xpath, frameXPath, durationMs = 350) {
+    try {
+      let targetDoc = document;
+      let offsetX = 0;
+      let offsetY = 0;
+      if (frameXPath) {
+        const frameRes = document.evaluate(frameXPath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        const frameEl = frameRes.singleNodeValue;
+        if (frameEl) {
+          const fRect = frameEl.getBoundingClientRect();
+          offsetX = Math.round(fRect.left);
+          offsetY = Math.round(fRect.top);
+          try {
+            if (frameEl.contentDocument) targetDoc = frameEl.contentDocument;
+            else if (frameEl.contentWindow && frameEl.contentWindow.document) targetDoc = frameEl.contentWindow.document;
+          } catch(e) {}
+        }
+      }
+      const res = targetDoc.evaluate(xpath, targetDoc, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+      const el = res.singleNodeValue;
+      if (!el) return { success: false, error: 'Element not found: ' + xpath };
+
+      if (typeof el.scrollIntoView === 'function') {
+        try {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+          await new Promise(r => setTimeout(r, 180));
+        } catch(e) {}
+      }
+
+      const rect = el.getBoundingClientRect();
+      // Natural randomized target within bounding box to avoid center-spotting bot detection
+      const pt = getRandomPointInRect(rect, offsetX, offsetY);
+      const targetX = pt.x;
+      const targetY = pt.y;
+
+      try {
+        await moveSmooth(targetX, targetY, durationMs || 350);
+      } catch(e) {}
+
+      // Dispatch full hover & enter events on target element to trigger dropdowns/tooltips/:hover
+      const targetEl = document.elementFromPoint(targetX, targetY) || el;
+      const evOpts = {
+        bubbles: true,
+        cancelable: true,
+        clientX: targetX,
+        clientY: targetY,
+        screenX: targetX + (window.screenX || 0),
+        screenY: targetY + (window.screenY || 0),
+        view: window,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+      };
+      try {
+        if (typeof PointerEvent !== 'undefined') {
+          targetEl.dispatchEvent(new PointerEvent('pointerover', evOpts));
+          targetEl.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+          if (el !== targetEl) {
+            el.dispatchEvent(new PointerEvent('pointerover', evOpts));
+            el.dispatchEvent(new PointerEvent('pointerenter', evOpts));
+          }
+        }
+      } catch(e) {}
+      try {
+        targetEl.dispatchEvent(new MouseEvent('mouseover', evOpts));
+        targetEl.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+        targetEl.dispatchEvent(new MouseEvent('mousemove', evOpts));
+        if (el !== targetEl) {
+          el.dispatchEvent(new MouseEvent('mouseover', evOpts));
+          el.dispatchEvent(new MouseEvent('mouseenter', evOpts));
+          el.dispatchEvent(new MouseEvent('mousemove', evOpts));
+        }
+      } catch(e) {}
+
+      return { success: true, x: targetX, y: targetY };
+    } catch(e) {
+      return { success: false, error: e.message };
+    }
+  }
+
   async function clickXPath(xpath, frameXPath) {
     try {
       let targetDoc = document;
@@ -314,8 +429,10 @@ export const VIRTUAL_MOUSE_SCRIPT = `
       }
 
       const rect = el.getBoundingClientRect();
-      const targetX = Math.round(rect.left + rect.width / 2 + offsetX);
-      const targetY = Math.round(rect.top + rect.height / 2 + offsetY);
+      // Natural randomized target within bounding box to avoid center-spotting bot detection
+      const pt = getRandomPointInRect(rect, offsetX, offsetY);
+      const targetX = pt.x;
+      const targetY = pt.y;
 
       try {
         await moveSmooth(targetX, targetY, 400);
@@ -340,9 +457,11 @@ export const VIRTUAL_MOUSE_SCRIPT = `
   window.__gpmVirtualMouse = {
     init: () => ensureCursor(),
     moveTo: moveSmooth,
+    moveXPath,
     clickAt,
     clickXPath,
     clickCoordinates,
+    getRandomPointInRect,
     getPos: () => ({ x: curX, y: curY }),
     show: () => {
       const c = ensureCursor();
@@ -399,3 +518,24 @@ export const getVirtualMouseClickCoordsScript = (x: number, y: number) => `
   return await window.__gpmVirtualMouse.clickCoordinates(${x}, ${y});
 })()
 `;
+
+/**
+ * Returns a script to move the mouse smoothly to an element by XPath with randomized coordinates
+ */
+export const getVirtualMouseMoveXPathScript = (xpath: string, frameXPath?: string, durationMs: number = 350) => `
+(async () => {
+  ${VIRTUAL_MOUSE_SCRIPT};
+  return await window.__gpmVirtualMouse.moveXPath(${JSON.stringify(xpath)}, ${JSON.stringify(frameXPath || '')}, ${durationMs});
+})()
+`;
+
+/**
+ * Returns a script to move the mouse smoothly to coordinates
+ */
+export const getVirtualMouseMoveCoordsScript = (x: number, y: number, durationMs: number = 350) => `
+(async () => {
+  ${VIRTUAL_MOUSE_SCRIPT};
+  return await window.__gpmVirtualMouse.moveTo(${x}, ${y}, ${durationMs});
+})()
+`;
+
