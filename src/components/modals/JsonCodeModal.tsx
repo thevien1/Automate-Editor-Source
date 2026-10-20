@@ -88,17 +88,17 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
     } else if (exportScope === 'after_quit') {
       targetNodes = script.after_quit?.nodes || [];
     } else if (exportScope === 'full') {
-      return JSON.stringify(script, null, 2);
+      return JSON.stringify(script, null, 2).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
     }
 
     if (exportFormat === 'code') {
-      return nodesToJsCodeString(targetNodes);
+      return nodesToJsCodeString(targetNodes).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
     }
 
-    return nodesToJsonString(targetNodes, true);
+    return nodesToJsonString(targetNodes, true).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
   };
 
-  const exportCode = getExportData();
+  const exportCode = getExportData()?.replace(/GPMAutomateEditor/g, 'SVBAutomateEditor') || '';
 
   // Validate import text whenever it changes
   useEffect(() => {

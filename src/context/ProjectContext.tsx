@@ -681,12 +681,22 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return updated;
     });
 
+    // Deep migrate all GPMAutomateEditor types to SVBAutomateEditor upon loading
+    if (proj) {
+      try {
+        const rawJson = JSON.stringify(proj);
+        if (rawJson.includes('GPMAutomateEditor')) {
+          proj = JSON.parse(rawJson.replace(/GPMAutomateEditor/g, 'SVBAutomateEditor'));
+        }
+      } catch {}
+    }
+
     setCurrentProject(proj);
     setScreen('editor');
     setActiveWorkflowTabState('main');
     setUndoStack([]);
     setRedoStack([]);
-    const defaultNodeId = proj.script?.main_logic?.id || proj.script?.before_init?.id || null;
+    const defaultNodeId = proj?.script?.main_logic?.id || proj?.script?.before_init?.id || null;
     setSelectedNodeId(defaultNodeId);
     setSelectedNodeIds(defaultNodeId ? [defaultNodeId] : []);
     setSelectedBlockKey('main_logic');
@@ -707,10 +717,14 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     const isSilent = silent === true;
     if (!currentProject) return;
     try {
+      let cleanProj = currentProject;
+      try {
+        cleanProj = JSON.parse(JSON.stringify(currentProject).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor'));
+      } catch {}
       if ((window as any).electronAPI?.saveProjectToDisk) {
-        await (window as any).electronAPI.saveProjectToDisk(currentProject);
+        await (window as any).electronAPI.saveProjectToDisk(cleanProj);
       }
-      localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(currentProject));
+      localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(cleanProj));
       if (!isSilent) {
         showToast('Save', 'Save Successful');
       }
@@ -1213,14 +1227,21 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
     if (nodesToCopy.length === 0) return;
 
-    // Clean JSON with 2 spaces indent
-    const jsonOutput = nodesToJsonString(nodesToCopy, true);
+    // Clean JSON with 2 spaces indent, guaranteed SVBAutomateEditor namespace
+    const jsonOutput = nodesToJsonString(nodesToCopy, true).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
 
     // Save to localStorage & sessionStorage so it is shared across all windows and projects!
-    localStorage.setItem('gpm_clipboard_nodes', JSON.stringify(nodesToCopy));
-    localStorage.setItem('gpm_clipboard_node', JSON.stringify(nodesToCopy[0]));
-    sessionStorage.setItem('gpm_clipboard_nodes', JSON.stringify(nodesToCopy));
-    sessionStorage.setItem('gpm_clipboard_node', JSON.stringify(nodesToCopy[0]));
+    try {
+      const cleanNodes = JSON.parse(JSON.stringify(nodesToCopy).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor'));
+      localStorage.setItem('svb_clipboard_nodes', JSON.stringify(cleanNodes));
+      localStorage.setItem('svb_clipboard_node', JSON.stringify(cleanNodes[0]));
+      localStorage.setItem('gpm_clipboard_nodes', JSON.stringify(cleanNodes));
+      localStorage.setItem('gpm_clipboard_node', JSON.stringify(cleanNodes[0]));
+      sessionStorage.setItem('svb_clipboard_nodes', JSON.stringify(cleanNodes));
+      sessionStorage.setItem('svb_clipboard_node', JSON.stringify(cleanNodes[0]));
+      sessionStorage.setItem('gpm_clipboard_nodes', JSON.stringify(cleanNodes));
+      sessionStorage.setItem('gpm_clipboard_node', JSON.stringify(cleanNodes[0]));
+    } catch {}
 
     // 1. Native Electron system clipboard (guaranteed to work across OS, windows & external apps)
     if ((window as any).electronAPI?.fileAction) {

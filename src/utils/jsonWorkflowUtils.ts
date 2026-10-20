@@ -308,11 +308,14 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
 }
 
 /**
- * Converts node(s) to a clean, formatted JSON string
+ * Converts node(s) to a clean, formatted JSON string with SVBAutomateEditor namespace
  */
 export function nodesToJsonString(nodes: WorkflowNode | WorkflowNode[], pretty: boolean = true): string {
   const content = Array.isArray(nodes) && nodes.length === 1 ? nodes[0] : nodes;
-  return JSON.stringify(content, null, pretty ? 2 : undefined);
+  const jsonStr = JSON.stringify(content, null, pretty ? 2 : undefined);
+  return jsonStr
+    .replace(/GPMAutomateEditor\.Models/g, 'SVBAutomateEditor.Models')
+    .replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
 }
 
 /**
@@ -327,8 +330,9 @@ export function nodesToJsCodeString(nodes: WorkflowNode | WorkflowNode[]): strin
       // Block
       const condField = (n as any).condition !== undefined ? `\n  condition: ${JSON.stringify((n as any).condition)},` : '';
       const forFields = (n as any).start !== undefined ? `\n  start: ${JSON.stringify((n as any).start)},\n  end: ${JSON.stringify((n as any).end)},\n  step: ${JSON.stringify((n as any).step)},` : '';
+      const blockType = n.$type ? n.$type.replace(/GPMAutomateEditor/g, 'SVBAutomateEditor') : 'SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models';
       return `{
-  $type: ${JSON.stringify(n.$type)},
+  $type: ${JSON.stringify(blockType)},
   id: generateGuid(),
   display_text: ${JSON.stringify(n.display_text)},${condField}${forFields}
   expanded: true,
