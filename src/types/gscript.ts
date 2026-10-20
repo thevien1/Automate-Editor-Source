@@ -140,6 +140,25 @@ export interface ProjectRuntimeConfig {
   profilesPerPage?: number;
   selectedGroup?: string;
   selectedTag?: string;
+  autoCloneProfile?: boolean;
+  autoGenProfilesMode?: boolean;
+  autoGenCountMode?: 'input_data' | 'custom_count';
+  autoGenCustomCount?: number;
+  templateProfileUid?: string;
+  proxyListText?: string;
+  checkProxyBeforeCreate?: boolean;
+
+  // Rotating / Dynamic Proxy API
+  proxyMode?: 'static' | 'rotating';
+  rotatingProxyApiUrl?: string;
+  rotatingProxyApiUrlsText?: string;
+  rotatingProxyThreadsPerProxy?: number;
+  rotatingProxyAutoDivideThreads?: boolean;
+  rotatingProxyJsonPath?: string;
+  rotatingProxyRandomRegions?: string;
+  rotatingProxyRandomParamName?: string;
+  rotatingProxyBatchWait?: boolean;
+  rotatingProxyReuseIfCooldown?: boolean;
 }
 
 export interface ProjectData {

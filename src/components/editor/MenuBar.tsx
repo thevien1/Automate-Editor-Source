@@ -78,7 +78,7 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
                 <span className="text-[10px] text-[#64748b]">Ctrl+O</span>
               </button>
               <button
-                onClick={saveProject}
+                onClick={() => saveProject()}
                 className="w-full text-left px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
               >
                 <span>Save</span>
@@ -208,10 +208,10 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
               onClick={() => setActiveMenu(null)}
             >
               <div
-                onClick={() => alert('Build .gpmlaunch package')}
+                onClick={() => alert('Build .svblaunch package')}
                 className="px-3 py-1.5 hover:bg-[#1e293b] cursor-pointer"
               >
-                Build .gpmlaunch (Package)
+                Build .svblaunch (Package)
               </div>
             </div>
           )}
@@ -233,12 +233,12 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
               onClick={() => setActiveMenu(null)}
             >
               <a
-                href="https://docs.gpmautomate.com"
+                href="http://localhost:3080/docs"
                 target="_blank"
                 rel="noreferrer"
                 className="block px-3 py-1.5 hover:bg-[#1e293b] text-[#cbd5e1]"
               >
-                Documentation
+                Documentation (Docs)
               </a>
               <div
                 onClick={() => setShowUpdateModal(true)}

@@ -180,9 +180,11 @@ ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
     }
 
     const infoPath = path.join(folderPath, 'info.gpmsln');
+    const infoSvbPath = path.join(folderPath, 'info.svbsln');
     const scriptPath = path.join(folderPath, 'src.gscript');
 
     fs.writeFileSync(infoPath, JSON.stringify(info, null, 2), 'utf-8');
+    try { fs.writeFileSync(infoSvbPath, JSON.stringify(info, null, 2), 'utf-8'); } catch {}
     fs.writeFileSync(scriptPath, JSON.stringify(script, null, 2), 'utf-8');
 
     // Save sub-workflows
@@ -194,20 +196,17 @@ ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
       }
     }
 
-    // Clean up any deleted .gscript files on disk
-    try {
-      const diskFiles = fs.readdirSync(folderPath);
-      for (const f of diskFiles) {
-        if (f.endsWith('.gscript') && f !== 'src.gscript') {
-          const baseName = path.basename(f, '.gscript');
-          if (!subWorkflows || !subWorkflows[baseName]) {
-            try {
-              fs.unlinkSync(path.join(folderPath, f));
-            } catch {}
+    // Clean up any explicitly deleted .gscript files on disk
+    if (Array.isArray(projectData._deletedSubWorkflows)) {
+      for (const delName of projectData._deletedSubWorkflows) {
+        try {
+          const targetFile = path.join(folderPath, `${delName}.gscript`);
+          if (fs.existsSync(targetFile)) {
+            fs.unlinkSync(targetFile);
           }
-        }
+        } catch {}
       }
-    } catch {}
+    }
 
     if (runtimeConfig) {
       const runtimePath = path.join(folderPath, 'runtime.json');
@@ -223,11 +222,14 @@ ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
 // Read Project from disk
 ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
   try {
-    const infoPath = path.join(folderPath, 'info.gpmsln');
+    let infoPath = path.join(folderPath, 'info.svbsln');
+    if (!fs.existsSync(infoPath)) {
+      infoPath = path.join(folderPath, 'info.gpmsln');
+    }
     const scriptPath = path.join(folderPath, 'src.gscript');
 
     if (!fs.existsSync(infoPath) || !fs.existsSync(scriptPath)) {
-      return { success: false, error: 'Not a valid GPM Automate project directory' };
+      return { success: false, error: 'Thư mục dự án không hợp lệ (thiếu info.svbsln/info.gpmsln hoặc src.gscript)' };
     }
 
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
@@ -788,6 +790,122 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       }
       return { success: true };
     }
+    if (action === 'cloneProfileExtensions') {
+      const srcDir = (payload?.src || '').trim();
+      const destDir = (payload?.dest || '').trim();
+      const allowInIncognito = payload?.allowInIncognito !== false;
+
+      if (!srcDir || !fs.existsSync(srcDir)) {
+        return { success: false, error: 'Source profile folder does not exist: ' + srcDir };
+      }
+      if (!destDir) {
+        return { success: false, error: 'Destination profile folder is required' };
+      }
+
+      if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+      }
+
+      const destDefaultDir = path.join(destDir, 'Default');
+      if (!fs.existsSync(destDefaultDir)) {
+        fs.mkdirSync(destDefaultDir, { recursive: true });
+      }
+
+      const srcDefaultDir = path.join(srcDir, 'Default');
+
+      // 1. Copy toàn bộ thư mục extensions & cache từ profile gốc
+      const foldersToClone = [
+        { src: path.join(srcDir, 'extensions_crx_cache'), dest: path.join(destDir, 'extensions_crx_cache') },
+        { src: path.join(srcDefaultDir, 'Extensions'), dest: path.join(destDefaultDir, 'Extensions') },
+        { src: path.join(srcDefaultDir, 'Local Extension Settings'), dest: path.join(destDefaultDir, 'Local Extension Settings') },
+        { src: path.join(srcDefaultDir, 'Sync Extension Settings'), dest: path.join(destDefaultDir, 'Sync Extension Settings') },
+        { src: path.join(srcDefaultDir, 'Extension Rules'), dest: path.join(destDefaultDir, 'Extension Rules') },
+        { src: path.join(srcDefaultDir, 'Extension Scripts'), dest: path.join(destDefaultDir, 'Extension Scripts') },
+        { src: path.join(srcDefaultDir, 'Extension State'), dest: path.join(destDefaultDir, 'Extension State') },
+        { src: path.join(srcDefaultDir, 'DNR Extension Rules'), dest: path.join(destDefaultDir, 'DNR Extension Rules') },
+      ];
+
+      for (const item of foldersToClone) {
+        if (fs.existsSync(item.src)) {
+          try {
+            if (!fs.existsSync(item.dest)) fs.mkdirSync(item.dest, { recursive: true });
+            fs.cpSync(item.src, item.dest, { recursive: true, force: true });
+          } catch (e) {}
+        }
+      }
+
+      // Copy IndexedDB chrome-extension_* nếu có
+      const srcIndexedDB = path.join(srcDefaultDir, 'IndexedDB');
+      if (fs.existsSync(srcIndexedDB)) {
+        try {
+          const destIndexedDB = path.join(destDefaultDir, 'IndexedDB');
+          const entries = fs.readdirSync(srcIndexedDB);
+          for (const entry of entries) {
+            if (entry.includes('chrome-extension')) {
+              const sEntry = path.join(srcIndexedDB, entry);
+              const dEntry = path.join(destIndexedDB, entry);
+              if (!fs.existsSync(destIndexedDB)) fs.mkdirSync(destIndexedDB, { recursive: true });
+              fs.cpSync(sEntry, dEntry, { recursive: true, force: true });
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Copy cấu hình Preferences, Secure Preferences, Local State
+      const filesToClone = [
+        { src: path.join(srcDir, 'Local State'), dest: path.join(destDir, 'Local State') },
+        { src: path.join(srcDefaultDir, 'Preferences'), dest: path.join(destDefaultDir, 'Preferences') },
+        { src: path.join(srcDefaultDir, 'Secure Preferences'), dest: path.join(destDefaultDir, 'Secure Preferences') },
+        { src: path.join(srcDefaultDir, 'Extension Cookies'), dest: path.join(destDefaultDir, 'Extension Cookies') },
+      ];
+
+      for (const item of filesToClone) {
+        if (fs.existsSync(item.src)) {
+          try {
+            fs.copyFileSync(item.src, item.dest);
+          } catch (e) {}
+        }
+      }
+
+      // 3. Đảm bảo toàn bộ extensions có cờ incognito: true (Allow in Incognito) & developer_mode: true
+      const updatePrefsIncognito = (filePath: string) => {
+        if (!fs.existsSync(filePath)) return;
+        try {
+          const content = fs.readFileSync(filePath, 'utf-8');
+          const json = JSON.parse(content);
+          let changed = false;
+
+          if (!json.extensions) json.extensions = {};
+          if (!json.extensions.ui) json.extensions.ui = {};
+          if (json.extensions.ui.developer_mode !== true) {
+            json.extensions.ui.developer_mode = true;
+            changed = true;
+          }
+
+          if (json.extensions && json.extensions.settings && typeof json.extensions.settings === 'object') {
+            for (const extId of Object.keys(json.extensions.settings)) {
+              const setting = json.extensions.settings[extId];
+              if (setting && typeof setting === 'object') {
+                if (allowInIncognito) {
+                  setting.incognito = true;
+                  setting.newAllowFileAccess = true;
+                  changed = true;
+                }
+              }
+            }
+          }
+
+          if (changed) {
+            fs.writeFileSync(filePath, JSON.stringify(json, null, 2), 'utf-8');
+          }
+        } catch (e) {}
+      };
+
+      updatePrefsIncognito(path.join(destDefaultDir, 'Secure Preferences'));
+      updatePrefsIncognito(path.join(destDefaultDir, 'Preferences'));
+
+      return { success: true };
+    }
     if (action === 'folderGetFileList') {
       if (!fs.existsSync(payload.path)) {
         return { success: false, error: 'Folder does not exist' };
@@ -985,34 +1103,47 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       });
     }
     if (action === 'osClick') {
-      const x = payload?.x ?? 0;
-      const y = payload?.y ?? 0;
+      const x = Math.round(Number(payload?.x) || 0);
+      const y = Math.round(Number(payload?.y) || 0);
       const button = payload?.button || 'left';
-      const clicks = payload?.clicks || 1;
+      const clicks = Math.max(1, Number(payload?.clicks) || 1);
 
-      const scriptPath = path.join(app.getAppPath(), 'scripts', 'mouse_click.py');
+      const psClick = `
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32OsClick {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+}
+"@
+[Win32OsClick]::SetProcessDPIAware() | Out-Null
+[Win32OsClick]::SetCursorPos(${x}, ${y}) | Out-Null
+Start-Sleep -Milliseconds 40
+$down = ${button === 'right' ? '0x0008' : button === 'middle' ? '0x0020' : '0x0002'}
+$up = ${button === 'right' ? '0x0010' : button === 'middle' ? '0x0040' : '0x0004'}
+for ($i = 0; $i -lt ${clicks}; $i++) {
+    [Win32OsClick]::mouse_event($down, 0, 0, 0, 0)
+    Start-Sleep -Milliseconds 35
+    [Win32OsClick]::mouse_event($up, 0, 0, 0, 0)
+    Start-Sleep -Milliseconds 35
+}
+Write-Output '{"success":true}'
+`;
+      const encodedPs = Buffer.from(psClick, 'utf16le').toString('base64');
       return new Promise((resolve) => {
         try {
-          const py = spawn('python', [scriptPath, String(x), String(y), button, String(clicks)]);
-          let stdoutData = '';
-          let stderrData = '';
-
-          py.stdout.on('data', (d) => { stdoutData += d.toString(); });
-          py.stderr.on('data', (d) => { stderrData += d.toString(); });
-
-          py.on('close', (code) => {
-            if (stdoutData.trim()) {
-              try {
-                const parsed = JSON.parse(stdoutData.trim());
-                resolve(parsed);
-                return;
-              } catch (e) {}
-            }
-            resolve({ success: code === 0, error: stderrData });
+          const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encodedPs], {
+            windowsHide: true,
           });
-
-          py.on('error', (err) => {
-            resolve({ success: false, error: `Python spawn error: ${err.message}` });
+          let stdoutData = '';
+          ps.stdout.on('data', (d) => { stdoutData += d.toString(); });
+          ps.on('close', (code) => {
+            resolve({ success: code === 0, output: stdoutData.trim() });
+          });
+          ps.on('error', (err) => {
+            resolve({ success: false, error: err.message });
           });
         } catch (err: any) {
           resolve({ success: false, error: err.message });
@@ -1132,12 +1263,28 @@ ipcMain.handle('automation:checkIp', async (_, options?: { proxy?: string; timeo
 
     if (proxy) {
       try {
-        const cleanProxy = proxy.replace(/^[a-z]+:\/\//i, '');
-        const parts = cleanProxy.split(':');
-        const proxyHost = parts[0];
-        const proxyPort = parseInt(parts[1], 10) || 8080;
-        const proxyUser = parts[2];
-        const proxyPass = parts[3];
+        let proxyHost = '';
+        let proxyPort = 8080;
+        let proxyUser = '';
+        let proxyPass = '';
+
+        if (proxy.includes('@')) {
+          const withoutProto = proxy.replace(/^[a-z]+:\/\//i, '');
+          const [authPart, hostPart] = withoutProto.split('@');
+          const [u, p] = authPart.split(':');
+          const [h, port] = (hostPart || '').split(':');
+          proxyUser = u || '';
+          proxyPass = p || '';
+          proxyHost = h || '';
+          proxyPort = parseInt(port, 10) || 8080;
+        } else {
+          const withoutProto = proxy.replace(/^[a-z]+:\/\//i, '');
+          const parts = withoutProto.split(':');
+          proxyHost = parts[0];
+          proxyPort = parseInt(parts[1], 10) || 8080;
+          proxyUser = parts[2] || '';
+          proxyPass = parts[3] || '';
+        }
 
         const headers: Record<string, string> = {
           'Host': 'ip-api.com',
@@ -1377,9 +1524,28 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         if (found) return found;
       }
       const pages = list.filter((t: any) => t.type === 'page');
-      // Prioritize active web pages (not about:blank or internal chrome:// pages)
-      const activeWebPage = pages.find((p: any) => p.url && !p.url.startsWith('about:blank') && !p.url.startsWith('chrome://'));
-      return activeWebPage || pages[pages.length - 1] || pages[0] || list[0];
+      if (pages.length === 1) return pages[0];
+
+      // If multiple tabs exist, detect the one that is currently active/visible to the user
+      if (pages.length > 1) {
+        for (let i = pages.length - 1; i >= 0; i--) {
+          const p = pages[i];
+          if (p.webSocketDebuggerUrl) {
+            try {
+              const visRes = await sendWs(p.webSocketDebuggerUrl, 'Runtime.evaluate', {
+                expression: 'document.visibilityState',
+                returnByValue: true,
+              }, 300).catch(() => null);
+              if (visRes?.result?.result?.value === 'visible') {
+                return p;
+              }
+            } catch (e) {}
+          }
+        }
+      }
+
+      // If visibility couldn't be determined, fallback to the latest opened tab
+      return pages[pages.length - 1] || pages[0] || list[0];
     }
     return null;
   };
@@ -1696,17 +1862,21 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
     if (action === 'newTab') {
       const url = payload?.url ? `?${encodeURIComponent(payload.url)}` : '';
       const tab = await httpPut(`http://127.0.0.1:${port}/json/new${url}`);
+      if (tab && tab.id) {
+        await httpGet(`http://127.0.0.1:${port}/json/activate/${tab.id}`).catch(() => null);
+        if (tab.webSocketDebuggerUrl) {
+          await sendWs(tab.webSocketDebuggerUrl, 'Page.bringToFront', {}, 1000).catch(() => null);
+        }
+        return { success: true, tab, targetId: tab.id };
+      }
       return { success: true, tab };
     }
 
     if (action === 'closeTab') {
-      const list = await httpGet(`http://127.0.0.1:${port}/json/list`);
-      if (Array.isArray(list)) {
-        const page = list.find((t: any) => t.type === 'page');
-        if (page && page.id) {
-          await httpGet(`http://127.0.0.1:${port}/json/close/${page.id}`);
-          return { success: true };
-        }
+      const page = await getPageTarget();
+      if (page && page.id) {
+        await httpGet(`http://127.0.0.1:${port}/json/close/${page.id}`).catch(() => null);
+        return { success: true };
       }
       return { success: false, error: 'No active tab found to close' };
     }
@@ -1718,12 +1888,12 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         if (pages.length > 1) {
           for (let i = 1; i < pages.length; i++) {
             try {
-              await httpGet(`http://127.0.0.1:${port}/json/close/${pages[i].id}`);
+              await httpGet(`http://127.0.0.1:${port}/json/close/${pages[i].id}`).catch(() => null);
             } catch (e) {}
           }
         }
         if (pages[0]?.id) {
-          await httpGet(`http://127.0.0.1:${port}/json/activate/${pages[0].id}`);
+          await httpGet(`http://127.0.0.1:${port}/json/activate/${pages[0].id}`).catch(() => null);
         }
       }
       return { success: true };
@@ -1742,8 +1912,11 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           targetTab = pages[idx] || pages[0];
         }
         if (targetTab && targetTab.id) {
-          await httpGet(`http://127.0.0.1:${port}/json/activate/${targetTab.id}`);
-          return { success: true, tab: targetTab };
+          await httpGet(`http://127.0.0.1:${port}/json/activate/${targetTab.id}`).catch(() => null);
+          if (targetTab.webSocketDebuggerUrl) {
+            await sendWs(targetTab.webSocketDebuggerUrl, 'Page.bringToFront', {}, 1000).catch(() => null);
+          }
+          return { success: true, tab: targetTab, targetId: targetTab.id };
         }
       }
       return { success: false, error: 'Target tab not found' };
@@ -1757,25 +1930,25 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         url = `https://${url}`;
       }
 
-      const list = await httpGet(`http://127.0.0.1:${port}/json/list`).catch(() => null);
-      if (Array.isArray(list) && list.length > 0) {
-        let page = null;
-        if (payload?.targetId) {
-          page = list.find((t: any) => t.id === payload.targetId);
-        }
-        if (!page) {
-          page = list.find((t: any) => t.type === 'page');
-        }
-        if (!page) {
-          page = list[0];
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        // 1. Activate tab and bring page to front so it is the active visible tab on screen
+        await httpGet(`http://127.0.0.1:${port}/json/activate/${page.id}`).catch(() => null);
+        await sendWs(page.webSocketDebuggerUrl, 'Page.bringToFront', {}, 1500).catch(() => null);
+        // 2. Ensure Page domain is enabled in CDP
+        await sendWs(page.webSocketDebuggerUrl, 'Page.enable', {}, 2000).catch(() => null);
+
+        // 3. Send Page.navigate to instruct browser engine to load URL
+        const navRes = await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url }, 5000).catch(() => null);
+
+        // 4. Fallback ONLY if Page.navigate returned error or failed
+        if (!navRes || navRes.error || navRes?.result?.errorText) {
+          await sendWs(page.webSocketDebuggerUrl, 'Runtime.evaluate', {
+            expression: `window.location.href = ${JSON.stringify(url)};`,
+          }, 2000).catch(() => null);
         }
 
-        if (page && page.webSocketDebuggerUrl) {
-          // 1. Send Page.navigate to navigate the current active tab in-place
-          await sendWs(page.webSocketDebuggerUrl, 'Page.navigate', { url }, 4000).catch(() => null);
-          // Always return immediately: NEVER open a new tab if an existing tab is present!
-          return { success: true };
-        }
+        return { success: true, targetId: page.id };
       }
 
       // ONLY if there are NO tabs at all in Chrome (empty browser), open the initial tab
@@ -2216,6 +2389,258 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
       }).catch(() => {});
 
       return { success: true, count: fileList.length };
+    }
+
+    if (action === 'acceptAlert' || action === 'cancelAlert') {
+      const accept = action === 'acceptAlert';
+      const page = await getPageTarget();
+      if (page && page.webSocketDebuggerUrl) {
+        await sendWs(page.webSocketDebuggerUrl, 'Page.enable', {}, 1200).catch(() => null);
+        const jsDialogRes = await sendWs(
+          page.webSocketDebuggerUrl,
+          'Page.handleJavaScriptDialog',
+          { accept },
+          1200
+        ).catch(() => null);
+        if (jsDialogRes && jsDialogRes.success) {
+          return {
+            success: true,
+            method: 'javascript-dialog',
+            button: accept ? 'OK (JS Alert)' : 'Cancel (JS Alert)',
+          };
+        }
+      }
+
+      // Handle Native Browser Dialog (e.g. Chrome Web Store "Thêm tiện ích" / "Add extension" prompt)
+      const cleanPort = String(port || '').trim();
+      const boolStr = accept ? '$true' : '$false';
+      const psScript = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class Win32DialogHelper {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int X, int Y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT lpPoint);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint dwFlags, int dx, int dy, uint dwData, int dwExtraInfo);
+    [DllImport("user32.dll")] public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, int dwExtraInfo);
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X; public int Y; }
+}
+"@
+
+[Win32DialogHelper]::SetProcessDPIAware() | Out-Null
+
+$targetPort = "${cleanPort}"
+$isAccept = ${boolStr}
+
+if ($isAccept) {
+    $targetNames = @('Thêm tiện ích', 'Add extension', 'Add Extension', 'Cho phép', 'Allow', 'Tiếp tục', 'Continue', 'Xác nhận', 'Confirm', 'Keep', 'Giữ', 'OK')
+} else {
+    $targetNames = @('Huỷ', 'Hủy', 'Cancel', 'Chặn', 'Block', 'Đóng', 'Close', 'Remove', 'Xóa')
+}
+
+$targetPids = @()
+if ($targetPort) {
+    $procs = Get-CimInstance Win32_Process -Filter "CommandLine LIKE '%--remote-debugging-port=$targetPort%'"
+    foreach ($p in $procs) {
+        if ($p.CommandLine -notlike '*--type=*') {
+            $targetPids += [int]$p.ProcessId
+        }
+    }
+    if ($targetPids.Count -eq 0) {
+        foreach ($p in $procs) {
+            $targetPids += [int]$p.ProcessId
+        }
+    }
+}
+
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+$classCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ClassNameProperty, 'Chrome_WidgetWin_1')
+$btnCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+
+$foundBtn = $null
+$foundWin = $null
+$matchedName = ''
+
+for ($attempt = 0; $attempt -lt 18; $attempt++) {
+    $allWins = $root.FindAll([System.Windows.Automation.TreeScope]::Children, $classCond)
+    $orderedWins = @()
+    $otherWins = @()
+    foreach ($w in $allWins) {
+        if ($targetPids -contains $w.Current.ProcessId) {
+            $orderedWins += $w
+        } else {
+            $otherWins += $w
+        }
+    }
+    $searchWins = $orderedWins + $otherWins
+
+    foreach ($w in $searchWins) {
+        $btns = $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $btnCond)
+        foreach ($b in $btns) {
+            $bName = $b.Current.Name
+            if (-not $bName) { continue }
+            $bNameTrim = $bName.Trim()
+            foreach ($tn in $targetNames) {
+                if ($bNameTrim -ieq $tn -or (($tn.Length -ge 8) -and ($bNameTrim -ilike "*$tn*"))) {
+                    if (-not $b.Current.IsOffscreen -and $b.Current.IsEnabled) {
+                        $foundBtn = $b
+                        $foundWin = $w
+                        $matchedName = $bNameTrim
+                        break
+                    }
+                }
+            }
+            if ($foundBtn) { break }
+        }
+        if ($foundBtn) { break }
+    }
+
+    if ($foundBtn) { break }
+    Start-Sleep -Milliseconds 400
+}
+
+if ($foundBtn) {
+    # Wait 600ms to pass Chromium ExtensionInstallDialogView 500ms input_protector anti-clickjacking timer
+    Start-Sleep -Milliseconds 600
+
+    $invoked = $false
+    $pat = $null
+    if ($foundBtn.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$pat)) {
+        try {
+            $pat.Invoke()
+            $invoked = $true
+        } catch {}
+    }
+
+    Start-Sleep -Milliseconds 250
+
+    $stillVisible = $false
+    try {
+        $rect = $foundBtn.Current.BoundingRectangle
+        if (-not $foundBtn.Current.IsOffscreen -and $rect.Width -gt 2 -and $rect.Height -gt 2) {
+            $stillVisible = $true
+        }
+    } catch {}
+
+    if (-not $invoked -or $stillVisible) {
+        try {
+            $hwnd = [IntPtr]$foundWin.Current.NativeWindowHandle
+            if ($hwnd -ne [IntPtr]::Zero) {
+                [Win32DialogHelper]::SetForegroundWindow($hwnd) | Out-Null
+                Start-Sleep -Milliseconds 80
+            }
+            $rect = $foundBtn.Current.BoundingRectangle
+            if ($rect.Width -gt 2 -and $rect.Height -gt 2 -and -not [double]::IsInfinity($rect.Left)) {
+                $origPt = New-Object Win32DialogHelper+POINT
+                [Win32DialogHelper]::GetCursorPos([ref]$origPt) | Out-Null
+                $cx = [int][Math]::Round($rect.Left + ($rect.Width / 2.0))
+                $cy = [int][Math]::Round($rect.Top + ($rect.Height / 2.0))
+                [Win32DialogHelper]::SetCursorPos($cx, $cy) | Out-Null
+                Start-Sleep -Milliseconds 45
+                [Win32DialogHelper]::mouse_event(0x0002, 0, 0, 0, 0)
+                Start-Sleep -Milliseconds 45
+                [Win32DialogHelper]::mouse_event(0x0004, 0, 0, 0, 0)
+                Start-Sleep -Milliseconds 45
+                [Win32DialogHelper]::SetCursorPos($origPt.X, $origPt.Y) | Out-Null
+            } else {
+                $foundBtn.SetFocus()
+                Start-Sleep -Milliseconds 50
+                [Win32DialogHelper]::keybd_event(0x0D, 0, 0, 0)
+                Start-Sleep -Milliseconds 30
+                [Win32DialogHelper]::keybd_event(0x0D, 0, 2, 0)
+            }
+        } catch {}
+    }
+
+    Write-Output ("{" + '"success":true,"method":"native-uia","button":' + ($matchedName | ConvertTo-Json -Compress) + "}")
+    exit 0
+}
+
+Write-Output '{"success":false,"error":"Không tìm thấy hộp thoại cảnh báo hoặc nút Thêm tiện ích"}'
+exit 0
+`;
+      const encodedPs = Buffer.from(psScript, 'utf16le').toString('base64');
+      return new Promise((resolve) => {
+        try {
+          const ps = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-EncodedCommand', encodedPs], {
+            windowsHide: true,
+          });
+          let stdoutData = '';
+          let stderrData = '';
+          ps.stdout.on('data', (d) => { stdoutData += d.toString(); });
+          ps.stderr.on('data', (d) => { stderrData += d.toString(); });
+          ps.on('close', () => {
+            const lines = stdoutData.trim().split(/\r?\n/).filter(Boolean);
+            const lastLine = lines[lines.length - 1] || '';
+            try {
+              const parsed = JSON.parse(lastLine);
+              resolve(parsed);
+              return;
+            } catch {}
+            resolve({
+              success: false,
+              error: stderrData.trim() || 'Không tìm thấy hộp thoại trên trình duyệt',
+            });
+          });
+          ps.on('error', (err) => {
+            resolve({ success: false, error: err.message });
+          });
+        } catch (err: any) {
+          resolve({ success: false, error: err.message });
+        }
+      });
+    }
+
+    if (action === 'screenshot') {
+      const { outputPath, fileName, fullPage } = payload || {};
+      const page = await getPageTarget();
+      if (!page || !page.webSocketDebuggerUrl) {
+        return { success: false, error: 'No active Chrome page found.' };
+      }
+
+      const wsUrl = page.webSocketDebuggerUrl;
+      const cdpParams: any = {
+        format: 'png',
+      };
+      if (fullPage) {
+        cdpParams.captureBeyondViewport = true;
+      }
+
+      const snapRes = await sendWs(wsUrl, 'Page.captureScreenshot', cdpParams, 30000);
+      if (!snapRes?.success || !snapRes.result?.data) {
+        return { success: false, error: snapRes?.error || 'Failed to capture screenshot via CDP' };
+      }
+
+      const base64Data = snapRes.result.data;
+      const buffer = Buffer.from(base64Data, 'base64');
+
+      let targetDir = outputPath ? path.resolve(outputPath) : app.getPath('pictures');
+      if (outputPath && (outputPath.endsWith('.png') || outputPath.endsWith('.jpg') || outputPath.endsWith('.jpeg'))) {
+        targetDir = path.dirname(outputPath);
+      }
+
+      try {
+        if (!fs.existsSync(targetDir)) {
+          fs.mkdirSync(targetDir, { recursive: true });
+        }
+      } catch (err: any) {
+        return { success: false, error: `Failed to create directory "${targetDir}": ${err.message}` };
+      }
+
+      const finalName = fileName || `screenshot_${Date.now()}.png`;
+      const finalPath = path.join(targetDir, finalName);
+
+      try {
+        fs.writeFileSync(finalPath, buffer);
+        return { success: true, filePath: finalPath };
+      } catch (err: any) {
+        return { success: false, error: `Failed to save screenshot: ${err.message}` };
+      }
     }
 
     return { success: false, error: 'Unknown action' };

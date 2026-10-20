@@ -231,9 +231,8 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
   {
     id: 'browser_scroll',
     name: 'Browser - Scroll',
-    count: 4,
+    count: 3,
     actions: [
-      { type: 68, name: 'Execute JS code', category: 'Browser - Scroll', description: 'Execute JavaScript in page context (must return value)', hasOutVar: true, defaultRawInput: [{ Key: 'FILE_OR_CODE', Value: 'return document.title;' }] },
       { type: 57, name: 'Random scroll', category: 'Browser - Scroll', description: 'Natural human-like random scrolling' },
       { type: 58, name: 'Scroll to top', category: 'Browser - Scroll', description: 'Scroll window to top (0,0)' },
       { type: 59, name: 'Scroll to bottom', category: 'Browser - Scroll', description: 'Scroll window to page bottom' },
@@ -264,8 +263,8 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
     name: 'Browser - Alert',
     count: 2,
     actions: [
-      { type: 66, name: 'Accept alert', category: 'Browser - Alert', description: 'Accept JavaScript window.alert() or confirm()' },
-      { type: 67, name: 'Cancel alert', category: 'Browser - Alert', description: 'Dismiss JavaScript window.confirm()' },
+      { type: 66, name: 'Accept alert', category: 'Browser - Alert', description: 'Accept alert / confirm() or Chrome "Thêm tiện ích" (Add extension)' },
+      { type: 67, name: 'Cancel alert', category: 'Browser - Alert', description: 'Dismiss confirm() or Chrome native dialog ("Huỷ" / "Cancel")' },
     ]
   },
   {
@@ -276,5 +275,42 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
       { type: 118, name: 'Wait popup', category: 'Browser - Tab & Popup', description: 'Wait until new popup window opens with title', defaultRawInput: [{ Key: 'TITLE_CONTAINS', Value: '' }, { Key: 'TIMEOUT', Value: '30' }] },
       { type: 119, name: 'Has popup', category: 'Browser - Tab & Popup', description: 'Check if popup window exists', hasOutVar: true, defaultRawInput: [{ Key: 'TITLE_CONTAINS', Value: '' }] },
     ]
+  },
+  {
+    id: 'browser_javascript',
+    name: 'Browser - Javascript',
+    count: 3,
+    actions: [
+      {
+        type: 68,
+        name: 'Execute JS code',
+        category: 'Browser - Javascript',
+        description: 'Execute JavaScript in page context (must return value)',
+        hasOutVar: true,
+        defaultRawInput: [{ Key: 'FILE_OR_CODE', Value: '' }],
+      },
+      {
+        type: 186,
+        name: 'Get extension id',
+        category: 'Browser - Javascript',
+        description: 'Extract unique Extension ID from chrome://extensions/',
+        hasOutVar: true,
+        defaultRawInput: [
+          { Key: 'EXTENSION_NAME', Value: '' },
+        ],
+      },
+      {
+        type: 187,
+        name: 'Screenshot',
+        category: 'Browser - Javascript',
+        description: 'Capture screenshot of current page or viewport',
+        hasOutVar: true,
+        defaultRawInput: [
+          { Key: 'OUTPUT_PATH', Value: '' },
+          { Key: 'FILE_NAME', Value: '' },
+          { Key: 'FULL_PAGE', Value: 'false' },
+        ],
+      },
+    ],
   },
 ];

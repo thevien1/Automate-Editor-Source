@@ -218,9 +218,14 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
       ? (node.nodes.map((ch: any) => normalizeSingleNode(ch)).filter(Boolean) as WorkflowNode[])
       : [];
 
+    const cleanType = (t: string | undefined, def: string) => {
+      if (!t) return def;
+      return t.replace(/GPMAutomateEditor/g, 'SVBAutomateEditor');
+    };
+
     if (isIfBlock) {
       const ifNode: IfBlockNode = {
-        $type: node.$type || 'GPMAutomateEditor.Models.IfBlockNode, GPMAutomateEditor.Models',
+        $type: cleanType(node.$type, 'SVBAutomateEditor.Models.IfBlockNode, SVBAutomateEditor.Models'),
         id,
         comment,
         display_text: displayText || 'If',
@@ -238,7 +243,7 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
       const endVal = String(node.end ?? node.to_number ?? '10');
       const stepVal = String(node.step ?? '1');
       const forNode: ForBlockNode = {
-        $type: node.$type || 'GPMAutomateEditor.Models.ForBlockNode, GPMAutomateEditor.Models',
+        $type: cleanType(node.$type, 'SVBAutomateEditor.Models.ForBlockNode, SVBAutomateEditor.Models'),
         id,
         comment,
         display_text: displayText || 'For',
@@ -257,7 +262,7 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
 
     if (isWhileBlock) {
       const whileNode: WhileBlockNode = {
-        $type: node.$type || 'GPMAutomateEditor.Models.WhileBlockNode, GPMAutomateEditor.Models',
+        $type: cleanType(node.$type, 'SVBAutomateEditor.Models.WhileBlockNode, SVBAutomateEditor.Models'),
         id,
         comment,
         display_text: displayText || 'While',
@@ -272,7 +277,7 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
 
     // Default Normal Block
     const normalBlock: NormalBlockNode = {
-      $type: node.$type || 'GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models',
+      $type: cleanType(node.$type, 'SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models'),
       id,
       comment,
       display_text: displayText || 'Normal block',
@@ -285,8 +290,9 @@ export function normalizeSingleNode(node: any): WorkflowNode | null {
   }
 
   // Otherwise it's an ActionNode
+  const actionType = node.$type ? String(node.$type).replace(/GPMAutomateEditor/g, 'SVBAutomateEditor') : 'SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models';
   const actionNode: ActionNode = {
-    $type: node.$type || 'GPMAutomateEditor.Models.ActionNode, GPMAutomateEditor.Models',
+    $type: actionType,
     id,
     type: typeof node.type === 'number' ? node.type : parseInt(node.type, 10) || 0,
     element_xpath: node.element_xpath ?? null,
@@ -333,8 +339,9 @@ export function nodesToJsCodeString(nodes: WorkflowNode | WorkflowNode[]): strin
     }
 
     const a = n as ActionNode;
+    const actionType = a.$type ? a.$type.replace(/GPMAutomateEditor/g, 'SVBAutomateEditor') : 'SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models';
     return `{
-  $type: ${JSON.stringify(a.$type || 'GPMAutomateEditor.Models.ActionNode, GPMAutomateEditor.Models')},
+  $type: ${JSON.stringify(actionType)},
   type: ${a.type},
   element_xpath: ${JSON.stringify(a.element_xpath)},
   output_variable_name: ${JSON.stringify(a.output_variable_name)},

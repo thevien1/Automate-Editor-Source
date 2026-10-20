@@ -9,8 +9,9 @@ interface TitleBarProps {
 }
 
 export const TitleBar: React.FC<TitleBarProps> = ({ projectName }) => {
-  const { screen, updateInfo, setShowUpdateModal } = useProject();
+  const { screen, updateInfo, setShowUpdateModal, currentProject, saveProject } = useProject();
   const currentVersion = packageInfo.version || '3.1.0';
+  const [isClosing, setIsClosing] = React.useState(false);
 
   const handleMinimize = () => {
     if ((window as any).electronAPI?.minimize) {
@@ -25,6 +26,9 @@ export const TitleBar: React.FC<TitleBarProps> = ({ projectName }) => {
   };
 
   const handleClose = () => {
+    if (isClosing) return;
+    setIsClosing(true);
+    // Khi tắt ứng dụng bằng dấu X: Không tự động lưu đè code
     if ((window as any).electronAPI?.close) {
       (window as any).electronAPI.close();
     }

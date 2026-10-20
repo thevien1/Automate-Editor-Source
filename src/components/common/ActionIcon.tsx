@@ -59,6 +59,8 @@ import {
   Window,
   WindowStack,
   Cookie,
+  Camera,
+  Puzzle,
 } from './Icons';
 import sourceDefaultIcons from '../../config/customDefaultIcons.json';
 
@@ -654,6 +656,26 @@ export const ACTION_ICON_CONFIG: Record<string, ActionConfigItem> = {
     ),
     label: 'Call workflow',
   },
+
+  // --- BROWSER JAVASCRIPT ---
+  'execute js code': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <Code2 className="w-3.5 h-3.5" />,
+    label: 'Execute JS code',
+  },
+  'get extension id': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <Puzzle className="w-3.5 h-3.5" />,
+    label: 'Get extension id',
+  },
+  'screenshot': {
+    color: '#1677ff',
+    darkColor: '#38bdf8',
+    icon: <Camera className="w-3.5 h-3.5" />,
+    label: 'Screenshot',
+  },
 };
 
 // Ánh xạ nhanh theo Action Type số (ID nguyên thủy của GScript)
@@ -727,8 +749,11 @@ export const ACTION_TYPE_MAP: Record<number, string> = {
   111: 'select dropdown',
   117: 'throw',
   120: 'call workflow',
+  68: 'execute js code',
   184: 'file read random line',
   185: 'clear cookie',
+  186: 'get extension id',
+  187: 'screenshot',
 };
 
 /**
@@ -793,6 +818,15 @@ export const getActionIconConfig = (
   }
   if (cleanName.includes('reload')) {
     return ACTION_ICON_CONFIG['reload'];
+  }
+  if (cleanName.includes('screenshot') || cleanName.includes('chụp ảnh')) {
+    return ACTION_ICON_CONFIG['screenshot'];
+  }
+  if (cleanName.includes('extension') || cleanName.includes('tiện ích')) {
+    return ACTION_ICON_CONFIG['get extension id'];
+  }
+  if (cleanName.includes('execute js') || cleanName.includes('javascript')) {
+    return ACTION_ICON_CONFIG['execute js code'];
   }
   if (cleanName.includes('image')) {
     return ACTION_ICON_CONFIG['image search'];

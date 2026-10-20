@@ -357,7 +357,7 @@ export const JsonCodeModal: React.FC<JsonCodeModalProps> = ({
                 <textarea
                   value={importText}
                   onChange={(e) => setImportText(e.target.value)}
-                  placeholder={`{\n  "$type": "GPMAutomateEditor.Models.ActionNode, GPMAutomateEditor.Models",\n  "type": 54,\n  "element_xpath": "//input[@name='q']",\n  "raw_input": "[{\\"Key\\":\\"TYPE\\",\\"Value\\":\\"Text\\"}]"\n}\n\nhoặc mảng [\n  { "type": 1, ... },\n  { "type": 2, ... }\n]`}
+                  placeholder={`{\n  "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",\n  "type": 54,\n  "element_xpath": "//input[@name='q']",\n  "raw_input": "[{\\"Key\\":\\"TYPE\\",\\"Value\\":\\"Text\\"}]"\n}\n\nhoặc mảng [\n  { "type": 1, ... },\n  { "type": 2, ... }\n]`}
                   rows={12}
                   className="w-full p-3 font-mono text-xs bg-[#0b101d] text-[#f8fafc] border border-[#1e293b] rounded-xl focus:outline-none focus:border-[#38bdf8] leading-relaxed placeholder-[#475569]"
                 />

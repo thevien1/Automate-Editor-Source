@@ -18,11 +18,17 @@ export const ToolBar: React.FC = () => {
     setJsonModalMode,
   } = useProject();
 
-  const handleRun = () => {
+  const handleRun = async () => {
+    if (currentProject) {
+      await saveProject(); // Tự động lưu code trước khi chạy
+    }
     setShowRuntimeModal(true);
   };
 
-  const handleTest = () => {
+  const handleTest = async () => {
+    if (currentProject) {
+      await saveProject(); // Tự động lưu code trước khi test
+    }
     setShowTestModal(true);
   };
 
@@ -58,7 +64,7 @@ export const ToolBar: React.FC = () => {
 
         {/* Save */}
         <button
-          onClick={saveProject}
+          onClick={() => saveProject()}
           className="flex items-center space-x-1.5 px-3 py-1 rounded-md text-[#1677ff] dark:text-[#38bdf8] hover:bg-[#1677ff]/10 dark:hover:bg-[#38bdf8]/15 font-semibold transition-colors cursor-pointer active:scale-95"
           title="Save project (Ctrl+S)"
         >

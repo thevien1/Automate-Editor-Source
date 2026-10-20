@@ -1,7 +1,7 @@
 {
-  "$type": "GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models",
+  "$type": "SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models",
   "before_init": {
-    "$type": "GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models",
+    "$type": "SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models",
     "nodes": [],
     "expanded": true,
     "continue_on_error": false,
@@ -11,7 +11,7 @@
     "comment": null
   },
   "main_logic": {
-    "$type": "GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models",
+    "$type": "SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models",
     "nodes": [],
     "expanded": true,
     "continue_on_error": false,
@@ -21,7 +21,7 @@
     "comment": null
   },
   "after_quit": {
-    "$type": "GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models",
+    "$type": "SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models",
     "nodes": [],
     "expanded": true,
     "continue_on_error": false,

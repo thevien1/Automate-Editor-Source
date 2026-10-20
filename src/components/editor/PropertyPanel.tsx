@@ -35,6 +35,8 @@ import { SwitchProps } from './properties/navigation/SwitchProps';
 import { CookieProps } from './properties/cookie/CookieProps';
 import { CallWorkflowProps } from './properties/workflow/CallWorkflowProps';
 import { ExecuteJsCodeProps } from './properties/browser/ExecuteJsCodeProps';
+import { GetExtensionIdProps } from './properties/browser/GetExtensionIdProps';
+import { ScreenshotProps } from './properties/browser/ScreenshotProps';
 import { GenericActionProps } from './properties/GenericActionProps';
 import { VariablesPanel } from './VariablesPanel';
 
@@ -186,9 +188,15 @@ export const PropertyPanel: React.FC = () => {
       return <NavigationProps {...commonProps} />;
     }
 
-    // Execute JS Code (type 68)
+    // Browser - Javascript (Execute JS code, Get extension id, Screenshot)
     if (name === 'execute js code' || name.includes('execute js') || name.includes('chạy mã javascript') || type === 68) {
       return <ExecuteJsCodeProps {...commonProps} />;
+    }
+    if (name === 'get extension id' || name.includes('extension id') || name.includes('tiện ích') || type === 186) {
+      return <GetExtensionIdProps {...commonProps} />;
+    }
+    if (name === 'screenshot' || name.includes('screenshot') || name.includes('chụp ảnh') || type === 187) {
+      return <ScreenshotProps {...commonProps} />;
     }
 
     // Element Actions

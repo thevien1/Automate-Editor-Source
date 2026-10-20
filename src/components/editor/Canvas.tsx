@@ -60,7 +60,7 @@ export const Canvas: React.FC = () => {
   const handleCanvasDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsCanvasDragOver(false);
-    const rawAction = e.dataTransfer.getData('application/gpm-action');
+    const rawAction = e.dataTransfer.getData('application/svb-action') || e.dataTransfer.getData('application/gpm-action');
     if (rawAction) {
       try {
         const actionDef: ActionDefinition = JSON.parse(rawAction);
@@ -94,14 +94,14 @@ export const Canvas: React.FC = () => {
             <Lightbulb className="w-3.5 h-3.5 text-yellow-300" />
           </div>
           <div className="text-xs text-[#0958d9] dark:text-[#93c5fd]">
-            Instructions for writing logic that is easy to read, maintain, and upgrade. Visit at:{' '}
+            Hướng dẫn viết logic kịch bản tối ưu, dễ đọc và bảo trì. Xem chi tiết tại:{' '}
             <a
-              href="https://docs.gpmautomate.com/"
+              href="http://localhost:3080/docs"
               target="_blank"
               rel="noreferrer"
               className="font-bold underline text-[#1677ff] dark:text-[#38bdf8] hover:underline"
             >
-              HERE
+              TẠI ĐÂY (Docs)
             </a>
           </div>
         </div>

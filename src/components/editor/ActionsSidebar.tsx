@@ -55,7 +55,9 @@ export const ActionsSidebar: React.FC = () => {
   };
 
   const handleDragStart = (e: React.DragEvent, action: ActionDefinition) => {
-    e.dataTransfer.setData('application/gpm-action', JSON.stringify(action));
+    const jsonStr = JSON.stringify(action);
+    e.dataTransfer.setData('application/svb-action', jsonStr);
+    e.dataTransfer.setData('application/gpm-action', jsonStr);
     e.dataTransfer.effectAllowed = 'all';
   };
 

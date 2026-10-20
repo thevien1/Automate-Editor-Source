@@ -10,6 +10,8 @@ import {
   ChevronDown,
   ChevronUp,
   ChevronLeft,
+  ChevronRight,
+  Clipboard,
   FolderOpen,
   Plus,
   Shield,
@@ -204,13 +206,29 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   selectedEngine: 'Selenium enhanced engine',
   selectedProvider: 'SV Browser',
   profilesSortOrder: 'default',
-  profilesPerPage: 20,
+  autoCloneProfile: true,
+  autoGenProfilesMode: false,
+  autoGenCountMode: 'input_data',
+  autoGenCustomCount: 10,
+  templateProfileUid: '80c3e196-40a3-42bb-8a62-4cfdab1340c4',
+  proxyListText: '',
+  checkProxyBeforeCreate: true,
+  proxyMode: 'static',
+  rotatingProxyApiUrl: '',
+  rotatingProxyApiUrlsText: '',
+  rotatingProxyThreadsPerProxy: 0,
+  rotatingProxyAutoDivideThreads: true,
+  rotatingProxyReuseIfCooldown: true,
+  rotatingProxyJsonPath: 'data.http',
+  rotatingProxyRandomRegions: 'bac, trung, nam, random',
+  rotatingProxyRandomParamName: 'region',
+  rotatingProxyBatchWait: true,
 };
 
 export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) => {
-  const { currentProject, updateRuntimeConfig } = useProject();
+  const { currentProject, updateRuntimeConfig, saveProject } = useProject();
 
-  // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Running
+  // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Tạo Profile mới (Clone & Ephemeral), 5 = Running
   // Always starts at Step 1 (Select app) when user clicks Run
   const [step, setStep] = useState<number>(1);
 
@@ -562,6 +580,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const [customPerPageInput, setCustomPerPageInput] = useState<string>('20');
   const [selectedEngine, setSelectedEngine] = useState<string>('Selenium enhanced engine');
   const [selectedProvider, setSelectedProvider] = useState<string>('SV Browser');
+  const [showBatchUidModal, setShowBatchUidModal] = useState<boolean>(false);
+  const [batchUidText, setBatchUidText] = useState<string>('');
+  const [batchUidMode, setBatchUidMode] = useState<'append' | 'replace'>('append');
 
   // Helper to sort profiles by sortOrder
   const sortProfilesList = (list: GpmProfile[], order: string, selIds: string[] = selectedProfileIds) => {
@@ -826,6 +847,62 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   // Schedule configuration (Project-scoped, auto-saved to runtime.json)
   const [useSchedule, setUseSchedule] = useState<boolean>(false);
 
+  // Step 4: Tự động tạo Profile mới tạm thời (Clone từ Profile đã chọn) & Xoá vĩnh viễn khi xong/lỗi/stop
+  const [autoCloneProfile, setAutoCloneProfile] = useState<boolean>(true);
+  const [autoGenProfilesMode, setAutoGenProfilesMode] = useState<boolean>(false);
+  const [autoGenCountMode, setAutoGenCountMode] = useState<'input_data' | 'custom_count'>('input_data');
+  const [autoGenCustomCount, setAutoGenCustomCount] = useState<number>(10);
+  const [templateProfileUid, setTemplateProfileUid] = useState<string>('80c3e196-40a3-42bb-8a62-4cfdab1340c4');
+  const [proxyListText, setProxyListText] = useState<string>('');
+  const [checkProxyBeforeCreate, setCheckProxyBeforeCreate] = useState<boolean>(true);
+  const [isTestingProxies, setIsTestingProxies] = useState<boolean>(false);
+  const [proxyTestStatusText, setProxyTestStatusText] = useState<string>('');
+  const [templateProfileInfo, setTemplateProfileInfo] = useState<GpmProfile | null>(null);
+  const [detectedTxtLineCount, setDetectedTxtLineCount] = useState<number | null>(null);
+
+  // Rotating Proxy (API đổi IP theo đợt luồng)
+  const [proxyMode, setProxyMode] = useState<'static' | 'rotating'>('static');
+  const [rotatingProxyApiUrl, setRotatingProxyApiUrl] = useState<string>('');
+  const [rotatingProxyApiUrlsText, setRotatingProxyApiUrlsText] = useState<string>('');
+  const [rotatingProxyThreadsPerProxy, setRotatingProxyThreadsPerProxy] = useState<number>(0);
+  const [rotatingProxyAutoDivideThreads, setRotatingProxyAutoDivideThreads] = useState<boolean>(true);
+  const [rotatingProxyReuseIfCooldown, setRotatingProxyReuseIfCooldown] = useState<boolean>(true);
+  const [rotatingProxyJsonPath, setRotatingProxyJsonPath] = useState<string>('data.http');
+  const [rotatingProxyRandomRegions, setRotatingProxyRandomRegions] = useState<string>('bac, trung, nam, random');
+  const [rotatingProxyRandomParamName, setRotatingProxyRandomParamName] = useState<string>('region');
+  const [rotatingProxyBatchWait, setRotatingProxyBatchWait] = useState<boolean>(true);
+  const [isTestingRotatingProxy, setIsTestingRotatingProxy] = useState<boolean>(false);
+  const [rotatingProxyTestResult, setRotatingProxyTestResult] = useState<{
+    success: boolean;
+    proxy?: string;
+    message?: string;
+    rawText?: string;
+    rawJson?: any;
+    targetUrl?: string;
+    pickedValue?: string;
+    ttc?: number;
+    location?: string;
+  } | null>(null);
+  const [rotatingProxyTestResults, setRotatingProxyTestResults] = useState<Array<{
+    slotIndex: number;
+    success: boolean;
+    proxy?: string;
+    message?: string;
+    targetUrl?: string;
+    pickedValue?: string;
+    ttc?: number;
+    location?: string;
+  }>>([]);
+
+  const activeTempProfilesRef = useRef<
+    Map<string, { threadId: number; profileId: string; name: string; storagePath?: string }>
+  >(new Map());
+  const deletedTempProfileIdsRef = useRef<Set<string>>(new Set());
+  const proxyPoolCursorRef = useRef<number>(0);
+  const testedDeadProxiesRef = useRef<Set<string>>(new Set());
+  const testedLiveProxiesRef = useRef<Map<string, { ip: string; country?: string }>>(new Map());
+  const lastObtainedProxyBySlotRef = useRef<Record<number, string>>({});
+
   const isInitialLoadingRef = useRef<boolean>(true);
   const loadedProjectKeyRef = useRef<string>('');
 
@@ -883,6 +960,23 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     profilesPerPage,
     selectedGroup,
     selectedTag,
+    autoCloneProfile,
+    autoGenProfilesMode,
+    autoGenCountMode,
+    autoGenCustomCount,
+    templateProfileUid,
+    proxyListText,
+    checkProxyBeforeCreate,
+    proxyMode,
+    rotatingProxyApiUrl,
+    rotatingProxyApiUrlsText,
+    rotatingProxyThreadsPerProxy,
+    rotatingProxyAutoDivideThreads,
+    rotatingProxyReuseIfCooldown,
+    rotatingProxyJsonPath,
+    rotatingProxyRandomRegions,
+    rotatingProxyRandomParamName,
+    rotatingProxyBatchWait,
   });
 
   const applyConfigToState = (cfg: ProjectRuntimeConfig, projName?: string) => {
@@ -950,6 +1044,23 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     if (cfg.selectedGroup) setSelectedGroup(cfg.selectedGroup);
     if (cfg.selectedTag) setSelectedTag(cfg.selectedTag);
     setSelectedProfileIds(Array.isArray(cfg.selectedProfileIds) ? cfg.selectedProfileIds : []);
+    setAutoCloneProfile(cfg.autoCloneProfile ?? true);
+    setAutoGenProfilesMode(cfg.autoGenProfilesMode ?? false);
+    setAutoGenCountMode(cfg.autoGenCountMode ?? 'input_data');
+    setAutoGenCustomCount(cfg.autoGenCustomCount ?? 10);
+    setTemplateProfileUid(cfg.templateProfileUid || '80c3e196-40a3-42bb-8a62-4cfdab1340c4');
+    setProxyListText(cfg.proxyListText || '');
+    setCheckProxyBeforeCreate(cfg.checkProxyBeforeCreate ?? true);
+    setProxyMode(cfg.proxyMode || 'static');
+    setRotatingProxyApiUrl(cfg.rotatingProxyApiUrl || '');
+    setRotatingProxyApiUrlsText(cfg.rotatingProxyApiUrlsText || cfg.rotatingProxyApiUrl || '');
+    setRotatingProxyThreadsPerProxy(cfg.rotatingProxyThreadsPerProxy ?? 0);
+    setRotatingProxyAutoDivideThreads(cfg.rotatingProxyAutoDivideThreads ?? true);
+    setRotatingProxyReuseIfCooldown(cfg.rotatingProxyReuseIfCooldown ?? true);
+    setRotatingProxyJsonPath(cfg.rotatingProxyJsonPath || 'data.http');
+    setRotatingProxyRandomRegions(cfg.rotatingProxyRandomRegions ?? 'bac, trung, nam, random');
+    setRotatingProxyRandomParamName(cfg.rotatingProxyRandomParamName || 'region');
+    setRotatingProxyBatchWait(cfg.rotatingProxyBatchWait ?? true);
   };
 
   const saveConfigForCurrentProject = (customConfig?: Partial<ProjectRuntimeConfig>) => {
@@ -1102,9 +1213,26 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
     selectedProvider,
     sortOrder,
     profilesPerPage,
+    autoCloneProfile,
+    autoGenProfilesMode,
+    autoGenCountMode,
+    autoGenCustomCount,
+    templateProfileUid,
+    proxyListText,
+    checkProxyBeforeCreate,
+    proxyMode,
+    rotatingProxyApiUrl,
+    rotatingProxyApiUrlsText,
+    rotatingProxyThreadsPerProxy,
+    rotatingProxyAutoDivideThreads,
+    rotatingProxyReuseIfCooldown,
+    rotatingProxyJsonPath,
+    rotatingProxyRandomRegions,
+    rotatingProxyRandomParamName,
+    rotatingProxyBatchWait,
   ]);
 
-  // Step 4: Running Multi-Thread State
+  // Step 5: Running Multi-Thread State
   const [threads, setThreads] = useState<ThreadState[]>([]);
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
@@ -1137,7 +1265,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   // Step navigation
   const goToStep = (targetStep: number) => {
-    if (step === 2 || targetStep > step) {
+    if (step === 2 || step === 4 || targetStep > step) {
       saveConfigForCurrentProject();
     }
     setStep(targetStep);
@@ -1145,6 +1273,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   const handleModalClose = () => {
     saveConfigForCurrentProject();
+    if (activeTempProfilesRef.current.size > 0) {
+      for (const [profId, info] of Array.from(activeTempProfilesRef.current.entries())) {
+        stopAndDeleteTempProfile(info.threadId, profId, info.name, info.storagePath).catch(() => {});
+      }
+    }
     onClose();
   };
 
@@ -1155,23 +1288,29 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       saveConfigForCurrentProject();
       setStep(3);
     } else if (step === 3) {
-      if (selectedProfileIds.length === 0) return;
+      if (!autoGenProfilesMode && selectedProfileIds.length === 0) return;
+      if (autoGenProfilesMode && getEstimatedProfileCount() <= 0) return;
       saveConfigForCurrentProject();
       setStep(4);
+    } else if (step === 4) {
+      if (!autoGenProfilesMode && selectedProfileIds.length === 0) return;
+      if (autoGenProfilesMode && getEstimatedProfileCount() <= 0) return;
+      saveConfigForCurrentProject();
+      setStep(5);
       startMultiThreadExecution();
     }
   };
 
   const handleBack = () => {
     if (step > 1) {
-      if (step === 2) {
+      if (step === 2 || step === 4) {
         saveConfigForCurrentProject();
       }
       setStep((prev) => prev - 1);
     }
   };
 
-  // Pre-generate thread list for Step 3 and 4
+  // Pre-generate thread list for Step 3, 4 and 5
   const generateInitialThreads = (count: number): ThreadState[] => {
     const list: ThreadState[] = [];
     const basePort = 43076;
@@ -1191,7 +1330,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   // Multi-thread automation runner
   const startMultiThreadExecution = async () => {
     saveConfigForCurrentProject();
+    if (saveProject) {
+      try {
+        await saveProject(true);
+      } catch (e) {}
+    }
     stopSignalRef.current = false;
+    activeTempProfilesRef.current.clear();
+    deletedTempProfileIdsRef.current.clear();
     setIsExecuting(true);
     setElapsedSeconds(0);
 
@@ -1300,45 +1446,108 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
     let initial: ThreadState[] = [];
 
-    // Order selected profiles strictly according to active sort order / user selection:
-    const selectedSet = new Set(selectedProfileIds.map((id) => String(id)));
-    const allSelected = (profiles || []).filter((p) => selectedSet.has(String(p.id)));
-
-    let selected: GpmProfile[] = [];
-    if (sortOrder !== 'default') {
-      selected = sortProfilesList(allSelected, sortOrder, selectedProfileIds);
-    } else {
-      // In default sort order, respect the exact order of selectedProfileIds (preserving user click / selection order)
-      const profileMap = new Map<string, GpmProfile>();
-      (profiles || []).forEach((p) => profileMap.set(String(p.id), p));
-      selected = selectedProfileIds
-        .map((id) => profileMap.get(String(id)))
-        .filter((p): p is GpmProfile => Boolean(p));
-      if (selected.length === 0) {
-        selected = allSelected;
+    if (autoGenProfilesMode) {
+      // Chế độ Tự động sinh Profile mới & Tự hủy sau khi chạy
+      let targetCount = autoGenCustomCount || 10;
+      if (useInputTxt && txtFilePath.trim()) {
+        if (unworkedTxtLines.length > 0) {
+          targetCount = unworkedTxtLines.length;
+        } else if (detectedTxtLineCount && detectedTxtLineCount > 0) {
+          targetCount = detectedTxtLineCount;
+        }
       }
-    }
+      targetCount = Math.max(1, targetCount);
 
-    if (selected.length > 0) {
-      initial = selected.map((p, idx) => ({
-        id: idx + 1,
-        profileId: p.id,
-        profileName: p.name,
-        profileProxy: p.raw_proxy || (p as any).proxy || (p as any).profileProxy || '',
-        port: 0,
-        name: p.name,
-        status: 'idle',
-        currentAction: 'Ready',
-        logs: [{ time: getTime(), text: `Profile "${p.name}" initialized (ID: ${p.id})`, type: 'info' }],
-        assignedTxtEntry: buildTxtEntry(idx),
-      }));
+      // Phân tích danh sách Proxy
+      const proxyLines = (proxyListText || '')
+        .split('\n')
+        .map((p) => p.trim())
+        .filter(Boolean);
+
+      // Reset con trỏ proxy & cache test
+      proxyPoolCursorRef.current = 0;
+      testedDeadProxiesRef.current.clear();
+      testedLiveProxiesRef.current.clear();
+
+      const templName = templateProfileInfo?.name || 'New profile';
+
+      initial = Array.from({ length: targetCount }, (_, idx) => {
+        const workerNum = idx + 1;
+        const initialProxy = proxyMode === 'rotating'
+          ? 'Proxy Xoay (Đổi theo từng đợt)'
+          : (proxyLines.length > 0 ? proxyLines[idx % proxyLines.length] : '');
+        return {
+          id: workerNum,
+          profileId: undefined, // Sẽ tự tạo động khi worker chạy
+          profileName: `${templName} (Auto #${workerNum})`,
+          profileProxy: proxyMode === 'rotating' ? '' : initialProxy,
+          port: 0,
+          name: `Worker #${workerNum}`,
+          status: 'idle',
+          currentAction: 'Ready',
+          logs: [
+            {
+              time: getTime(),
+              text: proxyMode === 'rotating'
+                ? `Worker #${workerNum} sẵn sàng tự sinh Profile mới từ mẫu "${templName}" (${templateProfileUid}) • Proxy Xoay (Đổi theo từng đợt ${numThreads} luồng)`
+                : `Worker #${workerNum} sẵn sàng tự sinh Profile mới từ mẫu "${templName}" (${templateProfileUid})${initialProxy ? ` • Proxy: ${initialProxy}` : ''}`,
+              type: 'info',
+            },
+          ],
+          assignedTxtEntry: buildTxtEntry(idx),
+        };
+      });
     } else {
-      const baseThreads = generateInitialThreads(numThreads);
-      initial = baseThreads.map((t, idx) => ({
-        ...t,
-        profileProxy: workerProxies[t.id] || '',
-        assignedTxtEntry: buildTxtEntry(idx),
-      }));
+      // Order selected profiles strictly according to active sort order / user selection:
+      const selectedSet = new Set(selectedProfileIds.map((id) => String(id)));
+      const allSelected = (profiles || []).filter((p) => selectedSet.has(String(p.id)));
+
+      let selected: GpmProfile[] = [];
+      if (sortOrder !== 'default') {
+        selected = sortProfilesList(allSelected, sortOrder, selectedProfileIds);
+      } else {
+        // In default sort order, respect the exact order of selectedProfileIds (preserving user click / selection order)
+        const profileMap = new Map<string, GpmProfile>();
+        (profiles || []).forEach((p) => profileMap.set(String(p.id), p));
+        selected = selectedProfileIds
+          .map((id) => profileMap.get(String(id)))
+          .filter((p): p is GpmProfile => Boolean(p));
+        if (selected.length === 0) {
+          selected = allSelected;
+        }
+      }
+
+      if (selected.length > 0) {
+        initial = selected.map((p, idx) => ({
+          id: idx + 1,
+          profileId: p.id,
+          profileName: p.name,
+          profileProxy: proxyMode === 'rotating' ? '' : (p.raw_proxy || (p as any).proxy || (p as any).profileProxy || ''),
+          port: 0,
+          name: p.name,
+          status: 'idle',
+          currentAction: 'Ready',
+          logs: [
+            {
+              time: getTime(),
+              text: proxyMode === 'rotating'
+                ? `Profile "${p.name}" (ID: ${p.id}) sẵn sàng chạy với Proxy Xoay (Đổi theo từng đợt ${numThreads} luồng)`
+                : (autoCloneProfile
+                  ? `Profile gốc "${p.name}" sẵn sàng nhân bản tạo mới & tự xóa sau khi chạy (ID gốc: ${p.id})`
+                  : `Profile "${p.name}" initialized (ID: ${p.id})`),
+              type: 'info',
+            },
+          ],
+          assignedTxtEntry: buildTxtEntry(idx),
+        }));
+      } else {
+        const baseThreads = generateInitialThreads(numThreads);
+        initial = baseThreads.map((t, idx) => ({
+          ...t,
+          profileProxy: workerProxies[t.id] || '',
+          assignedTxtEntry: buildTxtEntry(idx),
+        }));
+      }
     }
 
     setThreads(initial);
@@ -1346,28 +1555,143 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       setSelectedLogThreadId(initial[0].id);
     }
 
-    // Run worker pool respecting numThreads concurrency
-    const concurrency = Math.max(1, Math.min(numThreads, initial.length));
-    let nextIndex = 0;
-    const workers = Array.from({ length: concurrency }, async (_, workerIdx) => {
-      if (workerIdx > 0 && threadDelay > 0) {
-        await sleep(workerIdx * threadDelay * 1000);
-      }
-      while (nextIndex < initial.length && !stopSignalRef.current) {
-        const taskIdx = nextIndex++;
-        const t = initial[taskIdx];
-        if (!t) break;
-        try {
-          await runWorkerThread(t, workerIdx);
-        } catch (err: any) {
-          updateThreadLog(t.id, 'error', `✕ Worker error: ${err.message || err}`, 'Error');
-          setThreadStatus(t.id, 'error');
+    // Run worker pool: Check if proxyMode is 'rotating'
+    const rotatingApis = getRotatingApiUrlsList();
+    if (proxyMode === 'rotating' && rotatingApis.length > 0) {
+      // CHẾ ĐỘ PROXY XOAY: Mỗi Proxy API là một Pipeline độc lập!
+      // "khi chia đều thì các luồng mà cùng 1 proxy thì nếu chạy hết luồng đó rồi mới chạy tiếp,
+      // chứ không phải là đợi hết tất cả các luồng rồi mới mở lại"
+      // Ví dụ: 6 luồng với 2 proxy -> mỗi proxy phụ trách 3 luồng cùng lúc.
+      // Khi 3 luồng của proxy 1 xong -> proxy 1 đổi IP và chạy tiếp 3 luồng khác ngay lập tức, không chờ proxy 2!
+      const totalThreads = Math.max(1, numThreads);
+      const threadsPerProxy = getEffectiveThreadsPerProxy(totalThreads);
+      let queueIndex = 0;
+
+      // Hàm lấy batch tiếp theo từ hàng đợi chung (atomic synchronous dequeue)
+      const getNextBatchForRunner = (maxCount: number): ThreadState[] => {
+        const batch: ThreadState[] = [];
+        while (batch.length < maxCount && queueIndex < initial.length) {
+          batch.push(initial[queueIndex++]);
         }
-      }
-    });
-    await Promise.all(workers);
+        return batch;
+      };
+
+      // Chạy song song pipeline của từng Proxy API độc lập
+      const proxyPipelines = rotatingApis.map(async (targetApiUrl, slotIdx) => {
+        const baseScreenSlot = slotIdx * threadsPerProxy;
+        const proxyLabel = rotatingApis.length > 1 ? `Proxy #${slotIdx + 1}` : 'Proxy Xoay';
+        let runnerBatchNum = 0;
+
+        while (!stopSignalRef.current) {
+          const currentBatch = getNextBatchForRunner(threadsPerProxy);
+          if (currentBatch.length === 0) break; // Hết việc cho pipeline này
+
+          runnerBatchNum++;
+          const leadThreadId = currentBatch[0].id;
+
+          updateThreadLog(
+            leadThreadId,
+            'info',
+            `🚀 [${proxyLabel}] Bắt đầu đợt #${runnerBatchNum} (${currentBatch.length} luồng của ${proxyLabel})...`,
+            `Batch ${proxyLabel} #${runnerBatchNum}`
+          );
+
+          // 1. Gọi API của riêng Proxy này để lấy IP mới cho đợt này
+          let obtainedProxy = '';
+          try {
+            obtainedProxy = await obtainNewRotatingProxyForSlot(
+              slotIdx,
+              targetApiUrl,
+              rotatingApis.length,
+              runnerBatchNum,
+              0,
+              leadThreadId
+            );
+          } catch (slotErr: any) {
+            updateThreadLog(
+              leadThreadId,
+              'error',
+              `✕ [${proxyLabel}] Lỗi lấy Proxy: ${slotErr.message || slotErr}`,
+              'Proxy Error'
+            );
+            currentBatch.forEach((t) => setThreadStatus(t.id, 'error'));
+            if (restartOnError && !stopSignalRef.current) {
+              continue;
+            } else {
+              break;
+            }
+          }
+
+          // 2. Gán Proxy mới cho các worker trong đợt này của Proxy này
+          currentBatch.forEach((t) => {
+            t.profileProxy = obtainedProxy;
+            updateThreadLog(
+              t.id,
+              'info',
+              `🔄 [${proxyLabel}] Đã cấp phát Proxy đợt #${runnerBatchNum}: "${obtainedProxy}" cho Worker #${t.id}`,
+              'Assigned Proxy'
+            );
+          });
+
+          // 3. Khởi chạy đồng thời các luồng của riêng Proxy Pipeline này (giãn cách tối thiểu 800ms tránh nghẽn API)
+          const staggerDelay = threadDelay > 0 ? threadDelay * 1000 : 800;
+          const batchPromises = currentBatch.map(async (t, idxInGroup) => {
+            const workerScreenIdx = baseScreenSlot + idxInGroup;
+            if (idxInGroup > 0) {
+              await sleep(idxInGroup * staggerDelay);
+            }
+            try {
+              await runWorkerThread(t, workerScreenIdx);
+            } catch (err: any) {
+              updateThreadLog(t.id, 'error', `✕ Worker error: ${err.message || err}`, 'Error');
+              setThreadStatus(t.id, 'error');
+            }
+          });
+
+          // 4. CHỜ CÁC LUỒNG CỦA RIÊNG PROXY NÀY XONG!
+          // Khi nhóm luồng của proxy này xong -> đổi IP mới và chạy tiếp nhóm khác ngay lập tức, không chờ proxy khác!
+          await Promise.all(batchPromises);
+
+          updateThreadLog(
+            leadThreadId,
+            'success',
+            `✔ [${proxyLabel}] HOÀN TẤT ĐỢT #${runnerBatchNum}. Cả ${currentBatch.length} luồng của ${proxyLabel} đã xong. Đang đổi IP để chạy tiếp...`,
+            `Xong ${proxyLabel} #${runnerBatchNum}`
+          );
+
+          if (queueIndex < initial.length && !stopSignalRef.current) {
+            await sleep(1000);
+          }
+        }
+      });
+
+      // Đợi tất cả các pipeline hoàn tất toàn bộ danh sách profile
+      await Promise.all(proxyPipelines);
+    } else {
+      // Continuous worker pool for static proxies / default mode
+      const concurrency = Math.max(1, Math.min(numThreads, initial.length));
+      let nextIndex = 0;
+      const workers = Array.from({ length: concurrency }, async (_, workerIdx) => {
+        if (workerIdx > 0 && threadDelay > 0) {
+          await sleep(workerIdx * threadDelay * 1000);
+        }
+        while (nextIndex < initial.length && !stopSignalRef.current) {
+          const taskIdx = nextIndex++;
+          const t = initial[taskIdx];
+          if (!t) break;
+          try {
+            await runWorkerThread(t, workerIdx);
+          } catch (err: any) {
+            updateThreadLog(t.id, 'error', `✕ Worker error: ${err.message || err}`, 'Error');
+            setThreadStatus(t.id, 'error');
+          }
+        }
+      });
+      await Promise.all(workers);
+    }
 
     setIsExecuting(false);
+    fetchProfiles();
   };
 
   const updateThreadLog = (
@@ -1425,6 +1749,1251 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           } catch {}
         }
       }
+    }
+  };
+
+  // Lấy chi tiết thông tin Profile mẫu theo UID
+  const getFullProfileByUid = async (uid: string): Promise<GpmProfile | null> => {
+    if (!uid) return null;
+    const cleanUid = uid.trim();
+    const found = profiles.find((p) => String(p.id) === cleanUid);
+    if (found && found.storage_path) return found;
+
+    const eps = [
+      `http://127.0.0.1:8725/api/v1/profiles/${cleanUid}`,
+      `http://localhost:8725/api/v1/profiles/${cleanUid}`,
+      `http://127.0.0.1:8725/api/v3/profiles/${cleanUid}`,
+      `http://localhost:8725/api/v3/profiles/${cleanUid}`,
+    ];
+    for (const ep of eps) {
+      try {
+        const resp = await fetch(ep);
+        if (resp.ok) {
+          const json = await resp.json();
+          if (json?.data) return json.data as GpmProfile;
+        }
+      } catch {}
+    }
+
+    try {
+      const pRes = await (window as any).electronAPI?.fileAction?.({
+        action: 'readAllText',
+        payload: { path: `${process.env.APPDATA || ''}\\sv-browser\\SVBrowserData\\profiles.json` },
+      });
+      if (pRes?.success && pRes?.content) {
+        const parsed = JSON.parse(pRes.content);
+        const list = Array.isArray(parsed) ? parsed : Object.values(parsed);
+        const match = list.find((p: any) => String(p.id) === cleanUid);
+        if (match) return match as GpmProfile;
+      }
+    } catch {}
+
+    return found || null;
+  };
+
+  // Cập nhật thông tin chi tiết Profile mẫu khi UID thay đổi
+  useEffect(() => {
+    if (templateProfileUid) {
+      getFullProfileByUid(templateProfileUid).then((prof) => {
+        if (prof) setTemplateProfileInfo(prof);
+      });
+    }
+  }, [templateProfileUid, profiles]);
+
+  // Tự động đếm số dòng chưa chạy trong file TXT (nếu bật Use input Text file)
+  useEffect(() => {
+    if (useInputTxt && txtFilePath.trim() && (window as any).electronAPI?.fileAction) {
+      const cleanPath = txtFilePath.trim().replace(/^["']|["']$/g, '');
+      (window as any).electronAPI.fileAction({
+        action: 'readLines',
+        payload: { path: cleanPath },
+      }).then((res: any) => {
+        if (res?.success && Array.isArray(res.lines)) {
+          const skipKws = (txtSkipKeywords || 'done, trạng thái:, error, OK')
+            .split(',')
+            .map((k) => k.trim().toLowerCase())
+            .filter(Boolean);
+          const valid = res.lines.filter((l: any) => {
+            const raw = String(l).trim();
+            if (!raw) return false;
+            for (const kw of skipKws) {
+              if (kw === 'ok') {
+                if (/\b(ok)\b/i.test(raw) || raw.toLowerCase().endsWith('ok')) return false;
+              } else if (raw.toLowerCase().includes(kw)) {
+                return false;
+              }
+            }
+            return true;
+          });
+          setDetectedTxtLineCount(valid.length);
+        }
+      }).catch(() => {});
+    } else {
+      setDetectedTxtLineCount(null);
+    }
+  }, [useInputTxt, txtFilePath, txtSkipKeywords, step]);
+
+  // Tính số lượng Profile ước tính sẽ chạy
+  const getEstimatedProfileCount = (): number => {
+    if (!autoGenProfilesMode) {
+      return selectedProfileIds.length;
+    }
+    if (useInputTxt && txtFilePath.trim()) {
+      if (detectedTxtLineCount !== null && detectedTxtLineCount > 0) {
+        return detectedTxtLineCount;
+      }
+    }
+    return Math.max(1, autoGenCustomCount || 10);
+  };
+
+  // Lấy Proxy sống tiếp theo trong danh sách (Kiểm tra và tự động bỏ qua nếu chết)
+  const getNextLiveProxy = async (
+    threadId: number,
+    proxyList: string[],
+    shouldCheckLive: boolean
+  ): Promise<string | null> => {
+    if (proxyList.length === 0) return '';
+
+    while (proxyPoolCursorRef.current < proxyList.length && !stopSignalRef.current) {
+      const candidate = proxyList[proxyPoolCursorRef.current++];
+      if (!candidate) continue;
+
+      if (!shouldCheckLive) {
+        return candidate;
+      }
+
+      if (testedDeadProxiesRef.current.has(candidate)) {
+        continue;
+      }
+
+      if (testedLiveProxiesRef.current.has(candidate)) {
+        const known = testedLiveProxiesRef.current.get(candidate)!;
+        updateThreadLog(
+          threadId,
+          'success',
+          `✔ Proxy "${candidate}" hoạt động (IP: ${known.ip || 'Live'})`,
+          'Check Proxy'
+        );
+        return candidate;
+      }
+
+      updateThreadLog(
+        threadId,
+        'info',
+        `🔍 Đang kiểm tra kết nối Proxy: "${candidate}"...`,
+        'Check Proxy'
+      );
+
+      try {
+        const testRes = await (window as any).electronAPI?.checkIp?.({
+          proxy: candidate,
+          timeoutMs: 4000,
+        });
+
+        if (testRes && testRes.success) {
+          testedLiveProxiesRef.current.set(candidate, { ip: testRes.ip, country: testRes.country });
+          updateThreadLog(
+            threadId,
+            'success',
+            `✔ Proxy "${candidate}" HOẠT ĐỘNG TỐT (IP: ${testRes.ip}${testRes.country ? ' • ' + testRes.country : ''})`,
+            'Check Proxy'
+          );
+          return candidate;
+        } else {
+          testedDeadProxiesRef.current.add(candidate);
+          updateThreadLog(
+            threadId,
+            'info',
+            `⚠️ Proxy "${candidate}" KHÔNG hoạt động (${testRes?.error || 'Timeout'}) -> Bỏ qua, thử proxy tiếp theo...`,
+            'Check Proxy'
+          );
+        }
+      } catch (e: any) {
+        testedDeadProxiesRef.current.add(candidate);
+        updateThreadLog(
+          threadId,
+          'info',
+          `⚠️ Proxy "${candidate}" lỗi kết nối (${e.message}) -> Bỏ qua, thử tiếp...`,
+          'Check Proxy'
+        );
+      }
+    }
+
+    return null;
+  };
+
+  // Kiểm tra toàn bộ Proxy trong ô nhập
+  const testAllProxies = async () => {
+    const list = (proxyListText || '')
+      .split('\n')
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (list.length === 0) {
+      setProxyTestStatusText('⚠️ Danh sách Proxy đang trống!');
+      return;
+    }
+    setIsTestingProxies(true);
+    setProxyTestStatusText(`⏳ Đang kiểm tra ${list.length} proxy...`);
+    let liveCount = 0;
+    let deadCount = 0;
+    for (let i = 0; i < list.length; i++) {
+      const p = list[i];
+      setProxyTestStatusText(`⏳ Đang kiểm tra [${i + 1}/${list.length}]: ${p}...`);
+      try {
+        const res = await (window as any).electronAPI?.checkIp?.({ proxy: p, timeoutMs: 3500 });
+        if (res && res.success) {
+          liveCount++;
+          testedLiveProxiesRef.current.set(p, { ip: res.ip, country: res.country });
+        } else {
+          deadCount++;
+          testedDeadProxiesRef.current.add(p);
+        }
+      } catch {
+        deadCount++;
+        testedDeadProxiesRef.current.add(p);
+      }
+    }
+    setIsTestingProxies(false);
+    setProxyTestStatusText(`✔ ${liveCount} Hoạt động • ✕ ${deadCount} Lỗi/Không phản hồi`);
+  };
+
+  // Helper to build rotating proxy URL with randomized parameter (e.g. &region=bac) or placeholders
+  const buildRotatingProxyUrl = (
+    rawUrl: string,
+    randomValuesStr: string,
+    paramName: string = 'region'
+  ): { targetUrl: string; pickedValue?: string } => {
+    let url = (rawUrl || '').trim();
+    if (!url) return { targetUrl: '' };
+
+    const effectiveParam = (paramName || 'region').trim();
+
+    // 1. Parse random values list (comma or newline separated)
+    const values = (randomValuesStr || '')
+      .split(/[,\r\n]+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    let picked: string | undefined = undefined;
+    if (values.length > 0) {
+      picked = values[Math.floor(Math.random() * values.length)];
+    }
+
+    // 2. Inline spintax replacement in URL: e.g. {bac|trung|nam|random}
+    url = url.replace(/\{([^{}]+)\|([^{}]+)\}/g, (match) => {
+      const parts = match.slice(1, -1).split('|').map((s) => s.trim()).filter(Boolean);
+      return parts.length > 0 ? parts[Math.floor(Math.random() * parts.length)] : match;
+    });
+
+    if (picked) {
+      // 3. Replace placeholder {region}, {random}, {val}
+      const phRegex = new RegExp(`\\{(${effectiveParam}|random|val|region)\\}`, 'gi');
+      if (phRegex.test(url)) {
+        url = url.replace(phRegex, encodeURIComponent(picked));
+      } else {
+        // 4. If URL already has paramName in query string, e.g. region=bac
+        const pRegex = new RegExp(`([?&]${effectiveParam}=)([^&#]*)`, 'i');
+        if (pRegex.test(url)) {
+          url = url.replace(pRegex, `$1${encodeURIComponent(picked)}`);
+        } else if (effectiveParam) {
+          // 5. Append paramName=picked to URL
+          const sep = url.includes('?') ? '&' : '?';
+          url = `${url}${sep}${encodeURIComponent(effectiveParam)}=${encodeURIComponent(picked)}`;
+        }
+      }
+    }
+
+    return { targetUrl: url, pickedValue: picked };
+  };
+
+  const getNestedValue = (obj: any, path: string): any => {
+    if (!obj || !path) return undefined;
+    const parts = path.replace(/\[(\d+)\]/g, '.$1').split('.');
+    let curr = obj;
+    for (const p of parts) {
+      const key = p.trim();
+      if (!key) continue;
+      if (curr === null || curr === undefined) return undefined;
+      curr = curr[key];
+    }
+    return curr;
+  };
+
+  const extractProxyFromJson = (
+    json: any,
+    pathPattern: string = 'data.http'
+  ): { proxy: string; ttc?: number; location?: string; message?: string } => {
+    if (!json || typeof json !== 'object') {
+      return { proxy: '' };
+    }
+
+    let foundProxy = '';
+    const cleanPattern = (pathPattern || '').trim();
+
+    // 1. Support combined paths, e.g. "data.host:data.httpPort" or "data.ip:data.port"
+    if (cleanPattern.includes(':') && !cleanPattern.startsWith('http')) {
+      const subPaths = cleanPattern.split(':').map((s) => s.trim()).filter(Boolean);
+      if (subPaths.length === 2) {
+        const hostVal = getNestedValue(json, subPaths[0]);
+        const portVal = getNestedValue(json, subPaths[1]);
+        if (hostVal && portVal) {
+          foundProxy = `${String(hostVal).trim()}:${String(portVal).trim()}`;
+        }
+      }
+    }
+
+    // 2. Direct single path (e.g. "data.http" or "data.socks5" or "proxy")
+    if (!foundProxy && cleanPattern) {
+      const val = getNestedValue(json, cleanPattern);
+      if (typeof val === 'string' || typeof val === 'number') {
+        foundProxy = String(val).trim();
+      }
+    }
+
+    // 3. Fallbacks if user path didn't match
+    if (!foundProxy) {
+      const fallbacks = [
+        'data.http',
+        'data.proxy',
+        'data.socks5',
+        'http',
+        'proxy',
+        'socks5',
+        'result.http',
+        'result.proxy',
+      ];
+      for (const fb of fallbacks) {
+        const val = getNestedValue(json, fb);
+        if (typeof val === 'string' && val.trim()) {
+          foundProxy = val.trim();
+          break;
+        }
+      }
+    }
+
+    // 4. Regex scan for IP:PORT in the raw JSON string if still not found
+    if (!foundProxy) {
+      const jsonStr = JSON.stringify(json);
+      const ipPortMatch = jsonStr.match(/\b(?:\d{1,3}\.){3}\d{1,3}:\d{2,5}\b/);
+      if (ipPortMatch) {
+        foundProxy = ipPortMatch[0];
+      }
+    }
+
+    // Clean formatting: strip http:// or socks5:// if present for standard GPM/SV Browser proxy format
+    if (foundProxy.startsWith('http://') || foundProxy.startsWith('https://')) {
+      foundProxy = foundProxy.replace(/^https?:\/\//i, '');
+    }
+
+    // Extract ttc (time to change in seconds), location, and message if available
+    const ttc = json?.data?.ttc ?? json?.ttc ?? json?.data?.next_change ?? undefined;
+    const location = json?.data?.location ?? json?.location ?? undefined;
+    const message = json?.message || json?.error || json?.status || undefined;
+
+    return {
+      proxy: foundProxy,
+      ttc: typeof ttc === 'number' ? ttc : parseInt(String(ttc), 10) || undefined,
+      location: typeof location === 'string' ? location : undefined,
+      message: typeof message === 'string' ? message : undefined,
+    };
+  };
+
+  const requestRotatingProxyApi = async (
+    targetUrl: string,
+    jsonPath: string
+  ): Promise<{
+    success: boolean;
+    proxy?: string;
+    rawText?: string;
+    rawJson?: any;
+    error?: string;
+    ttc?: number;
+    location?: string;
+  }> => {
+    try {
+      let respText = '';
+      if ((window as any).electronAPI?.fileAction) {
+        const res = await (window as any).electronAPI.fileAction({
+          action: 'httpRequest',
+          payload: { url: targetUrl, method: 'GET', timeout: 30 },
+        });
+        if (res && res.success && res.data) {
+          respText = res.data;
+        } else {
+          return { success: false, error: res?.error || `HTTP ${res?.status || 'Error'}` };
+        }
+      } else {
+        const r = await fetch(targetUrl);
+        respText = await r.text();
+      }
+
+      let parsed: any = null;
+      try {
+        parsed = JSON.parse(respText);
+      } catch (e) {
+        return { success: false, error: 'Phản hồi từ API không phải JSON hợp lệ', rawText: respText };
+      }
+
+      const extracted = extractProxyFromJson(parsed, jsonPath);
+
+      // Check if API reported failure (e.g. success: false in KiotProxy or code 40400006)
+      if (parsed?.success === false || parsed?.status === 'FAIL') {
+        return {
+          success: false,
+          error: extracted.message || parsed?.message || parsed?.error || 'API trả về trạng thái thất bại',
+          rawJson: parsed,
+          rawText: respText,
+          ttc: extracted.ttc,
+        };
+      }
+
+      if (!extracted.proxy) {
+        return {
+          success: false,
+          error: `Không tìm thấy địa chỉ Proxy tại JSON Path "${jsonPath}".`,
+          rawJson: parsed,
+          rawText: respText,
+          ttc: extracted.ttc,
+        };
+      }
+
+      return {
+        success: true,
+        proxy: extracted.proxy,
+        ttc: extracted.ttc,
+        location: extracted.location,
+        rawJson: parsed,
+        rawText: respText,
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message || String(err) };
+    }
+  };
+
+  // Lấy danh sách các link API Proxy Xoay đã nạp
+  const getRotatingApiUrlsList = (): string[] => {
+    const raw = (rotatingProxyApiUrlsText || rotatingProxyApiUrl || '').trim();
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => Boolean(line) && !line.startsWith('#') && !line.startsWith('//'));
+  };
+
+  // Tính số luồng chạy trên mỗi Proxy
+  const getEffectiveThreadsPerProxy = (totalThreads?: number): number => {
+    const tThreads = totalThreads !== undefined ? totalThreads : numThreads;
+    const apis = getRotatingApiUrlsList();
+    if (apis.length <= 1) return tThreads;
+    if (rotatingProxyAutoDivideThreads || !rotatingProxyThreadsPerProxy || rotatingProxyThreadsPerProxy <= 0) {
+      return Math.max(1, Math.ceil(tThreads / apis.length));
+    }
+    return Math.max(1, rotatingProxyThreadsPerProxy);
+  };
+
+  const handleTestRotatingProxy = async () => {
+    const apis = getRotatingApiUrlsList();
+    if (apis.length === 0) {
+      setRotatingProxyTestResult({
+        success: false,
+        message: 'Vui lòng nhập ít nhất 1 URL API Proxy Xoay trước khi kiểm tra!',
+      });
+      setRotatingProxyTestResults([]);
+      return;
+    }
+
+    setIsTestingRotatingProxy(true);
+    setRotatingProxyTestResult(null);
+    setRotatingProxyTestResults([]);
+
+    const results: Array<{
+      slotIndex: number;
+      success: boolean;
+      proxy?: string;
+      message?: string;
+      targetUrl?: string;
+      pickedValue?: string;
+      ttc?: number;
+      location?: string;
+    }> = [];
+
+    for (let i = 0; i < apis.length; i++) {
+      const rawUrl = apis[i];
+      const { targetUrl, pickedValue } = buildRotatingProxyUrl(
+        rawUrl,
+        rotatingProxyRandomRegions,
+        rotatingProxyRandomParamName || 'region'
+      );
+
+      const res = await requestRotatingProxyApi(targetUrl, rotatingProxyJsonPath || 'data.http');
+      results.push({
+        slotIndex: i,
+        success: res.success,
+        proxy: res.proxy,
+        message: res.error,
+        targetUrl,
+        pickedValue,
+        ttc: res.ttc,
+        location: res.location,
+      });
+    }
+
+    setIsTestingRotatingProxy(false);
+    setRotatingProxyTestResults(results);
+    if (results.length > 0) {
+      setRotatingProxyTestResult(results[0]);
+    }
+  };
+
+  const obtainNewRotatingProxyForSlot = async (
+    slotIdx: number,
+    targetApiUrl: string,
+    totalSlots: number,
+    batchNumber: number,
+    totalBatches: number,
+    logTargetThreadId?: number
+  ): Promise<string> => {
+    const rawUrl = (targetApiUrl || '').trim();
+    if (!rawUrl) {
+      throw new Error(`Chưa điền URL API cho Proxy #${slotIdx + 1}!`);
+    }
+
+    const slotLabel = totalSlots > 1 ? `Proxy #${slotIdx + 1}` : 'Proxy Xoay';
+    const maxRetries = 12;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (stopSignalRef.current) throw new Error('Đã nhận lệnh dừng!');
+
+      const { targetUrl, pickedValue } = buildRotatingProxyUrl(
+        rawUrl,
+        rotatingProxyRandomRegions,
+        rotatingProxyRandomParamName || 'region'
+      );
+
+      const logMsg = `🔄 Đợt ${batchNumber}/${totalBatches} [${slotLabel}]: Đang gọi API lấy Proxy mới${pickedValue ? ` (Vùng: ${pickedValue})` : ''}...`;
+      if (logTargetThreadId !== undefined) {
+        updateThreadLog(logTargetThreadId, 'info', logMsg, 'Get Rotating Proxy');
+      }
+
+      const res = await requestRotatingProxyApi(targetUrl, rotatingProxyJsonPath || 'data.http');
+
+      if (res.success && res.proxy) {
+        lastObtainedProxyBySlotRef.current[slotIdx] = res.proxy;
+        const successMsg = `✔ Đã nhận [${slotLabel}] mới: "${res.proxy}"${res.location ? ` (${res.location})` : ''}${res.ttc !== undefined ? ` • Lượt đổi kế tiếp sau ${res.ttc}s` : ''}`;
+        if (logTargetThreadId !== undefined) {
+          updateThreadLog(logTargetThreadId, 'success', successMsg, 'Get Rotating Proxy');
+        }
+        return res.proxy;
+      }
+
+      // Nếu chưa đến thời gian đổi IP (đang trong cooldown) và có bật tính năng tự động dùng tiếp Proxy hiện tại:
+      const lastProxy = lastObtainedProxyBySlotRef.current[slotIdx];
+      if (rotatingProxyReuseIfCooldown && lastProxy) {
+        const cooldownMsg = `⚡ [${slotLabel}] Chưa đến thời gian đổi IP mới${res.ttc ? ` (còn ${res.ttc}s)` : ''}: Tự động dùng tiếp Proxy hiện tại "${lastProxy}" để chạy tiếp ngay lập tức mà không phải chờ!`;
+        if (logTargetThreadId !== undefined) {
+          updateThreadLog(logTargetThreadId, 'info', cooldownMsg, 'Tái sử dụng Proxy');
+        }
+        return lastProxy;
+      }
+
+      // Check cooldown wait if ttc is provided
+      const waitSeconds = res.ttc && res.ttc > 0 ? res.ttc : 10;
+      const errMsg = res.error || 'Lỗi không xác định';
+
+      if (attempt < maxRetries) {
+        const warnMsg = `⏳ API [${slotLabel}] thông báo: "${errMsg}". Cần chờ ${waitSeconds}s trước khi thử lại [Lần ${attempt}/${maxRetries}]...`;
+        if (logTargetThreadId !== undefined) {
+          updateThreadLog(logTargetThreadId, 'info', warnMsg, 'Waiting Cooldown');
+        }
+
+        // Countdown second by second
+        for (let s = waitSeconds; s > 0; s--) {
+          if (stopSignalRef.current) throw new Error('Đã nhận lệnh dừng!');
+          if (s % 5 === 0 || s <= 3) {
+            if (logTargetThreadId !== undefined) {
+              updateThreadLog(logTargetThreadId, 'info', `⏳ [${slotLabel}] Đếm ngược chờ đổi IP: còn ${s}s...`, `Chờ ${s}s`);
+            }
+          }
+          await sleep(1000);
+        }
+      } else {
+        throw new Error(`✕ Thất bại khi lấy [${slotLabel}] sau ${maxRetries} lần thử: ${errMsg}`);
+      }
+    }
+
+    throw new Error(`Không thể lấy Proxy mới cho ${slotLabel}.`);
+  };
+
+  const obtainNewRotatingProxyForBatch = async (
+    batchNumber: number,
+    totalBatches: number,
+    logTargetThreadId?: number
+  ): Promise<string> => {
+    const apis = getRotatingApiUrlsList();
+    const firstUrl = apis[0] || rotatingProxyApiUrl || '';
+    return obtainNewRotatingProxyForSlot(0, firstUrl, 1, batchNumber, totalBatches, logTargetThreadId);
+  };
+
+  // SV Browser Update Profile Proxy API (POST http://localhost:8725/api/v1/profiles/update/{id})
+  const updateProfileProxyApi = async (profileId: string, rawProxy: string): Promise<boolean> => {
+    if (!profileId) return false;
+    const cleanProxy = (rawProxy || '').trim();
+    const bodyStr = JSON.stringify({ raw_proxy: cleanProxy });
+
+    const endpoints = [
+      `http://127.0.0.1:8725/api/v1/profiles/update/${profileId}`,
+      `http://localhost:8725/api/v1/profiles/update/${profileId}`,
+      `http://127.0.0.1:8725/api/v3/profiles/update/${profileId}`,
+      `http://localhost:8725/api/v3/profiles/update/${profileId}`,
+      `http://127.0.0.1:8725/api/v1/profiles/${profileId}`,
+      `http://localhost:8725/api/v1/profiles/${profileId}`,
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const resp = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: bodyStr,
+        });
+        if (resp.ok) {
+          const resJson = await resp.json().catch(() => null);
+          if (resJson && resJson.success !== false) {
+            return true;
+          }
+        }
+      } catch (e) {
+        if ((window as any).electronAPI?.fileAction) {
+          try {
+            const res = await (window as any).electronAPI.fileAction({
+              action: 'httpRequest',
+              payload: {
+                url: ep,
+                method: 'POST',
+                headers: 'Content-Type: application/json',
+                data: bodyStr,
+                timeout: 10,
+              },
+            });
+            if (res && res.success) {
+              const resJson = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+              if (resJson && resJson.success !== false) {
+                return true;
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+    return false;
+  };
+
+  // Render Proxy Configuration Block (Dùng chung cho cả Step 2 Session tab & Step 3 Profile selection)
+  const renderProxyConfigBlock = (titleText: string = 'Cấu hình Mạng & Proxy (Áp dụng cho tất cả Profile)') => {
+    return (
+      <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-4 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-[#e2e8f0] dark:border-[#1e293b]">
+          <div className="flex items-center space-x-2">
+            <div className="w-6 h-6 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold text-xs">
+              🌐
+            </div>
+            <div>
+              <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                {titleText}
+              </span>
+              <p className="text-[10px] text-[#64748b] dark:text-[#94a3b8]">
+                Áp dụng cho tất cả profile: Profile có sẵn sẽ tự update qua API trước khi mở, Profile tạo mới sẽ gán trực tiếp.
+              </p>
+            </div>
+          </div>
+
+          {/* Mode Switcher Tabs */}
+          <div className="flex items-center space-x-1 p-0.5 bg-slate-100 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg">
+            <button
+              type="button"
+              onClick={() => {
+                setProxyMode('static');
+                setProxyListText('');
+                saveConfigForCurrentProject({ proxyMode: 'static', proxyListText: '' });
+              }}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                proxyMode === 'static' && !(proxyListText || '').trim()
+                  ? 'bg-white dark:bg-[#1e293b] text-[#1677ff] dark:text-blue-400 shadow-2xs'
+                  : 'text-[#64748b] hover:text-[#1e293b] dark:hover:text-[#f1f5f9]'
+              }`}
+            >
+              ⚡ Theo Profile gốc
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProxyMode('static');
+                saveConfigForCurrentProject({ proxyMode: 'static' });
+              }}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer ${
+                proxyMode === 'static' && (proxyListText || '').trim()
+                  ? 'bg-white dark:bg-[#1e293b] text-[#1677ff] dark:text-blue-400 shadow-2xs'
+                  : 'text-[#64748b] hover:text-[#1e293b] dark:hover:text-[#f1f5f9]'
+              }`}
+            >
+              📋 Proxy Tĩnh (Danh sách)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setProxyMode('rotating');
+                saveConfigForCurrentProject({ proxyMode: 'rotating' });
+              }}
+              className={`px-2.5 py-1 text-[11px] font-semibold rounded-md transition-all cursor-pointer flex items-center space-x-1 ${
+                proxyMode === 'rotating'
+                  ? 'bg-blue-600 text-white shadow-2xs'
+                  : 'text-[#64748b] hover:text-[#1e293b] dark:hover:text-[#f1f5f9]'
+              }`}
+            >
+              <RotateCcw className={`w-3 h-3 ${proxyMode === 'rotating' ? 'animate-spin text-white' : 'text-[#1677ff] dark:text-blue-400'}`} />
+              <span>Proxy Xoay (API đổi IP)</span>
+            </button>
+          </div>
+        </div>
+
+        {proxyMode === 'static' && !(proxyListText || '').trim() ? (
+          <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 text-xs text-[#475569] dark:text-[#94a3b8] flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <span className="text-base">🛡</span>
+              <span>Đang dùng mạng mặc định: Sử dụng Proxy có sẵn của từng profile trong SV Browser hoặc mạng trực tiếp của máy.</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                setProxyMode('rotating');
+                saveConfigForCurrentProject({ proxyMode: 'rotating' });
+              }}
+              className="text-xs text-blue-600 dark:text-blue-400 font-semibold hover:underline cursor-pointer ml-2 whitespace-nowrap"
+            >
+              Bật Proxy Xoay API →
+            </button>
+          </div>
+        ) : proxyMode === 'static' ? (
+          <div className="space-y-2.5">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-semibold text-[#475569] dark:text-[#cbd5e1]">
+                  Dán danh sách Proxy tại đây (Mỗi dòng 1 proxy):
+                </label>
+                <span className="text-[10px] text-[#94a3b8]">
+                  {(proxyListText || '').split('\n').filter((p) => p.trim()).length} proxy đã nạp
+                </span>
+              </div>
+              <textarea
+                rows={4}
+                value={proxyListText}
+                onChange={(e) => {
+                  setProxyListText(e.target.value);
+                  saveConfigForCurrentProject({ proxyListText: e.target.value });
+                }}
+                placeholder="Ví dụ:&#10;103.152.118.23:8080&#10;103.152.118.24:8080:user:pass&#10;socks5://127.0.0.1:1080"
+                className="w-full font-mono text-xs p-2.5 bg-slate-50 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] resize-y"
+              />
+            </div>
+
+            {/* Checkbox Kiểm tra proxy trước khi tạo */}
+            <label className="flex items-start space-x-2.5 p-2.5 rounded-lg border border-[#e2e8f0] dark:border-[#1e293b] bg-emerald-50/30 dark:bg-emerald-950/10 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={checkProxyBeforeCreate}
+                onChange={(e) => {
+                  setCheckProxyBeforeCreate(e.target.checked);
+                  saveConfigForCurrentProject({ checkProxyBeforeCreate: e.target.checked });
+                }}
+                className="mt-0.5 rounded text-[#1677ff] cursor-pointer"
+              />
+              <div className="text-xs">
+                <div className="font-bold text-[#1e293b] dark:text-[#f1f5f9]">
+                  Kiểm tra Proxy hoạt động trước khi chạy/mở Profile
+                </div>
+                <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                  Nếu proxy không kết nối được hoặc bị lỗi, hệ thống sẽ bỏ qua và gán proxy tiếp theo.
+                </div>
+              </div>
+            </label>
+
+            {/* Nút Test toàn bộ Proxy */}
+            <div className="flex items-center justify-between pt-1">
+              <button
+                type="button"
+                onClick={testAllProxies}
+                disabled={isTestingProxies || !(proxyListText || '').trim()}
+                className="px-3 py-1.5 rounded-lg bg-white dark:bg-[#0f172a] border border-[#cbd5e1] dark:border-[#334155] hover:border-[#1677ff] text-xs font-semibold text-[#1e293b] dark:text-[#f1f5f9] flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs transition-colors"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingProxies ? 'animate-spin text-[#1677ff]' : ''}`} />
+                <span>{isTestingProxies ? 'Đang kiểm tra...' : 'Kiểm tra toàn bộ Proxy ngay'}</span>
+              </button>
+
+              {proxyTestStatusText && (
+                <span className="text-xs font-medium text-[#475569] dark:text-[#cbd5e1]">
+                  {proxyTestStatusText}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          /* Chế độ PROXY XOAY (API Dynamic / Rotating Proxy) */
+          <div className="space-y-3">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-[#1e293b] dark:text-[#f1f5f9] flex items-center space-x-1.5">
+                  <Zap className="w-3.5 h-3.5 text-amber-500 fill-amber-500" />
+                  <span>Danh sách URL API Proxy Xoay (Mỗi dòng 1 link API):</span>
+                </label>
+                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold">
+                  {getRotatingApiUrlsList().length} link API đã nạp
+                </span>
+              </div>
+              <textarea
+                rows={3}
+                value={rotatingProxyApiUrlsText || rotatingProxyApiUrl}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setRotatingProxyApiUrlsText(val);
+                  const firstLine = val.split('\n').map((l) => l.trim()).filter(Boolean)[0] || '';
+                  setRotatingProxyApiUrl(firstLine);
+                  saveConfigForCurrentProject({
+                    rotatingProxyApiUrlsText: val,
+                    rotatingProxyApiUrl: firstLine,
+                  });
+                }}
+                placeholder="Dán các URL API Proxy Xoay tại đây (Mỗi dòng 1 link API):&#10;https://api.kiotproxy.com/api/v1/proxies/new?key=Ke8d88b843020475d81faf2d79b75349a&region=bac&#10;https://api.kiotproxy.com/api/v1/proxies/new?key=K98ce716bbc89...&region=nam"
+                className="w-full font-mono text-xs px-3 py-2 bg-slate-50 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] resize-y"
+              />
+            </div>
+
+            {/* Phân bổ Luồng cho mỗi Proxy API */}
+            <div className="p-2.5 rounded-lg border border-indigo-200 dark:border-indigo-900/60 bg-indigo-50/40 dark:bg-indigo-950/20 space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="flex items-center space-x-2 cursor-pointer font-bold text-xs text-indigo-900 dark:text-indigo-200">
+                  <input
+                    type="checkbox"
+                    checked={rotatingProxyAutoDivideThreads}
+                    onChange={(e) => {
+                      setRotatingProxyAutoDivideThreads(e.target.checked);
+                      saveConfigForCurrentProject({ rotatingProxyAutoDivideThreads: e.target.checked });
+                    }}
+                    className="rounded text-[#1677ff] cursor-pointer"
+                  />
+                  <span>⚡ Tự động chia đều luồng theo số lượng Proxy (Khuyên dùng)</span>
+                </label>
+
+                {!rotatingProxyAutoDivideThreads && (
+                  <div className="flex items-center space-x-2">
+                    <span className="text-xs font-semibold text-[#475569] dark:text-[#cbd5e1]">
+                      Số luồng / 1 Proxy:
+                    </span>
+                    <input
+                      type="number"
+                      min={1}
+                      max={50}
+                      value={rotatingProxyThreadsPerProxy || getEffectiveThreadsPerProxy()}
+                      onChange={(e) => {
+                        const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                        setRotatingProxyThreadsPerProxy(val);
+                        saveConfigForCurrentProject({ rotatingProxyThreadsPerProxy: val });
+                      }}
+                      className="w-16 px-2 py-0.5 text-xs text-center font-bold bg-white dark:bg-[#0a0f1d] border border-indigo-300 dark:border-indigo-700 rounded text-indigo-700 dark:text-indigo-300"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Breakdown tóm tắt phân bổ luồng */}
+              <div className="text-[11px] text-indigo-800 dark:text-indigo-300 bg-white/70 dark:bg-black/20 p-2 rounded border border-indigo-100 dark:border-indigo-950 flex flex-wrap items-center gap-x-4 gap-y-1">
+                <span>
+                  Tổng <strong>{numThreads} luồng</strong> chạy đồng thời với <strong>{Math.max(1, getRotatingApiUrlsList().length)} Proxy API</strong>:
+                </span>
+                <span className="font-semibold text-emerald-700 dark:text-emerald-300">
+                  👉 Mỗi Proxy chạy {getEffectiveThreadsPerProxy()} luồng cùng lúc
+                </span>
+                {getRotatingApiUrlsList().length > 1 && (
+                  <span className="text-[10px] text-[#64748b] dark:text-[#94a3b8] block w-full mt-0.5">
+                    Phân bổ: {getRotatingApiUrlsList().map((_, idx) => {
+                      const startL = idx * getEffectiveThreadsPerProxy() + 1;
+                      const endL = Math.min(numThreads, (idx + 1) * getEffectiveThreadsPerProxy());
+                      return `Proxy #${idx + 1} (Luồng ${startL} → ${endL})`;
+                    }).join(' • ')}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {/* Tùy chọn Tự động dùng tiếp Proxy hiện tại khi chưa đến giờ đổi IP */}
+            <label className="flex items-start space-x-2.5 p-2.5 rounded-lg border border-amber-200 dark:border-amber-900/60 bg-amber-50/50 dark:bg-amber-950/20 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={rotatingProxyReuseIfCooldown}
+                onChange={(e) => {
+                  setRotatingProxyReuseIfCooldown(e.target.checked);
+                  saveConfigForCurrentProject({ rotatingProxyReuseIfCooldown: e.target.checked });
+                }}
+                className="mt-0.5 rounded text-[#1677ff] cursor-pointer"
+              />
+              <div className="text-xs">
+                <div className="font-bold text-amber-900 dark:text-amber-200 flex items-center space-x-1.5">
+                  <span>⚡ Tự động dùng tiếp Proxy hiện tại nếu chưa đến giờ đổi IP (Khuyên dùng)</span>
+                </div>
+                <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] leading-relaxed">
+                  Nếu các luồng chạy xong nhanh mà API Proxy chưa cho phép đổi IP mới (do nhà mạng quy định thời gian chờ giữa 2 lần đổi), hệ thống sẽ <strong>tiếp tục dùng ngay Proxy hiện tại để chạy tiếp không phải dừng chờ</strong>. Nếu tắt tùy chọn này, hệ thống sẽ đếm ngược dừng chờ cho đến khi nhà mạng cho đổi IP mới.
+                </div>
+              </div>
+            </label>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+              {/* Trường JSON Path */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#475569] dark:text-[#cbd5e1]">
+                  Trích xuất Proxy từ JSON (JSON Path):
+                </label>
+                <input
+                  type="text"
+                  value={rotatingProxyJsonPath}
+                  onChange={(e) => {
+                    const val = e.target.value.trim();
+                    setRotatingProxyJsonPath(val);
+                    saveConfigForCurrentProject({ rotatingProxyJsonPath: val });
+                  }}
+                  placeholder="data.http (hoặc data.host:data.httpPort)"
+                  className="w-full font-mono text-xs px-2.5 py-1.5 bg-slate-50 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                />
+                <div className="flex flex-wrap items-center gap-1 pt-0.5">
+                  <span className="text-[10px] text-[#94a3b8]">Gợi ý:</span>
+                  {['data.http', 'data.socks5', 'data.proxy', 'data.host:data.httpPort'].map((p) => (
+                    <button
+                      key={p}
+                      type="button"
+                      onClick={() => {
+                        setRotatingProxyJsonPath(p);
+                        saveConfigForCurrentProject({ rotatingProxyJsonPath: p });
+                      }}
+                      className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[#475569] dark:text-[#cbd5e1] cursor-pointer"
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Trường Random Tham số */}
+              <div className="space-y-1">
+                <label className="text-xs font-semibold text-[#475569] dark:text-[#cbd5e1]">
+                  Giá trị Random tham số (ví dụ &amp;region=...):
+                </label>
+                <input
+                  type="text"
+                  value={rotatingProxyRandomRegions}
+                  onChange={(e) => {
+                    setRotatingProxyRandomRegions(e.target.value);
+                    saveConfigForCurrentProject({ rotatingProxyRandomRegions: e.target.value });
+                  }}
+                  placeholder="bac, trung, nam, random"
+                  className="w-full font-mono text-xs px-2.5 py-1.5 bg-slate-50 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                />
+                <p className="text-[10px] text-[#64748b] dark:text-[#94a3b8] leading-tight">
+                  Bốc ngẫu nhiên 1 giá trị mỗi đợt và tự thay thế vào param <code>region=...</code> hoặc placeholder <code>{'{region}'}</code> trên URL.
+                </p>
+              </div>
+            </div>
+
+            {/* Thông tin cơ chế đợt luồng & update profile */}
+            <div className="p-2.5 rounded-lg border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 text-xs text-[#1e293b] dark:text-[#cbd5e1] space-y-1">
+              <div className="font-bold text-blue-700 dark:text-blue-400 flex items-center space-x-1.5">
+                <RotateCcw className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
+                <span>Cơ chế chạy theo Đợt ({numThreads} luồng/đợt) &amp; Tự động Cập nhật Profile:</span>
+              </div>
+              <p className="text-[11px] leading-relaxed text-[#475569] dark:text-[#94a3b8]">
+                Mỗi đợt hệ thống gọi các API lấy Proxy xoay tương ứng và gán cho các nhóm luồng (ví dụ: mỗi proxy chạy {getEffectiveThreadsPerProxy()} luồng cùng lúc). Đối với <strong>profile đã tạo từ trước</strong>, tự động gọi API <code>POST /api/v1/profiles/update/{'{id}'}</code> để cập nhật proxy và truyền <code>raw_proxy</code> khi mở; đối với <strong>profile tạo mới</strong> thì gán trực tiếp khi tạo. <strong>Cả {numThreads} luồng cùng chạy trong đợt đó</strong>. Đợi xong hết {numThreads} luồng mới get lại Proxy cho đợt tiếp theo.
+              </p>
+            </div>
+
+            {/* Nút Test API Proxy Xoay & Hiển thị kết quả */}
+            <div className="space-y-2 pt-1 border-t border-[#e2e8f0] dark:border-[#1e293b]">
+              <div className="flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={handleTestRotatingProxy}
+                  disabled={isTestingRotatingProxy || getRotatingApiUrlsList().length === 0}
+                  className="px-3 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold flex items-center space-x-1.5 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed shadow-2xs transition-colors"
+                >
+                  <Zap className={`w-3.5 h-3.5 ${isTestingRotatingProxy ? 'animate-bounce' : 'fill-current'}`} />
+                  <span>{isTestingRotatingProxy ? `Đang test ${getRotatingApiUrlsList().length} link API...` : `Test toàn bộ (${getRotatingApiUrlsList().length}) API Proxy Xoay ngay`}</span>
+                </button>
+
+                {rotatingProxyTestResults.length > 0 && (
+                  <span className={`text-xs font-bold ${rotatingProxyTestResults.every((r) => r.success) ? 'text-emerald-600 dark:text-emerald-400' : 'text-amber-600 dark:text-amber-400'}`}>
+                    {rotatingProxyTestResults.every((r) => r.success)
+                      ? `✔ Thành công ${rotatingProxyTestResults.length}/${rotatingProxyTestResults.length} API`
+                      : `⚠ Có API gặp lỗi (${rotatingProxyTestResults.filter((r) => r.success).length}/${rotatingProxyTestResults.length} OK)`}
+                  </span>
+                )}
+              </div>
+
+              {rotatingProxyTestResults.length > 0 && (
+                <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                  {rotatingProxyTestResults.map((r, idx) => (
+                    <div
+                      key={idx}
+                      className={`p-2 rounded-lg border text-xs space-y-1 ${
+                        r.success
+                          ? 'border-emerald-200 dark:border-emerald-900 bg-emerald-50/50 dark:bg-emerald-950/20'
+                          : 'border-rose-200 dark:border-rose-900 bg-rose-50/50 dark:bg-rose-950/20'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center space-x-2">
+                          <span className="font-bold text-xs">Proxy #{r.slotIndex + 1}:</span>
+                          {r.success ? (
+                            <span className="font-mono font-bold text-xs px-2 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900 text-emerald-900 dark:text-emerald-200">
+                              {r.proxy}
+                            </span>
+                          ) : (
+                            <span className="text-rose-600 dark:text-rose-400 font-medium">✕ Lỗi: {r.message}</span>
+                          )}
+                        </div>
+                        {r.location && <span className="text-[11px] text-[#64748b]">📍 {r.location}</span>}
+                      </div>
+                      {r.success && (
+                        <div className="text-[10px] text-[#64748b] dark:text-[#94a3b8] flex flex-wrap gap-x-3 gap-y-0.5">
+                          {r.pickedValue && <span>🎲 Vùng: <strong>{r.pickedValue}</strong></span>}
+                          {r.ttc !== undefined && <span>⏳ Lượt đổi tiếp: <strong>{r.ttc}s</strong></span>}
+                          <span className="truncate max-w-full font-mono opacity-80">URL: {r.targetUrl}</span>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // SV Browser Create Cloned Profile API (cùng tên profileName, proxy, trình duyệt/core, group, tags)
+  const createCloneProfileApi = async (
+    sourceProf: GpmProfile,
+    fallbackProxy?: string
+  ): Promise<{ id: string; storage_path?: string; src_storage_path?: string } | null> => {
+    if (!sourceProf) return null;
+
+    let fullProf = sourceProf;
+    try {
+      const pUrls = [
+        `http://127.0.0.1:8725/api/v1/profiles/${sourceProf.id}`,
+        `http://localhost:8725/api/v1/profiles/${sourceProf.id}`,
+        `http://127.0.0.1:8725/api/v3/profiles/${sourceProf.id}`,
+        `http://localhost:8725/api/v3/profiles/${sourceProf.id}`,
+      ];
+      for (const pUrl of pUrls) {
+        try {
+          const resp = await fetch(pUrl);
+          if (resp.ok) {
+            const json = await resp.json();
+            if (json?.data) {
+              fullProf = { ...sourceProf, ...json.data };
+              break;
+            }
+          }
+        } catch {}
+      }
+    } catch {}
+
+    const profileName = fullProf.name || sourceProf.name || 'New Profile';
+    const proxyVal = (
+      fallbackProxy ||
+      fullProf.raw_proxy ||
+      (fullProf as any).proxy ||
+      sourceProf.raw_proxy ||
+      (sourceProf as any).proxy ||
+      (sourceProf as any).profileProxy ||
+      ''
+    ).trim();
+    const bName = fullProf.browser?.name || sourceProf.browser?.name || 'chrome';
+    const bVer = fullProf.browser?.version || sourceProf.browser?.version || '154.0.8037.58';
+    const groupId = fullProf.group_id || sourceProf.group_id || 'all';
+    const groupName = fullProf.group_name || sourceProf.group_name || 'Default group';
+    const osVal = fullProf.os || sourceProf.os || 'windows';
+    const tagsVal = Array.isArray(fullProf.tags)
+      ? fullProf.tags
+      : Array.isArray(sourceProf.tags)
+      ? sourceProf.tags
+      : [];
+
+    const payload = {
+      profile_name: profileName,
+      name: profileName,
+      raw_proxy: proxyVal,
+      proxy: proxyVal,
+      group_id: groupId,
+      group_name: groupName,
+      browser_core: bName,
+      browser_name: bName,
+      browser_version: bVer,
+      browser: {
+        name: bName,
+        version: bVer,
+      },
+      os: osVal,
+      tags: tagsVal,
+    };
+
+    const endpoints = [
+      'http://127.0.0.1:8725/api/v1/profiles/create',
+      'http://localhost:8725/api/v1/profiles/create',
+      'http://127.0.0.1:8725/api/v3/profiles/create',
+      'http://localhost:8725/api/v3/profiles/create',
+      'http://localhost:9495/api/v1/profiles/create',
+    ];
+
+    for (const ep of endpoints) {
+      try {
+        const resp = await fetch(ep, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          const newId = json?.data?.id || json?.id;
+          if (newId) {
+            return {
+              id: String(newId),
+              storage_path: json?.data?.storage_path || json?.storage_path,
+              src_storage_path: fullProf.storage_path || sourceProf.storage_path || '',
+            };
+          }
+        }
+      } catch (e) {
+        if ((window as any).electronAPI?.fileAction) {
+          try {
+            const res = await (window as any).electronAPI.fileAction({
+              action: 'httpRequest',
+              payload: {
+                url: ep,
+                method: 'POST',
+                headers: 'Content-Type: application/json',
+                data: JSON.stringify(payload),
+              },
+            });
+            if (res && res.data) {
+              const parsed = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+              const newId = parsed?.data?.id || parsed?.id;
+              if (newId) {
+                return {
+                  id: String(newId),
+                  storage_path: parsed?.data?.storage_path || parsed?.storage_path,
+                  src_storage_path: fullProf.storage_path || sourceProf.storage_path || '',
+                };
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+    return null;
+  };
+
+  // SV Browser Permanent Delete Profile API (GET /api/v1/profiles/delete/{id}?mode=2)
+  const deleteProfileApi = async (profileId: string): Promise<boolean> => {
+    if (!profileId) return false;
+    const endpoints = [
+      `http://127.0.0.1:8725/api/v1/profiles/delete/${profileId}?mode=2`,
+      `http://localhost:8725/api/v1/profiles/delete/${profileId}?mode=2`,
+      `http://127.0.0.1:8725/api/v3/profiles/delete/${profileId}?mode=2`,
+      `http://localhost:8725/api/v3/profiles/delete/${profileId}?mode=2`,
+      `http://localhost:9495/api/v1/profiles/delete/${profileId}?mode=2`,
+      `http://127.0.0.1:8725/api/v1/profiles/delete/${profileId}`,
+      `http://localhost:8725/api/v1/profiles/delete/${profileId}`,
+    ];
+    for (const ep of endpoints) {
+      try {
+        const resp = await fetch(ep);
+        if (resp.ok) {
+          const json = await resp.json().catch(() => null);
+          if (json?.success !== false) {
+            return true;
+          }
+        }
+      } catch (e) {
+        if ((window as any).electronAPI?.fileAction) {
+          try {
+            const res = await (window as any).electronAPI.fileAction({
+              action: 'httpRequest',
+              payload: { url: ep, method: 'GET' },
+            });
+            if (res && res.data) {
+              const parsed = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+              if (parsed?.success !== false) {
+                return true;
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+    return false;
+  };
+
+  // Stop and permanently delete temporary profile cleanly
+  const stopAndDeleteTempProfile = async (
+    threadId: number,
+    tempProfileId: string,
+    tempProfileName: string,
+    tempStoragePath?: string
+  ) => {
+    if (!tempProfileId) return;
+    if (deletedTempProfileIdsRef.current.has(tempProfileId)) return;
+    deletedTempProfileIdsRef.current.add(tempProfileId);
+    activeTempProfilesRef.current.delete(tempProfileId);
+
+    updateThreadLog(
+      threadId,
+      'info',
+      `⏹ Đang dừng profile mới tạo "${tempProfileName}" (ID: ${tempProfileId})...`,
+      'Đóng Profile'
+    );
+    await stopProfileApi(tempProfileId);
+    await sleep(400);
+
+    updateThreadLog(
+      threadId,
+      'info',
+      `🗑 Đang xóa vĩnh viễn profile mới tạo "${tempProfileName}" (ID: ${tempProfileId})...`,
+      'Xóa Profile'
+    );
+    let deleted = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      const ok = await deleteProfileApi(tempProfileId);
+      if (ok) {
+        deleted = true;
+        break;
+      }
+      await sleep(500);
+    }
+
+    if (tempStoragePath && (window as any).electronAPI?.fileAction) {
+      try {
+        await (window as any).electronAPI.fileAction({
+          action: 'deleteFolder',
+          payload: { path: tempStoragePath },
+        });
+      } catch {}
+    }
+
+    if (deleted) {
+      updateThreadLog(
+        threadId,
+        'success',
+        `✔ Đã xóa vĩnh viễn profile mới tạo "${tempProfileName}" thành công.`
+      );
+    } else {
+      updateThreadLog(threadId, 'info', `ℹ Đã gửi lệnh xóa vĩnh viễn profile "${tempProfileName}".`);
     }
   };
 
@@ -1718,197 +3287,368 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           height: gridConfig.winHeight,
         };
 
-    // 3. Launch Profile via SV Browser API or Standalone Chrome
-    if (t.profileId) {
-      const isIncognitoMode = Boolean(hideWindowWhenDone);
-      const actionPath = isIncognitoMode ? 'start-incognito' : 'start';
+    let effectiveProfileId = t.profileId || '';
+    let effectiveProfileName = t.profileName || t.name;
+    let createdTempProfileId = '';
+    let createdTempStoragePath = '';
+    let effectiveProxy = (proxyMode === 'rotating' ? t.profileProxy : resolvedProfileProxy) || resolvedProfileProxy || '';
+
+    // 2.5. Tự tạo Profile mới tạm thời & tự xóa vĩnh viễn khi xong/lỗi/stop
+    if (autoGenProfilesMode || (autoCloneProfile && t.profileId)) {
+      let srcProf: GpmProfile = templateProfileInfo || profiles.find((p) => String(p.id) === String(t.profileId || templateProfileUid)) || {
+        id: String(t.profileId || templateProfileUid || '80c3e196-40a3-42bb-8a62-4cfdab1340c4'),
+        name: t.profileName || t.name || 'New profile 048',
+        browser: { name: 'chrome', version: '153.0.8010.53' },
+      };
+      effectiveProxy = (proxyMode === 'rotating' ? t.profileProxy : resolvedProfileProxy) || resolvedProfileProxy || '';
+
+      if (autoGenProfilesMode) {
+        // Lấy Profile Mẫu theo UID
+        const fetchedProf = await getFullProfileByUid(templateProfileUid);
+        if (fetchedProf) {
+          srcProf = fetchedProf;
+        }
+
+        // Cấp phát & kiểm tra Proxy từ danh sách hoặc Proxy Xoay
+        if (proxyMode === 'rotating') {
+          // Ở chế độ Proxy Xoay, proxy đã được lấy từ API và gán vào t.profileProxy ở đầu đợt (batch)
+          effectiveProxy = t.profileProxy || resolvedProfileProxy;
+          if (effectiveProxy) {
+            updateThreadLog(
+              threadId,
+              'success',
+              `✔ Sử dụng Proxy Xoay cho Profile: "${effectiveProxy}"`,
+              'Rotating Proxy'
+            );
+          } else {
+            updateThreadLog(
+              threadId,
+              'error',
+              `✕ Không nhận được Proxy Xoay hợp lệ cho Worker #${threadId}! HỦY sinh Profile mới.`,
+              'Proxy Error'
+            );
+            setThreadStatus(threadId, 'error');
+            return;
+          }
+        } else {
+          const proxyLines = (proxyListText || '')
+            .split('\n')
+            .map((p) => p.trim())
+            .filter(Boolean);
+
+          if (proxyLines.length > 0) {
+            updateThreadLog(threadId, 'info', `🔍 Đang cấp phát và kiểm tra Proxy từ danh sách...`, 'Check Proxy');
+            const liveProxy = await getNextLiveProxy(threadId, proxyLines, checkProxyBeforeCreate);
+            if (!liveProxy && checkProxyBeforeCreate) {
+              updateThreadLog(
+                threadId,
+                'error',
+                `✕ Không còn Proxy nào hoạt động trong danh sách! HỦY sinh Profile mới cho Worker #${threadId}.`,
+                'Proxy Dead'
+              );
+              setThreadStatus(threadId, 'error');
+              return; // DỪNG: Không sinh profile mới nếu proxy chết!
+            }
+            effectiveProxy = liveProxy || '';
+          }
+        }
+      } else {
+        // Mode clone từ profile thủ công đã chọn
+        const found = profiles.find((p) => String(p.id) === String(t.profileId));
+        if (found) {
+          srcProf = found;
+        }
+        if (proxyMode === 'rotating' && t.profileProxy) {
+          effectiveProxy = t.profileProxy;
+        }
+      }
+
+      effectiveProfileName = srcProf.name || t.profileName || 'New profile';
+
       updateThreadLog(
         threadId,
         'info',
-        `🚀 Opening SV Browser profile ${isIncognitoMode ? '(Incognito / Ẩn danh)' : ''} "${t.profileName}" (Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
-        'Open Profile'
+        `✨ Tự động tạo Profile mới từ mẫu "${srcProf.name}" (Proxy: "${effectiveProxy || 'Direct'}", Core: ${srcProf.browser?.name || 'chrome'} ${srcProf.browser?.version || ''})...`,
+        'Tạo Profile mới'
       );
-      try {
-        let launchRes: any = null;
-        const scaleVal = (windowScale / 100).toFixed(2);
-        const queryParams = `win_pos=${pos.x},${pos.y}&window_pos=${pos.x},${pos.y}&win_position=${pos.x},${pos.y}&window_position=${pos.x},${pos.y}&win_size=${pos.width},${pos.height}&window_size=${pos.width},${pos.height}&window_scale=${scaleVal}&win_scale=${scaleVal}&skip_proxy_check=${skipProxyCheck}`;
-        const startUrls = [
-          `http://127.0.0.1:8725/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
-          `http://localhost:8725/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
-          `http://127.0.0.1:8725/api/v3/profiles/${actionPath}/${t.profileId}?${queryParams}`,
-          `http://localhost:8725/api/v3/profiles/${actionPath}/${t.profileId}?${queryParams}`,
-          `http://localhost:9495/api/v1/profiles/${actionPath}/${t.profileId}?${queryParams}`,
-        ];
+      const cloneRes = await createCloneProfileApi(srcProf, effectiveProxy);
+      if (cloneRes && cloneRes.id) {
+        createdTempProfileId = cloneRes.id;
+        createdTempStoragePath = cloneRes.storage_path || '';
+        effectiveProfileId = cloneRes.id;
+        activeTempProfilesRef.current.set(createdTempProfileId, {
+          threadId,
+          profileId: createdTempProfileId,
+          name: effectiveProfileName,
+          storagePath: createdTempStoragePath,
+        });
+        updateThreadLog(
+          threadId,
+          'success',
+          `✔ Đã tạo Profile mới thành công: "${effectiveProfileName}" (ID mới: ${createdTempProfileId} • Sẽ xóa vĩnh viễn khi xong/lỗi/stop)`
+        );
 
-        for (const url of startUrls) {
+        // Đồng bộ toàn bộ Extensions & kích hoạt Chế độ nhà phát triển + Allow in Incognito giống hệt profile mẫu
+        const srcStorageDir = cloneRes.src_storage_path || srcProf.storage_path || '';
+        if ((window as any).electronAPI?.fileAction && srcStorageDir && createdTempStoragePath) {
+          updateThreadLog(
+            threadId,
+            'info',
+            `🧩 Đang đồng bộ 100% Extensions & kích hoạt Allow in Incognito, Dev Mode từ Profile mẫu "${srcProf.name}"...`,
+            'Đồng bộ Extensions'
+          );
           try {
-            const resp = await fetch(url);
-            launchRes = await resp.json();
-            const candidate = launchRes?.data?.remote_debugging_address || launchRes?.remote_debugging_address || launchRes?.data?.port;
-            if (candidate || (launchRes && launchRes.success)) {
-              break;
-            }
-          } catch (e) {
-            if ((window as any).electronAPI?.fileAction) {
-              try {
-                const res = await (window as any).electronAPI.fileAction({
-                  action: 'httpRequest',
-                  payload: { url, method: 'GET' },
-                });
-                if (res && res.data) {
-                  const parsed = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
-                  const candidate = parsed?.data?.remote_debugging_address || parsed?.remote_debugging_address || parsed?.data?.port;
-                  if (candidate || (parsed && parsed.success)) {
-                    launchRes = parsed;
-                    break;
-                  }
-                }
-              } catch {}
+            await (window as any).electronAPI.fileAction({
+              action: 'cloneProfileExtensions',
+              payload: {
+                src: srcStorageDir,
+                dest: createdTempStoragePath,
+                allowInIncognito: true,
+              },
+            });
+            updateThreadLog(
+              threadId,
+              'success',
+              `✔ Đã đồng bộ Extensions, bật Dev Mode & Allow in Incognito thành công 100%`
+            );
+          } catch (extErr: any) {
+            updateThreadLog(
+              threadId,
+              'info',
+              `ℹ Ghi nhận đồng bộ Extensions: ${extErr?.message || 'Hoàn tất'}`
+            );
+          }
+        }
+      } else {
+        updateThreadLog(
+          threadId,
+          'error',
+          `✕ Không thể tạo Profile mới trên SV Browser API. Hủy chạy worker này.`
+        );
+        setThreadStatus(threadId, 'error');
+        return;
+      }
+    }
+
+    try {
+      // 3. Launch Profile via SV Browser API or Standalone Chrome
+      if (effectiveProfileId) {
+        // Cập nhật Proxy cho Profile:
+        // - Profile tạo mới thì đã được truyền raw_proxy khi tạo clone/new.
+        // - Profile đã tạo từ trước (!createdTempProfileId) thì gọi API /update/{id} để cập nhật raw_proxy.
+        // - Đồng thời truyền thêm param &raw_proxy=... vào lệnh start để Chrome nhận ngay proxy đó.
+        const proxyToApply = (proxyMode === 'rotating' ? t.profileProxy : effectiveProxy) || effectiveProxy;
+        if (proxyToApply) {
+          effectiveProxy = proxyToApply;
+          if (!createdTempProfileId) {
+            updateThreadLog(
+              threadId,
+              'info',
+              `🔄 Đang cập nhật Proxy "${proxyToApply}" cho Profile "${effectiveProfileName}" (ID: ${effectiveProfileId})...`,
+              'Update Proxy'
+            );
+            try {
+              const updated = await updateProfileProxyApi(effectiveProfileId, proxyToApply);
+              if (updated) {
+                updateThreadLog(threadId, 'success', `✔ Đã cập nhật Proxy vào Profile (API /update/${effectiveProfileId})`);
+              }
+            } catch (upErr: any) {
+              updateThreadLog(threadId, 'info', `ℹ Ghi nhận cập nhật Proxy: ${upErr.message}`);
             }
           }
         }
 
-        if (launchRes?.data?.raw_proxy || launchRes?.data?.proxy) {
-          const apiProxy = String(launchRes.data.raw_proxy || launchRes.data.proxy).trim();
-          if (apiProxy) resolvedProfileProxy = apiProxy;
-        }
+        const isIncognitoMode = Boolean(hideWindowWhenDone);
+        const actionPath = isIncognitoMode ? 'start-incognito' : 'start';
+        updateThreadLog(
+          threadId,
+          'info',
+          `🚀 Opening SV Browser profile ${isIncognitoMode ? '(Incognito / Ẩn danh)' : ''} "${effectiveProfileName}" (Proxy: "${effectiveProxy || 'Direct'}", Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
+          'Open Profile'
+        );
+        try {
+          let launchRes: any = null;
+          const scaleVal = (windowScale / 100).toFixed(2);
+          const rawProxyParam = effectiveProxy ? `&raw_proxy=${encodeURIComponent(effectiveProxy)}` : '';
+          const queryParams = `win_pos=${pos.x},${pos.y}&window_pos=${pos.x},${pos.y}&win_position=${pos.x},${pos.y}&window_position=${pos.x},${pos.y}&win_size=${pos.width},${pos.height}&window_size=${pos.width},${pos.height}&window_scale=${scaleVal}&win_scale=${scaleVal}&skip_proxy_check=${skipProxyCheck}${rawProxyParam}`;
+          const startUrls = [
+            `http://127.0.0.1:8725/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
+            `http://localhost:8725/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
+            `http://127.0.0.1:8725/api/v3/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
+            `http://localhost:8725/api/v3/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
+            `http://localhost:9495/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
+          ];
 
-        const addr =
-          launchRes?.data?.remote_debugging_address ||
-          launchRes?.remote_debugging_address ||
-          (launchRes?.data?.port ? `127.0.0.1:${launchRes.data.port}` : null);
+          for (const url of startUrls) {
+            try {
+              const resp = await fetch(url);
+              launchRes = await resp.json();
+              const candidate = launchRes?.data?.remote_debugging_address || launchRes?.remote_debugging_address || launchRes?.data?.port;
+              if (candidate || (launchRes && launchRes.success)) {
+                break;
+              }
+            } catch (e) {
+              if ((window as any).electronAPI?.fileAction) {
+                try {
+                  const res = await (window as any).electronAPI.fileAction({
+                    action: 'httpRequest',
+                    payload: { url, method: 'GET' },
+                  });
+                  if (res && res.data) {
+                    const parsed = typeof res.data === 'string' ? JSON.parse(res.data) : res.data;
+                    const candidate = parsed?.data?.remote_debugging_address || parsed?.remote_debugging_address || parsed?.data?.port;
+                    if (candidate || (parsed && parsed.success)) {
+                      launchRes = parsed;
+                      break;
+                    }
+                  }
+                } catch {}
+              }
+            }
+          }
 
-        if (!addr) {
-          const errMsg = launchRes?.message || 'Failed to start profile in SV Browser';
-          updateThreadLog(threadId, 'error', `✕ ${errMsg}`);
+          if (launchRes?.data?.raw_proxy || launchRes?.data?.proxy) {
+            const apiProxy = String(launchRes.data.raw_proxy || launchRes.data.proxy).trim();
+            if (apiProxy) resolvedProfileProxy = apiProxy;
+          }
+
+          const addr =
+            launchRes?.data?.remote_debugging_address ||
+            launchRes?.remote_debugging_address ||
+            (launchRes?.data?.port ? `127.0.0.1:${launchRes.data.port}` : null);
+
+          if (!addr) {
+            const errMsg = launchRes?.message || 'Failed to start profile in SV Browser';
+            updateThreadLog(threadId, 'error', `✕ ${errMsg}`);
+            setThreadStatus(threadId, 'error');
+            if (effectiveProfileId) await stopProfileApi(effectiveProfileId);
+            return;
+          }
+
+          const portStr = String(addr).split(':').pop();
+          activePort = parseInt(portStr || '0', 10);
+          updateThreadLog(threadId, 'success', `✔ Profile started on port ${activePort}`);
+          setThreads((prev) =>
+            prev.map((item) => (item.id === threadId ? { ...item, port: activePort } : item))
+          );
+        } catch (err: any) {
+          updateThreadLog(threadId, 'error', `✕ Error starting profile: ${err.message}`);
           setThreadStatus(threadId, 'error');
-          if (t.profileId) await stopProfileApi(t.profileId);
+          if (effectiveProfileId) await stopProfileApi(effectiveProfileId);
           return;
         }
-
-        const portStr = String(addr).split(':').pop();
-        activePort = parseInt(portStr || '0', 10);
-        updateThreadLog(threadId, 'success', `✔ Profile started on port ${activePort}`);
-        setThreads((prev) =>
-          prev.map((item) => (item.id === threadId ? { ...item, port: activePort } : item))
+      } else {
+        activePort = activePort || 43076 + (threadId - 1);
+        updateThreadLog(
+          threadId,
+          'info',
+          `🚀 Opening Chrome for Worker #${threadId} on port ${activePort} (Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
+          'Open Chrome'
         );
-      } catch (err: any) {
-        updateThreadLog(threadId, 'error', `✕ Error starting profile: ${err.message}`);
+        if ((window as any).electronAPI?.launchBrowser) {
+          const launchRes = await (window as any).electronAPI.launchBrowser({
+            port: activePort,
+            url: 'about:blank',
+            profileName: `ChromeProfile_Thread_${threadId}_${activePort}`,
+            windowSize: { width: pos.width, height: pos.height },
+            windowPosition: { x: pos.x, y: pos.y },
+            scale: windowScale,
+            proxy,
+          });
+          if (launchRes && launchRes.success === false) {
+            updateThreadLog(threadId, 'error', `✕ Failed to launch Chrome: ${launchRes.error || 'Unknown error'}`);
+            setThreadStatus(threadId, 'error');
+            return;
+          }
+        }
+      }
+
+      // 4. Connect to Chrome on this port
+      updateThreadLog(threadId, 'info', `▶ Connecting to Chrome on port ${activePort}...`, 'Connect CDP');
+      let connected = false;
+      for (let r = 0; r < 15; r++) {
+        if (stopSignalRef.current) break;
+        try {
+          const res = (window as any).electronAPI?.testPort
+            ? await (window as any).electronAPI.testPort(activePort)
+            : await fetch(`http://127.0.0.1:${activePort}/json/version`).then((x) => x.json());
+          if (res && (res.success || res.Browser)) {
+            connected = true;
+            break;
+          }
+        } catch (e) {}
+        await sleep(700);
+      }
+
+      if (!connected) {
+        updateThreadLog(threadId, 'error', `✕ Failed to connect to Chrome on port ${activePort}`);
         setThreadStatus(threadId, 'error');
-        if (t.profileId) await stopProfileApi(t.profileId);
+        if (effectiveProfileId) await stopProfileApi(effectiveProfileId);
         return;
       }
-    } else {
-      activePort = activePort || 43076 + (threadId - 1);
-      updateThreadLog(
-        threadId,
-        'info',
-        `🚀 Opening Chrome for Worker #${threadId} on port ${activePort} (Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
-        'Open Chrome'
-      );
-      if ((window as any).electronAPI?.launchBrowser) {
-        const launchRes = await (window as any).electronAPI.launchBrowser({
+
+      updateThreadLog(threadId, 'success', `✔ Connected to Chrome (${activePort})`);
+
+      // Bảo đảm vị trí và kích thước cửa sổ trên màn hình chuẩn xác qua CDP
+      if ((window as any).electronAPI?.cdpAction) {
+        await (window as any).electronAPI.cdpAction({
           port: activePort,
-          url: 'about:blank',
-          profileName: `ChromeProfile_Thread_${threadId}_${activePort}`,
-          windowSize: { width: pos.width, height: pos.height },
-          windowPosition: { x: pos.x, y: pos.y },
-          scale: windowScale,
-          proxy,
-        });
-        if (launchRes && launchRes.success === false) {
-          updateThreadLog(threadId, 'error', `✕ Failed to launch Chrome: ${launchRes.error || 'Unknown error'}`);
-          setThreadStatus(threadId, 'error');
-          return;
-        }
+          action: 'setWindowBounds',
+          payload: { x: pos.x, y: pos.y, width: pos.width, height: pos.height },
+        }).catch(() => {});
       }
-    }
 
-    // 4. Connect to Chrome on this port
-    updateThreadLog(threadId, 'info', `▶ Connecting to Chrome on port ${activePort}...`, 'Connect CDP');
-    let connected = false;
-    for (let r = 0; r < 15; r++) {
-      if (stopSignalRef.current) break;
-      try {
-        const res = (window as any).electronAPI?.testPort
-          ? await (window as any).electronAPI.testPort(activePort)
-          : await fetch(`http://127.0.0.1:${activePort}/json/version`).then((x) => x.json());
-        if (res && (res.success || res.Browser)) {
-          connected = true;
-          break;
-        }
-      } catch (e) {}
-      await sleep(700);
-    }
+      // If Use Virtual Mouse is enabled, inject persistent virtual mouse into this Chrome thread
+      if (useVirtualMouse && (window as any).electronAPI?.cdpAction) {
+        updateThreadLog(threadId, 'info', `🖱 Khởi tạo chuột ảo (con trỏ đỏ) cho Worker #${threadId}...`);
+        await (window as any).electronAPI.cdpAction({
+          port: activePort,
+          action: 'initVirtualMouse',
+          payload: { script: VIRTUAL_MOUSE_SCRIPT },
+        }).catch(() => {});
+        // Cưỡng bức hiển thị con chuột đỏ ngay lập tức trên trang Chrome trước khi chạy bất kỳ node nào
+        await (window as any).electronAPI?.cdpAction({
+          port: activePort,
+          action: 'evaluate',
+          payload: {
+            expression: `(() => {
+              try {
+                ${VIRTUAL_MOUSE_SCRIPT};
+                if (window.__gpmVirtualMouse) {
+                  window.__gpmVirtualMouse.init();
+                }
+                return true;
+              } catch(e) { return false; }
+            })()`,
+          },
+        }).catch(() => {});
+        updateThreadLog(threadId, 'success', `✔ Chuột ảo đã hiển thị trên Chrome`);
+      } else {
+        updateThreadLog(threadId, 'info', `⚡ Chế độ siêu tốc (Không dùng chuột ảo)`);
+      }
 
-    if (!connected) {
-      updateThreadLog(threadId, 'error', `✕ Failed to connect to Chrome on port ${activePort}`);
-      setThreadStatus(threadId, 'error');
-      if (t.profileId) await stopProfileApi(t.profileId);
-      return;
-    }
+      // Collect workflow nodes to execute
+      const nodes: WorkflowNode[] = [
+        ...(currentProject?.script?.before_init?.nodes || []),
+        ...(currentProject?.script?.main_logic?.nodes || []),
+        ...(currentProject?.script?.after_quit?.nodes || []),
+      ];
 
-    updateThreadLog(threadId, 'success', `✔ Connected to Chrome (${activePort})`);
-
-    // Bảo đảm vị trí và kích thước cửa sổ trên màn hình chuẩn xác qua CDP
-    if ((window as any).electronAPI?.cdpAction) {
-      await (window as any).electronAPI.cdpAction({
-        port: activePort,
-        action: 'setWindowBounds',
-        payload: { x: pos.x, y: pos.y, width: pos.width, height: pos.height },
-      }).catch(() => {});
-    }
-
-    // If Use Virtual Mouse is enabled, inject persistent virtual mouse into this Chrome thread
-    if (useVirtualMouse && (window as any).electronAPI?.cdpAction) {
-      updateThreadLog(threadId, 'info', `🖱 Khởi tạo chuột ảo (con trỏ đỏ) cho Worker #${threadId}...`);
-      await (window as any).electronAPI.cdpAction({
-        port: activePort,
-        action: 'initVirtualMouse',
-        payload: { script: VIRTUAL_MOUSE_SCRIPT },
-      }).catch(() => {});
-      // Cưỡng bức hiển thị con chuột đỏ ngay lập tức trên trang Chrome trước khi chạy bất kỳ node nào
-      await (window as any).electronAPI?.cdpAction({
-        port: activePort,
-        action: 'evaluate',
-        payload: {
-          expression: `(() => {
-            try {
-              ${VIRTUAL_MOUSE_SCRIPT};
-              if (window.__gpmVirtualMouse) {
-                window.__gpmVirtualMouse.init();
-              }
-              return true;
-            } catch(e) { return false; }
-          })()`,
-        },
-      }).catch(() => {});
-      updateThreadLog(threadId, 'success', `✔ Chuột ảo đã hiển thị trên Chrome`);
-    } else {
-      updateThreadLog(threadId, 'info', `⚡ Chế độ siêu tốc (Không dùng chuột ảo)`);
-    }
-
-    // Collect workflow nodes to execute
-    const nodes: WorkflowNode[] = [
-      ...(currentProject?.script?.before_init?.nodes || []),
-      ...(currentProject?.script?.main_logic?.nodes || []),
-      ...(currentProject?.script?.after_quit?.nodes || []),
-    ];
-
-    const threadVars: Record<string, string> = {
-      $threadId: String(threadId),
-      $port: String(activePort),
-      $profileId: t.profileId || '',
-      $profileName: t.profileName || '',
-      $profileProxy: resolvedProfileProxy,
-      $proxy: resolvedProfileProxy,
-      threadId: String(threadId),
-      port: String(activePort),
-      profileId: t.profileId || '',
-      profileName: t.profileName || '',
-      profileProxy: resolvedProfileProxy,
-      proxy: resolvedProfileProxy,
-    };
+      const threadVars: Record<string, string> = {
+        $threadId: String(threadId),
+        $port: String(activePort),
+        $profileId: effectiveProfileId,
+        $profileName: effectiveProfileName,
+        $profileProxy: resolvedProfileProxy,
+        $proxy: resolvedProfileProxy,
+        threadId: String(threadId),
+        port: String(activePort),
+        profileId: effectiveProfileId,
+        profileName: effectiveProfileName,
+        profileProxy: resolvedProfileProxy,
+        proxy: resolvedProfileProxy,
+        $originalProfileId: t.profileId || '',
+      };
 
     if (resolvedProfileProxy) {
       let pHost = '';
@@ -2336,9 +4076,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       wasStoppedByAction = true;
     } else if (threadRunRes === 'ERROR_STOP') {
       setThreadStatus(threadId, 'error');
-      if (t.profileId) {
-        updateThreadLog(threadId, 'info', `⏹ Dừng & đóng profile "${t.profileName || t.profileId}" qua API (Continue on error: Tắt)...`);
-        await stopProfileApi(t.profileId);
+      if (effectiveProfileId) {
+        updateThreadLog(threadId, 'info', `⏹ Dừng & đóng profile "${effectiveProfileName}" qua API (Continue on error: Tắt)...`);
+        await stopProfileApi(effectiveProfileId);
       }
       return; // Dừng luồng gặp lỗi để worker slot chuyển sang chạy luồng tiếp theo nếu còn
     }
@@ -2398,13 +4138,24 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         }
       }
     }
-
-    // Close profile cleanly only if user explicitly checked closeBrowserOnDone
-    if (t.profileId && closeBrowserOnDone) {
-      updateThreadLog(threadId, 'info', `⏹ Closing browser profile as configured...`);
-      await stopProfileApi(t.profileId);
+  } finally {
+    // Tự động xóa vĩnh viễn profile mới tạo ngay khi: chạy xong, gặp lỗi, hoặc stop
+    if (createdTempProfileId) {
+      await stopAndDeleteTempProfile(
+        threadId,
+        createdTempProfileId,
+        effectiveProfileName,
+        createdTempStoragePath
+      );
+    } else if (effectiveProfileId) {
+      if (closeBrowserOnDone || proxyMode === 'rotating') {
+        updateThreadLog(threadId, 'info', `⏹ Đang đóng trình duyệt "${effectiveProfileName}" để giải phóng RAM & cổng CDP...`, 'Close Profile');
+        await stopProfileApi(effectiveProfileId);
+        await sleep(400);
+      }
     }
-  };
+  }
+};
 
   // Execute a single action within a specific thread's Chrome instance
   const executeThreadAction = async (
@@ -2492,20 +4243,152 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       return 'NEXT_LOOP';
     }
 
+    // New tab (type 36)
+    if (actType === 36 || actName === 'new tab') {
+      updateThreadLog(threadId, 'info', `▶ New tab › Mở tab mới trong trình duyệt`, 'New tab');
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          const res = await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'newTab',
+          });
+          const newId = res?.tab?.id || res?.targetId;
+          if (newId) {
+            vars.$activePopupTargetId = newId;
+          }
+        }
+      } catch (e: any) {}
+      delete vars.$currentFrameContextId;
+      delete vars.$currentFrameXPath;
+      delete vars.$currentFrameOffset;
+      await sleep(150);
+      updateThreadLog(threadId, 'success', `✔ New tab › Đã mở và chuyển sang tab mới thành công`);
+      await sleep(100);
+      return;
+    }
+
+    // Active tab (type 37)
+    if (actType === 37 || actName === 'active tab') {
+      const mode = getRawVal('ACTIVE_TAB_TYPE', 'By index');
+      const target = resolveStr(getRawVal('TAB_INDEX_OR_PREFIX_URL', '0'));
+      updateThreadLog(threadId, 'info', `▶ Active tab › ${mode}: "${target}"`, 'Active tab');
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          const res = await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'activeTab',
+            payload: { mode, target },
+          });
+          const actId = res?.tab?.id || res?.targetId;
+          if (actId) {
+            vars.$activePopupTargetId = actId;
+          }
+        }
+      } catch (e: any) {}
+      delete vars.$currentFrameContextId;
+      delete vars.$currentFrameXPath;
+      delete vars.$currentFrameOffset;
+      await sleep(100);
+      updateThreadLog(threadId, 'success', `✔ Active tab › Đã kích hoạt tab: "${target}"`);
+      await sleep(50);
+      return;
+    }
+
+    // Close tab (type 38)
+    if (actType === 38 || actName === 'close tab') {
+      updateThreadLog(threadId, 'info', `▶ Close tab › Đóng tab hiện tại`, 'Close tab');
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'closeTab',
+          });
+        }
+      } catch (e: any) {}
+      delete vars.$activePopupTargetId;
+      delete vars.$currentFrameContextId;
+      delete vars.$currentFrameXPath;
+      delete vars.$currentFrameOffset;
+      await sleep(100);
+      updateThreadLog(threadId, 'success', `✔ Close tab › Đã đóng tab hiện tại`);
+      await sleep(50);
+      return;
+    }
+
+    // Close all tab (type 73)
+    if (actType === 73 || actName === 'close all tab') {
+      updateThreadLog(threadId, 'info', `▶ Close all tab › Đóng tất cả các tab khác`, 'Close all tab');
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'closeAllTab',
+          });
+        }
+      } catch (e: any) {}
+      delete vars.$activePopupTargetId;
+      delete vars.$currentFrameContextId;
+      delete vars.$currentFrameXPath;
+      delete vars.$currentFrameOffset;
+      await sleep(100);
+      updateThreadLog(threadId, 'success', `✔ Close all tab › Đã đóng tất cả các tab khác`);
+      await sleep(50);
+      return;
+    }
+
     // Go to URL (type 39)
     if (actType === 39 || actName === 'go to url') {
       let url = resolveStr(getRawVal('URL', 'https://google.com'));
       const timeoutSec = parseInt(resolveStr(getRawVal('TIME_OUT', '60')), 10) || 60;
-      if (!url.startsWith('http')) url = `https://${url}`;
+      if (!url.startsWith('http') && !url.startsWith('about:') && !url.startsWith('chrome://')) {
+        url = `https://${url}`;
+      }
+
+      // 1. Capture current URL before navigation
+      let previousUrl = '';
+      try {
+        const curRes = await (window as any).electronAPI?.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: {
+            expression: 'window.location.href',
+            targetId: vars.$activePopupTargetId,
+          },
+        });
+        const curVal = curRes?.value || curRes?.result?.value;
+        if (typeof curVal === 'string') previousUrl = curVal.trim();
+      } catch (e) {}
+
       updateThreadLog(threadId, 'info', `▶ Navigate › ${url} (Timeout: ${timeoutSec}s)`, `Navigating: ${url}`);
 
       if ((window as any).electronAPI?.cdpAction) {
-        await (window as any).electronAPI.cdpAction({
+        const res = await (window as any).electronAPI.cdpAction({
           port,
           action: 'goToUrl',
-          payload: { url, timeout: timeoutSec },
+          payload: { url, timeout: timeoutSec, targetId: vars.$activePopupTargetId },
         });
+        if (res?.targetId) {
+          vars.$activePopupTargetId = res.targetId;
+        }
       }
+
+      // Top-level navigation resets frames
+      delete vars.$currentFrameContextId;
+      delete vars.$currentFrameXPath;
+      delete vars.$currentFrameOffset;
+
+      const cleanUrl = (u: string) => {
+        if (!u) return '';
+        try {
+          const p = new URL(u);
+          return (p.origin + p.pathname).toLowerCase().replace(/\/+$/, '');
+        } catch {
+          return u.toLowerCase().replace(/#.*$/, '').replace(/\/+$/, '');
+        }
+      };
+      const targetClean = cleanUrl(url);
+      const prevClean = cleanUrl(previousUrl);
+      const isDifferentDest = Boolean(prevClean && targetClean && prevClean !== targetClean);
 
       // Wait for page to finish loading up to timeoutSec
       const start = Date.now();
@@ -2514,15 +4397,17 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       let errorMsg = '';
 
       // Initial sleep so Chrome has started navigating away from previous page
-      await sleep(500);
+      await sleep(350);
 
       while (Date.now() - start < maxWaitMs && !stopSignalRef.current) {
         await sleep(350);
+
         try {
           const evalRes = await (window as any).electronAPI?.cdpAction({
             port,
             action: 'evaluate',
             payload: {
+              targetId: vars.$activePopupTargetId,
               expression: `(() => {
                 try {
                   const href = window.location.href;
@@ -2540,17 +4425,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     return { loaded: false, readyState, reason: 'Waiting for navigation from about:blank' };
                   }
 
-                  // When readyState is complete, page is ready
-                  if (readyState === 'complete') {
-                    return { loaded: true, readyState, url: href };
-                  }
-
-                  // For modern SPAs (Google Accounts, YouTube, etc.), interactive state with body content is ready
-                  if (readyState === 'interactive' && document.body && (document.body.children.length > 0 || document.body.innerText.length > 0)) {
-                    return { loaded: true, readyState, url: href };
-                  }
-
-                  return { loaded: false, readyState };
+                  const hasBody = !!(document.body && (document.body.children.length > 0 || document.body.innerText.length > 0));
+                  return { href, readyState, hasBody };
                 } catch(e) {
                   return { loaded: false, error: e.message };
                 }
@@ -2564,9 +4440,28 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
               errorMsg = val.error;
               break;
             }
-            if (val.loaded) {
+
+            const curHref = val.href || '';
+            const curClean = cleanUrl(curHref);
+            const readyState = val.readyState;
+
+            // CRITICAL FIX: If navigating to a different page, but Chrome is still on previousUrl,
+            // do NOT treat readyState as complete yet!
+            if (isDifferentDest && curClean && curClean === prevClean) {
+              continue;
+            }
+
+            // When readyState is complete, page is ready
+            if (readyState === 'complete') {
               pageLoaded = true;
               // Settling buffer: wait 400ms so dynamic SPAs/Web Components finish rendering
+              await sleep(400);
+              break;
+            }
+
+            // For modern SPAs (Google Accounts, YouTube, etc.), interactive state with body content is ready
+            if (readyState === 'interactive' && val.hasBody) {
+              pageLoaded = true;
               await sleep(400);
               break;
             }
@@ -2583,6 +4478,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             port,
             action: 'evaluate',
             payload: {
+              targetId: vars.$activePopupTargetId,
               expression: `(() => ({
                 url: window.location.href,
                 hasBody: !!document.body,
@@ -2592,7 +4488,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           });
           const fVal = finalCheck?.value || finalCheck?.result?.value;
           if (fVal?.url && fVal.url.startsWith('http') && fVal.hasBody) {
-            pageLoaded = true;
+            const fClean = cleanUrl(fVal.url);
+            if (!isDifferentDest || fClean !== prevClean) {
+              pageLoaded = true;
+            }
           }
         } catch (e) {}
       }
@@ -2607,6 +4506,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             port,
             action: 'evaluate',
             payload: {
+              targetId: vars.$activePopupTargetId,
               expression: `(() => {
                 try {
                   ${VIRTUAL_MOUSE_SCRIPT};
@@ -2803,21 +4703,28 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           `Clicking: [${x}, ${y}]`
         );
 
-        if (useVirtualMouse) {
+        if (vars.$lastImageSearchCoords && pos.trim() === vars.$lastImageSearchCoords && (window as any).electronAPI?.fileAction) {
+          await (window as any).electronAPI.fileAction({
+            action: 'osClick',
+            payload: { x, y, button: 'left', clicks: 1 },
+          }).catch(() => {});
+          updateThreadLog(threadId, 'success', `✔ Clicked screen coordinates [${x}, ${y}]`);
+        } else if (useVirtualMouse) {
           // Move virtual red cursor smoothly and click with ripple!
           await (window as any).electronAPI?.cdpAction({
             port,
             action: 'evaluate',
             payload: { expression: getVirtualMouseClickCoordsScript(x, y) },
           });
+          updateThreadLog(threadId, 'success', `✔ Clicked coordinates [${x}, ${y}]`);
         } else {
           await (window as any).electronAPI?.cdpAction({
             port,
             action: 'clickCoordinates',
             payload: { x, y },
           });
+          updateThreadLog(threadId, 'success', `✔ Clicked coordinates [${x}, ${y}]`);
         }
-        updateThreadLog(threadId, 'success', `✔ Clicked coordinates [${x}, ${y}]`);
       } else if (isCurrentPos) {
         updateThreadLog(
           threadId,
@@ -3495,6 +5402,125 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       vars[varName] = jsVal;
       vars[cleanName] = jsVal;
       updateThreadLog(threadId, 'success', `✔ Execute JS code › ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
+      await sleep(100);
+    }
+    // Get extension id (type 186)
+    else if (actType === 186 || actName === 'get extension id' || actName.includes('extension id') || actName.includes('tiện ích')) {
+      const rawExtName = getRawVal('EXTENSION_NAME', '');
+      const extName = resolveStr(rawExtName).trim();
+      const rawVar = act.output_variable_name || '';
+      const varName = rawVar ? (rawVar.startsWith('$') ? rawVar : `$${rawVar}`) : '$extension_id';
+      const cleanName = varName.replace(/^\$/, '');
+      updateThreadLog(threadId, 'info', `▶ Get extension id › Tìm ID tiện ích "${extName}"`, 'Get extension id');
+
+      let extId = '';
+      if ((window as any).electronAPI?.cdpAction) {
+        // Step 1: Query DOM on current tab (especially chrome://extensions/)
+        const findExtScript = `(() => {
+          function getExtensionId(name) {
+            const root = (document.querySelector("extensions-manager")?.shadowRoot || document)
+              .querySelector("extensions-item-list")?.shadowRoot;
+            if (!root) return null;
+            const target = name.trim().toLowerCase();
+            const match = Array.from(root.querySelectorAll("extensions-item")).find(item => {
+              const text = item.shadowRoot?.querySelector("#name")?.textContent || "";
+              return text.trim().toLowerCase().includes(target);
+            });
+            return match ? (match.id || match.getAttribute("id")) : null;
+          }
+          return getExtensionId(${JSON.stringify(extName)}) || '';
+        })()`;
+
+        const evalRes = await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'evaluate',
+          payload: { expression: findExtScript },
+        });
+
+        if (evalRes?.success && evalRes.value) {
+          extId = String(evalRes.value).trim();
+        }
+
+        // Step 2: Fallback to listTargets (checking chrome-extension:// URLs)
+        if (!extId) {
+          const targetsRes = await (window as any).electronAPI.cdpAction({
+            port,
+            action: 'listTargets',
+          });
+          if (targetsRes?.success && Array.isArray(targetsRes.targets)) {
+            for (const t of targetsRes.targets) {
+              const url = String(t.url || '');
+              const title = String(t.title || '');
+              if (url.startsWith('chrome-extension://')) {
+                const match = url.match(/chrome-extension:\/\/([a-z0-9]+)/i);
+                if (match && match[1]) {
+                  if (!extName || title.toLowerCase().includes(extName.toLowerCase()) || url.toLowerCase().includes(extName.toLowerCase())) {
+                    extId = match[1];
+                    break;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (rawVar) {
+        vars[varName] = extId;
+        vars[cleanName] = extId;
+      }
+      if (extId) {
+        updateThreadLog(threadId, 'success', `✔ Get extension id › Tìm thấy: ${varName} = "${extId}"`);
+      } else {
+        updateThreadLog(threadId, 'info', `⚠ Không tìm thấy Extension ID cho "${extName}". Lưu ý: Cần mở trang chrome://extensions/ trước và delay 1-2s.`);
+      }
+      await sleep(100);
+    }
+    // Screenshot (type 187)
+    else if (actType === 187 || actName === 'screenshot' || actName.includes('screenshot') || actName.includes('chụp ảnh')) {
+      const rawOutPath = getRawVal('OUTPUT_PATH', getRawVal('FOLDER_PATH', ''));
+      const rawFileName = getRawVal('FILE_NAME', '');
+      const rawFullPage = getRawVal('FULL_PAGE', 'false');
+      const resolvedOutPath = resolveStr(rawOutPath).trim();
+      let resolvedFileName = resolveStr(rawFileName).trim();
+      const isFullPage = rawFullPage === 'true' || rawFullPage === 'True' || rawFullPage === '1';
+      const rawVar = act.output_variable_name || '';
+      const varName = rawVar ? (rawVar.startsWith('$') ? rawVar : `$${rawVar}`) : '$saved_image_path';
+      const cleanName = varName.replace(/^\$/, '');
+
+      if (!resolvedFileName) {
+        resolvedFileName = `screenshot_${Date.now()}.png`;
+      } else if (!resolvedFileName.toLowerCase().endsWith('.png') && !resolvedFileName.toLowerCase().endsWith('.jpg') && !resolvedFileName.toLowerCase().endsWith('.jpeg')) {
+        resolvedFileName += '.png';
+      }
+
+      updateThreadLog(threadId, 'info', `▶ Screenshot › Chụp ảnh màn hình (${isFullPage ? 'Toàn trang' : 'Khung nhìn'})`, 'Screenshot');
+
+      let savedFilePath = '';
+      if ((window as any).electronAPI?.cdpAction) {
+        const snapRes = await (window as any).electronAPI.cdpAction({
+          port,
+          action: 'screenshot',
+          payload: {
+            outputPath: resolvedOutPath,
+            fileName: resolvedFileName,
+            fullPage: isFullPage,
+          },
+        });
+
+        if (snapRes?.success && snapRes.filePath) {
+          savedFilePath = snapRes.filePath;
+          updateThreadLog(threadId, 'success', `✔ Đã lưu ảnh chụp màn hình: "${savedFilePath}"`);
+        } else {
+          const failRes = await handleActionFailure('Screenshot', snapRes?.error || 'Không thể chụp ảnh màn hình');
+          if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+        }
+      }
+
+      if (rawVar) {
+        vars[varName] = savedFilePath;
+        vars[cleanName] = savedFilePath;
+      }
       await sleep(100);
     }
     // File upload (type 55)
@@ -4640,7 +6666,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             action: 'dispatchKeyEvent',
             payload: { type: 'keyUp', windowsVirtualKeyCode: 9, key: 'Tab', code: 'Tab' },
           }).catch(() => {});
-        } else if (lower === 'escape') {
+        } else if (lower === 'escape' || lower === 'esc') {
           await (window as any).electronAPI?.cdpAction({
             port,
             action: 'dispatchKeyEvent',
@@ -4651,6 +6677,78 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             port,
             action: 'dispatchKeyEvent',
             payload: { type: 'keyUp', windowsVirtualKeyCode: 27, key: 'Escape', code: 'Escape' },
+          }).catch(() => {});
+        } else if (lower === 'space') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 32, key: ' ', code: 'Space', text: ' ' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 32, key: ' ', code: 'Space' },
+          }).catch(() => {});
+        } else if (lower === 'arrowleft' || lower === 'left') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 37, key: 'ArrowLeft', code: 'ArrowLeft' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 37, key: 'ArrowLeft', code: 'ArrowLeft' },
+          }).catch(() => {});
+        } else if (lower === 'arrowup' || lower === 'up') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 38, key: 'ArrowUp', code: 'ArrowUp' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 38, key: 'ArrowUp', code: 'ArrowUp' },
+          }).catch(() => {});
+        } else if (lower === 'arrowright' || lower === 'right') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' },
+          }).catch(() => {});
+        } else if (lower === 'arrowdown' || lower === 'down') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown' },
+          }).catch(() => {});
+        } else if (lower === 'delete') {
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 46, key: 'Delete', code: 'Delete' },
+          }).catch(() => {});
+          await sleep(50);
+          await (window as any).electronAPI?.cdpAction({
+            port,
+            action: 'dispatchKeyEvent',
+            payload: { type: 'keyUp', windowsVirtualKeyCode: 46, key: 'Delete', code: 'Delete' },
           }).catch(() => {});
         } else if (lower === 'control+a' || lower === 'ctrl+a') {
           await (window as any).electronAPI?.cdpAction({
@@ -5727,6 +7825,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         }
       }
       if (found) {
+        vars.$lastImageSearchCoords = coords;
         if (varName) {
           vars[varName] = coords;
           vars[cleanName] = coords;
@@ -5776,6 +7875,44 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         const failRes = await handleActionFailure('Image to Base64', e.message);
         if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
       }
+    }
+    // Accept alert (type 66) & Cancel alert (type 67)
+    else if (actType === 66 || actName === 'accept alert' || actType === 67 || actName === 'cancel alert') {
+      const isAccept = actType === 66 || actName === 'accept alert';
+      const label = isAccept ? 'Accept alert' : 'Cancel alert';
+      updateThreadLog(
+        threadId,
+        'info',
+        `▶ ${label} › Đang tìm và nhấn nút xác nhận hộp thoại (${isAccept ? 'Thêm tiện ích / OK / Allow' : 'Huỷ / Cancel'})...`,
+        label
+      );
+
+      try {
+        if ((window as any).electronAPI?.cdpAction) {
+          const res = await (window as any).electronAPI.cdpAction({
+            port,
+            action: isAccept ? 'acceptAlert' : 'cancelAlert',
+            payload: { targetId: vars.$activePopupTargetId },
+          });
+          if (res && res.success) {
+            updateThreadLog(
+              threadId,
+              'success',
+              `✔ ${label} › Đã nhấn nút "${res.button || (isAccept ? 'OK / Thêm tiện ích' : 'Huỷ / Cancel')}" thành công`
+            );
+          } else {
+            const failRes = await handleActionFailure(
+              label,
+              res?.error || 'Không tìm thấy hộp thoại cảnh báo hoặc nút Thêm tiện ích'
+            );
+            if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+          }
+        }
+      } catch (e: any) {
+        const failRes = await handleActionFailure(label, e.message);
+        if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
+      }
+      await sleep(100);
     } else {
       // Other action fallback
       updateThreadLog(threadId, 'info', `▶ ${act.display_text || 'Action'}`);
@@ -5810,13 +7947,19 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   const handleStopAll = async () => {
     stopSignalRef.current = true;
     setIsExecuting(false);
+    // 1. Dừng và xóa vĩnh viễn toàn bộ profile tạm thời mới tạo đang chạy
+    for (const [profId, info] of Array.from(activeTempProfilesRef.current.entries())) {
+      await stopAndDeleteTempProfile(info.threadId, profId, info.name, info.storagePath);
+    }
+    // 2. Dừng các profile gốc còn lại nếu có
     for (const t of threads) {
-      if (t.profileId) {
+      if (t.profileId && !deletedTempProfileIdsRef.current.has(t.profileId)) {
         updateThreadLog(t.id, 'info', `⏹ Stopping profile "${t.profileName}" via API...`);
         await stopProfileApi(t.profileId);
         setThreadStatus(t.id, 'idle');
       }
     }
+    fetchProfiles();
   };
 
   const groups = [
@@ -5860,19 +8003,85 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         if (!pTags.includes(selectedTag.trim().toLowerCase())) return false;
       }
       if (searchQuery.trim()) {
-        const query = searchQuery.trim().toLowerCase();
-        const matchName = (p.name || '').toLowerCase().includes(query);
-        const matchGroup = (p.group_name || p.group_id || '').toLowerCase().includes(query);
-        const matchCore = (p.browser?.name || '').toLowerCase().includes(query);
-        const matchTag = (Array.isArray(p.tags) ? p.tags : []).some((t: any) =>
-          (typeof t === 'string' ? t : t?.name || '').toLowerCase().includes(query)
+        let rawTokens = searchQuery
+          .split(/[\r\n,;|\t]+/)
+          .map((t) => t.trim().toLowerCase())
+          .filter(Boolean);
+
+        if (rawTokens.length === 1 && rawTokens[0].includes(' ')) {
+          const spaceTokens = rawTokens[0].split(/\s+/).filter(Boolean);
+          if (spaceTokens.length > 1 && spaceTokens.every((st) => st.includes('-') || st.length >= 10 || /^\d+$/.test(st))) {
+            rawTokens = spaceTokens;
+          }
+        }
+
+        const pId = String(p.id ?? '').toLowerCase().trim();
+        const pUuid = String((p as any).uuid ?? (p as any).raw_id ?? '').toLowerCase().trim();
+        const pName = (p.name || '').toLowerCase();
+        const pGroup = (p.group_name || p.group_id || '').toLowerCase();
+        const pCore = (p.browser?.name || '').toLowerCase();
+        const pTags = (Array.isArray(p.tags) ? p.tags : []).map((t: any) =>
+          (typeof t === 'string' ? t : t?.name || '').toLowerCase()
         );
-        if (!matchName && !matchGroup && !matchCore && !matchTag) return false;
+
+        if (rawTokens.length > 1) {
+          const isMatch = rawTokens.some((token) => {
+            return (
+              pId === token ||
+              pId.includes(token) ||
+              (pUuid && (pUuid === token || pUuid.includes(token))) ||
+              pName.includes(token) ||
+              pGroup.includes(token) ||
+              pCore.includes(token) ||
+              pTags.some((tag) => tag.includes(token))
+            );
+          });
+          if (!isMatch) return false;
+        } else if (rawTokens.length === 1) {
+          const query = rawTokens[0];
+          const matchId = pId === query || pId.includes(query) || (pUuid ? pUuid === query || pUuid.includes(query) : false);
+          const matchName = pName.includes(query);
+          const matchGroup = pGroup.includes(query);
+          const matchCore = pCore.includes(query);
+          const matchTag = pTags.some((tag) => tag.includes(query));
+          if (!matchId && !matchName && !matchGroup && !matchCore && !matchTag) return false;
+        }
       }
       return true;
     }),
     sortOrder
   );
+
+  // Batch UID Modal stats & matching calculation
+  const parsedBatchUids = Array.from(
+    new Set(
+      batchUidText
+        .split(/[\r\n,;|\t]+/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
+
+  const matchedBatchProfiles = (profiles || []).filter((p) => {
+    if (!p) return false;
+    const pId = String(p.id ?? '').toLowerCase().trim();
+    const pUuid = String((p as any).uuid ?? (p as any).raw_id ?? '').toLowerCase().trim();
+    const pName = String(p.name ?? '').toLowerCase().trim();
+    return parsedBatchUids.some((u) => {
+      const target = u.toLowerCase().trim();
+      return pId === target || (pUuid && pUuid === target) || pName === target;
+    });
+  });
+
+  const matchedBatchIds = matchedBatchProfiles.map((p) => String(p.id));
+  const matchedBatchKeySet = new Set(
+    matchedBatchProfiles.flatMap((p) => [
+      String(p.id ?? '').toLowerCase().trim(),
+      String((p as any).uuid ?? (p as any).raw_id ?? '').toLowerCase().trim(),
+      String(p.name ?? '').toLowerCase().trim(),
+    ].filter(Boolean))
+  );
+  const unmatchedBatchUids = parsedBatchUids.filter((u) => !matchedBatchKeySet.has(u.toLowerCase().trim()));
 
   // Pagination calculation
   const totalPages = Math.max(1, Math.ceil(filteredProfiles.length / profilesPerPage));
@@ -5975,9 +8184,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
   return (
     <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 select-none text-left">
-      <div className="bg-white dark:bg-[#0c1220] border border-[#cbd5e1] dark:border-[#1e293b] rounded-xl shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[92vh] max-h-[840px] overflow-hidden flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
+      <div className="bg-white dark:bg-[#0c1220] border border-[#cbd5e1] dark:border-[#1e293b] rounded-xl shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[94vh] max-h-[920px] overflow-hidden flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
         {/* Top Window Title Bar (Matching Image 2) */}
-        <div className="flex items-center justify-between px-3 py-2 border-b border-[#e2e8f0] dark:border-[#1a2538] bg-[#f8fafc] dark:bg-[#080d19]">
+        <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#e2e8f0] dark:border-[#1a2538] bg-[#f8fafc] dark:bg-[#080d19]">
           <div className="flex items-center space-x-2 text-xs font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
             <div className="w-4 h-4 rounded bg-[#1677ff] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
               <span className="scale-75">🤖</span>
@@ -5996,7 +8205,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
         </div>
 
         {/* Modal Main Body: Left Vertical Nav + Center Content */}
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Left Vertical Slim Navigation Bar (Images 2-5) */}
           <div className="w-12 bg-[#f1f5f9] dark:bg-[#080c16] border-r border-[#e2e8f0] dark:border-[#162236] flex flex-col items-center py-3 justify-between shrink-0">
             <div className="flex flex-col items-center space-y-4">
@@ -6042,9 +8251,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           </div>
 
           {/* Main Area */}
-          <div className="flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0a0f1d]">
+          <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-white dark:bg-[#0a0f1d]">
             {/* Top Breadcrumbs and Stepper */}
-            <div className="px-6 pt-4 pb-3 border-b border-[#e2e8f0] dark:border-[#162236]">
+            <div className="shrink-0 px-6 pt-3 pb-2.5 border-b border-[#e2e8f0] dark:border-[#162236]">
               {/* Breadcrumb + Auto-saves / Selected indicator */}
               <div className="flex items-center justify-between text-xs text-[#64748b] dark:text-[#94a3b8] mb-3">
                 <div className="flex items-center space-x-1.5">
@@ -6062,6 +8271,15 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                         <span>{profiles.length} profiles</span>
                       </span>
                     </>
+                  ) : step === 4 ? (
+                    <>
+                      <span className="text-[#1e293b] dark:text-[#f1f5f9] font-semibold text-sm">
+                        Tự tạo Profile mới &amp; Xoá vĩnh viễn sau khi chạy
+                      </span>
+                      <span className="ml-2 px-2.5 py-0.5 rounded-full bg-blue-50 dark:bg-blue-950/60 text-[11px] font-medium text-[#1677ff] dark:text-[#38bdf8] border border-blue-200 dark:border-blue-800 flex items-center space-x-1">
+                        <span>✨ {selectedProfileIds.length} profile mẫu</span>
+                      </span>
+                    </>
                   ) : (
                     <>
                       <span className="hover:text-[#1677ff] cursor-pointer">Browser automation</span>
@@ -6069,7 +8287,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       <span className="text-[#1e293b] dark:text-[#f1f5f9] font-medium">{appName}</span>
                     </>
                   )}
-                  {step !== 3 && (
+                  {step !== 3 && step !== 4 && (
                     <span className="ml-2 px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-[#475569] dark:text-[#94a3b8] border border-slate-200 dark:border-slate-700">
                       {sessionName}
                     </span>
@@ -6083,7 +8301,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </div>
                 )}
 
-                {step === 3 && (
+                {(step === 3 || step === 4) && (
                   <div className="flex items-center space-x-2">
                     <span className="px-3 py-1 rounded-full bg-[#1677ff] text-white text-xs font-semibold shadow-xs flex items-center space-x-1.5">
                       <span className="w-2 h-2 rounded-full bg-white" />
@@ -6093,8 +8311,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                 )}
               </div>
 
-              {/* Stepper (4 Steps matching Images 2-5) - Fully Clickable */}
-              <div className="flex items-center justify-between max-w-2xl mx-auto py-1 text-xs select-none">
+              {/* Stepper (5 Steps) - Fully Clickable */}
+              <div className="flex items-center justify-between max-w-3xl mx-auto py-1 text-xs select-none">
                 {/* Step 1 */}
                 <div
                   onClick={() => goToStep(1)}
@@ -6115,7 +8333,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </span>
                 </div>
 
-                <div className={`flex-1 h-[2px] mx-4 ${step > 1 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
+                <div className={`flex-1 h-[2px] mx-3 ${step > 1 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
 
                 {/* Step 2 */}
                 <div
@@ -6137,7 +8355,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </span>
                 </div>
 
-                <div className={`flex-1 h-[2px] mx-4 ${step > 2 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
+                <div className={`flex-1 h-[2px] mx-3 ${step > 2 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
 
                 {/* Step 3 */}
                 <div
@@ -6159,24 +8377,46 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </span>
                 </div>
 
-                <div className={`flex-1 h-[2px] mx-4 ${step > 3 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
+                <div className={`flex-1 h-[2px] mx-3 ${step > 3 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
 
-                {/* Step 4 */}
+                {/* Step 4: Tạo Profile mới */}
                 <div
                   onClick={() => goToStep(4)}
                   className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
-                  title="Step 4: Running Automation"
+                  title="Step 4: Tự tạo Profile mới & Xoá vĩnh viễn"
                 >
                   <div
                     className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[11px] ${
-                      step === 4
+                      step >= 4
                         ? 'bg-[#1677ff] text-white shadow-xs'
                         : 'border border-[#cbd5e1] text-[#94a3b8]'
                     }`}
                   >
-                    4
+                    {step > 4 ? <Check className="w-3.5 h-3.5" /> : '4'}
                   </div>
                   <span className={step === 4 ? 'font-semibold text-[#1677ff] dark:text-[#38bdf8]' : 'text-[#64748b]'}>
+                    Tạo Profile mới
+                  </span>
+                </div>
+
+                <div className={`flex-1 h-[2px] mx-3 ${step > 4 ? 'bg-[#1677ff]' : 'bg-[#e2e8f0] dark:bg-[#1e293b]'}`} />
+
+                {/* Step 5: Running */}
+                <div
+                  onClick={() => goToStep(5)}
+                  className="flex items-center space-x-2 cursor-pointer hover:opacity-80 transition-opacity"
+                  title="Step 5: Running Automation"
+                >
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center font-bold text-[11px] ${
+                      step === 5
+                        ? 'bg-[#1677ff] text-white shadow-xs'
+                        : 'border border-[#cbd5e1] text-[#94a3b8]'
+                    }`}
+                  >
+                    5
+                  </div>
+                  <span className={step === 5 ? 'font-semibold text-[#1677ff] dark:text-[#38bdf8]' : 'text-[#64748b]'}>
                     Running
                   </span>
                 </div>
@@ -6184,7 +8424,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             </div>
 
             {/* Step Body */}
-            <div className="flex-1 overflow-y-auto p-6 text-xs text-left">
+            <div className={`flex-1 min-h-0 text-xs text-left ${step === 3 && !autoGenProfilesMode ? 'overflow-hidden flex flex-col p-3 sm:p-3.5' : 'overflow-y-auto p-6'}`}>
               {/* ================= STEP 1: SELECT APP (Image 2) ================= */}
               {step === 1 && (
                 <div className="grid grid-cols-3 gap-6 max-w-6xl xl:max-w-7xl mx-auto">
@@ -6985,6 +9225,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           </div>
                         </div>
 
+                        {/* Cấu hình Mạng & Proxy Xoay / Tĩnh / Gốc (Áp dụng toàn hệ thống) */}
+                        {renderProxyConfigBlock('Cấu hình Mạng & Proxy (Áp dụng toàn hệ thống)')}
+
                         {/* Checkboxes List matching Image 4 */}
                         <div className="space-y-3 pt-3 border-t border-[#e2e8f0] dark:border-[#1e293b]">
                           <label className="flex items-center space-x-2.5 cursor-pointer">
@@ -7050,6 +9293,27 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                             <span className="text-xs text-[#334155] dark:text-[#cbd5e1]">
                               Hide window when done and active when process resume (Mở Chrome ẩn danh - start-incognito)
                             </span>
+                          </label>
+
+                          {/* ================= AUTO CLONE TEMP PROFILE ================= */}
+                          <label className="flex items-center space-x-2.5 cursor-pointer bg-emerald-50/60 dark:bg-emerald-950/30 p-2.5 rounded-lg border border-emerald-200/60 dark:border-emerald-900/40">
+                            <input
+                              type="checkbox"
+                              checked={autoCloneProfile}
+                              onChange={(e) => setAutoCloneProfile(e.target.checked)}
+                              className="rounded text-emerald-600 w-4 h-4 cursor-pointer"
+                            />
+                            <div className="w-4 h-4 flex items-center justify-center text-emerald-600 dark:text-emerald-400 font-bold">
+                              ✨
+                            </div>
+                            <div className="flex-1">
+                              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400">
+                                Tự động tạo Profile mới từ Profile đã chọn &amp; Xóa vĩnh viễn khi xong / lỗi / stop
+                              </span>
+                              <span className="text-[11px] text-[#64748b] dark:text-[#94a3b8] block mt-0.5">
+                                Tạo bản sao cùng Tên, Proxy, Core trình duyệt từ profile đã chọn. Khi hoàn tất, gặp lỗi hoặc bấm Stop sẽ tự động xoá vĩnh viễn profile mới tạo.
+                              </span>
+                            </div>
                           </label>
 
                           {/* ================= USE VIRTUAL MOUSE (Image 4) ================= */}
@@ -7202,6 +9466,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           </span>
                         </div>
                         <div className="flex justify-between">
+                          <span className="text-[#64748b]">Tạo Profile mới</span>
+                          <span className={`font-semibold ${autoCloneProfile ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-500'}`}>
+                            {autoCloneProfile ? 'True (Tự xoá)' : 'False'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
                           <span className="text-[#64748b]">Check IP/Proxy</span>
                           <span className={`font-semibold ${skipProxyCheck ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600 dark:text-emerald-400'}`}>
                             {skipProxyCheck ? 'Skipped' : 'Enabled (Check)'}
@@ -7220,9 +9490,224 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
 
               {/* ================= STEP 3: PROFILE SELECTION (http://localhost:8725/api/v3/profiles) ================= */}
               {step === 3 && (
-                <div className="max-w-6xl xl:max-w-7xl mx-auto space-y-3">
-                  {/* Controls Row: Engine, Provider, API status */}
-                  <div className="flex items-center space-x-2.5">
+                <div className={`max-w-6xl xl:max-w-7xl w-full mx-auto ${!autoGenProfilesMode ? 'flex-1 min-h-0 flex flex-col space-y-2' : 'space-y-4'}`}>
+                  {/* Mode Tabs: 1) Chọn Profile có sẵn  2) Tự động sinh Profile mới theo mẫu & Tự hủy */}
+                  <div className="shrink-0 bg-slate-100 dark:bg-[#162236] p-1 rounded-xl flex items-center space-x-1 border border-[#e2e8f0] dark:border-[#1e293b]">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoGenProfilesMode(false);
+                        saveConfigForCurrentProject({ autoGenProfilesMode: false });
+                      }}
+                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                        !autoGenProfilesMode
+                          ? 'bg-white dark:bg-[#0f172a] text-[#1677ff] dark:text-[#38bdf8] shadow-xs border border-[#cbd5e1] dark:border-[#334155]'
+                          : 'text-[#64748b] hover:text-[#1e293b] dark:hover:text-[#f1f5f9]'
+                      }`}
+                    >
+                      <Users className="w-4 h-4" />
+                      <span>Chọn Profile có sẵn ({selectedProfileIds.length} đã chọn)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAutoGenProfilesMode(true);
+                        saveConfigForCurrentProject({ autoGenProfilesMode: true });
+                      }}
+                      className={`flex-1 py-2 px-3 rounded-lg text-xs font-bold flex items-center justify-center space-x-2 transition-all cursor-pointer ${
+                        autoGenProfilesMode
+                          ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-xs'
+                          : 'text-[#64748b] hover:text-[#1e293b] dark:hover:text-[#f1f5f9]'
+                      }`}
+                    >
+                      <Zap className="w-4 h-4 fill-current" />
+                      <span>✨ Tự động sinh Profile mới theo Mẫu &amp; Tự hủy (Không cần chọn Profile)</span>
+                    </button>
+                  </div>
+
+                  {autoGenProfilesMode ? (
+                    /* Auto-Gen Configuration Card */
+                    <div className="space-y-4">
+                      {/* Banner */}
+                      <div className="bg-gradient-to-r from-blue-50/90 via-indigo-50/60 to-purple-50/90 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-purple-950/40 border border-blue-200/90 dark:border-blue-900/50 rounded-xl p-4 shadow-xs">
+                        <div className="flex items-center space-x-2.5">
+                          <div className="w-8 h-8 rounded-lg bg-[#1677ff] text-white flex items-center justify-center font-bold text-sm shadow-xs shrink-0">
+                            ✨
+                          </div>
+                          <div>
+                            <h3 className="text-sm font-bold text-[#1e293b] dark:text-[#f1f5f9]">
+                              Cơ chế Tự động sinh Profile mới theo Mẫu &amp; Tự hủy (Auto-Generate &amp; Self-Clean)
+                            </h3>
+                            <p className="text-xs text-[#64748b] dark:text-[#94a3b8] mt-0.5">
+                              Không cần tích chọn từng profile thủ công. Hệ thống tự động sinh số lượng profile mới tương ứng, gán proxy từ danh sách (tự động bỏ qua proxy chết) và sao chép 100% tiện ích mở rộng từ Profile mẫu.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        {/* CỘT 1: Số lượng Profile & Profile Mẫu */}
+                        <div className="space-y-4">
+                          {/* Khối 1: Số lượng profile */}
+                          <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-4 shadow-xs space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-[#e2e8f0] dark:border-[#1e293b]">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 rounded-md bg-blue-100 dark:bg-blue-950 text-[#1677ff] flex items-center justify-center font-bold text-xs">
+                                  1
+                                </div>
+                                <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                                  Số lượng Profile mới cần tự động sinh
+                                </span>
+                              </div>
+                              {useInputTxt && txtFilePath.trim() ? (
+                                <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold bg-emerald-50 dark:bg-emerald-950/50 px-2 py-0.5 rounded border border-emerald-200 dark:border-emerald-800">
+                                  Tự động theo file ở Configure ({detectedTxtLineCount !== null ? detectedTxtLineCount : '...'} profile)
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-blue-600 dark:text-blue-400 font-semibold bg-blue-50 dark:bg-blue-950/50 px-2 py-0.5 rounded border border-blue-200 dark:border-blue-800">
+                                  Thủ công
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="p-3 rounded-lg border border-[#e2e8f0] dark:border-[#1e293b] bg-slate-50/50 dark:bg-slate-900/30">
+                              <div className="flex items-center justify-between">
+                                <div className="space-y-0.5">
+                                  <span className="font-semibold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                                    Nhập số lượng Profile cần tạo thủ công:
+                                  </span>
+                                  {useInputTxt && txtFilePath.trim() && (
+                                    <div className="text-[10px] text-emerald-600 dark:text-emerald-400">
+                                      (Đang tự động theo file ở Configure: {detectedTxtLineCount ?? '...'} profile)
+                                    </div>
+                                  )}
+                                </div>
+                                <div className="flex items-center space-x-1.5">
+                                  <input
+                                    type="number"
+                                    min="1"
+                                    max="500"
+                                    value={autoGenCustomCount}
+                                    onChange={(e) => {
+                                      const val = Math.max(1, parseInt(e.target.value, 10) || 1);
+                                      setAutoGenCustomCount(val);
+                                      saveConfigForCurrentProject({ autoGenCustomCount: val });
+                                    }}
+                                    className="w-20 px-2 py-1 text-center bg-white dark:bg-[#0c1322] border border-[#cbd5e1] dark:border-[#334155] rounded text-xs font-bold text-[#1677ff] focus:outline-none focus:border-[#1677ff]"
+                                  />
+                                  <span className="text-xs text-[#64748b]">profile</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Khối 2: Profile UID Mẫu */}
+                          <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-4 shadow-xs space-y-3">
+                            <div className="flex items-center justify-between pb-2 border-b border-[#e2e8f0] dark:border-[#1e293b]">
+                              <div className="flex items-center space-x-2">
+                                <div className="w-6 h-6 rounded-md bg-purple-100 dark:bg-purple-950 text-purple-600 dark:text-purple-400 flex items-center justify-center font-bold text-xs">
+                                  2
+                                </div>
+                                <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                                  Profile UID Mẫu (Kế thừa Extensions &amp; Cài đặt)
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-purple-600 dark:text-purple-400 font-semibold bg-purple-50 dark:bg-purple-950/50 px-2 py-0.5 rounded border border-purple-200 dark:border-purple-800">
+                                Giống 100% gốc
+                              </span>
+                            </div>
+
+                            <div className="space-y-2">
+                              <div>
+                                <label className="text-xs font-semibold text-[#475569] dark:text-[#cbd5e1] block mb-1">
+                                  Nhập UID Profile mẫu hoặc chọn nhanh:
+                                </label>
+                                <div className="flex items-center space-x-2">
+                                  <input
+                                    type="text"
+                                    value={templateProfileUid}
+                                    onChange={(e) => {
+                                      const val = e.target.value.trim();
+                                      setTemplateProfileUid(val);
+                                      saveConfigForCurrentProject({ templateProfileUid: val });
+                                    }}
+                                    placeholder="e.g. 80c3e196-40a3-42bb-8a62-4cfdab1340c4"
+                                    className="flex-1 font-mono text-xs px-3 py-1.5 bg-slate-50 dark:bg-[#0a0f1d] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff]"
+                                  />
+                                  <select
+                                    value={templateProfileUid}
+                                    onChange={(e) => {
+                                      const val = e.target.value;
+                                      setTemplateProfileUid(val);
+                                      saveConfigForCurrentProject({ templateProfileUid: val });
+                                    }}
+                                    className="px-2.5 py-1.5 text-xs bg-white dark:bg-[#0f172a] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer max-w-[170px]"
+                                  >
+                                    <option value="">-- Chọn nhanh Profile --</option>
+                                    {profiles.map((p) => (
+                                      <option key={p.id} value={p.id}>
+                                        {p.name} ({String(p.id).slice(0, 8)}...)
+                                      </option>
+                                    ))}
+                                  </select>
+                                </div>
+                              </div>
+
+                              {/* Chi tiết Profile Mẫu */}
+                              <div className="p-3 bg-purple-50/50 dark:bg-purple-950/20 border border-purple-200/80 dark:border-purple-900/40 rounded-lg space-y-1.5 text-xs">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-bold text-[#1e293b] dark:text-[#f1f5f9]">
+                                    {templateProfileInfo?.name || 'New profile 048'}
+                                  </span>
+                                  <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-purple-100 dark:bg-purple-900/60 text-purple-800 dark:text-purple-300">
+                                    {templateProfileInfo?.browser?.name || 'chrome'} {templateProfileInfo?.browser?.version || '153.0.8010.53'}
+                                  </span>
+                                </div>
+                                <div className="text-[11px] text-[#64748b] font-mono truncate" title={templateProfileInfo?.storage_path}>
+                                  📁 {templateProfileInfo?.storage_path || 'D:\\Phần mềm\\GPMLoginGlobal-v1\\profiles_data\\80c3e196-40a3-42bb-8a62-4cfdab1340c4'}
+                                </div>
+                                <div className="pt-1.5 border-t border-purple-200/60 dark:border-purple-900/40 flex flex-wrap gap-1.5">
+                                  <span className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950/60 text-emerald-800 dark:text-emerald-300 text-[10px] font-bold rounded flex items-center space-x-1">
+                                    <span>✔</span>
+                                    <span>Chế độ nhà phát triển (Dev Mode): BẬT</span>
+                                  </span>
+                                  <span className="px-2 py-0.5 bg-indigo-100 dark:bg-indigo-950/60 text-indigo-800 dark:text-indigo-300 text-[10px] font-bold rounded flex items-center space-x-1">
+                                    <span>✔</span>
+                                    <span>Cho phép ở chế độ ẩn danh (Allow in Incognito): BẬT</span>
+                                  </span>
+                                  <span className="px-2 py-0.5 bg-blue-100 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 text-[10px] font-bold rounded flex items-center space-x-1">
+                                    <span>✔</span>
+                                    <span>Đồng bộ 100% Extensions (Raptor ReCaptcha, v.v.)</span>
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CỘT 2: Cấu hình Proxy & Tự động làm sạch */}
+                        <div className="space-y-4">
+                          {renderProxyConfigBlock('3. Cấu hình Proxy cho Profile')}
+
+                          {/* Khối 4: Cam kết tự hủy & làm sạch vĩnh viễn */}
+                          <div className="bg-slate-50 dark:bg-[#0c1322] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-3.5 space-y-1.5 text-xs">
+                            <div className="flex items-center space-x-2 text-emerald-600 dark:text-emerald-400 font-bold">
+                              <Shield className="w-4 h-4" />
+                              <span>Tự động Xóa vĩnh viễn (Self-Clean):</span>
+                            </div>
+                            <p className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                              Toàn bộ các Profile mới tạo trong phiên chạy này sẽ được tự động đóng và <strong>xóa vĩnh viễn</strong> (xóa khỏi cơ sở dữ liệu SV Browser và xóa sạch thư mục dữ liệu trên ổ cứng) ngay khi chạy xong, gặp lỗi hoặc bấm nút Stop.
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    /* Existing manual selection controls and table */
+                    <div className="flex-1 min-h-0 flex flex-col space-y-2">
+                      {/* Controls Row: Engine, Provider, API status */}
+                      <div className="shrink-0 flex items-center space-x-2.5">
                     {/* Engine selector */}
                     <div className="relative">
                       <button
@@ -7267,7 +9752,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   </div>
 
                   {/* Filter Toolbar */}
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="shrink-0 flex flex-wrap items-center gap-2">
                     {/* Group Filter */}
                     <div className="relative min-w-[130px]">
                       <select
@@ -7309,19 +9794,49 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </div>
 
                     {/* Search Input */}
-                    <div className="relative flex-1 min-w-[170px]">
+                    <div className="relative flex-1 min-w-[200px]">
                       <Search className="w-3.5 h-3.5 text-[#94a3b8] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                       <input
                         type="text"
-                        placeholder="Tìm tên, nhóm, core, thẻ tag..."
+                        placeholder="Tìm tên, nhóm, core, thẻ tag hoặc dán list UID..."
                         value={searchQuery}
                         onChange={(e) => {
                           setSearchQuery(e.target.value);
                           setCurrentPage(1);
                         }}
-                        className="w-full pl-9 pr-3 py-1.5 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs text-[#1e293b] dark:text-[#f1f5f9] placeholder-[#94a3b8] focus:outline-none focus:border-[#1677ff]"
+                        className="w-full pl-9 pr-8 py-1.5 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs text-[#1e293b] dark:text-[#f1f5f9] placeholder-[#94a3b8] focus:outline-none focus:border-[#1677ff]"
+                        title="Tìm kiếm profile theo tên, nhóm, core, thẻ tag hoặc dán 1 hoặc nhiều UID (ngăn cách bởi dấu phẩy, khoảng trắng, xuống dòng)"
                       />
+                      {searchQuery.trim() && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery('');
+                            setCurrentPage(1);
+                          }}
+                          className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#94a3b8] hover:text-[#475569] dark:hover:text-[#cbd5e1] p-0.5 rounded cursor-pointer"
+                          title="Xóa tìm kiếm"
+                        >
+                          <X className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
+
+                    {/* Button Nhập danh sách UID */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (searchQuery.includes('\n') || searchQuery.includes(',') || searchQuery.includes(';')) {
+                          setBatchUidText(searchQuery);
+                        }
+                        setShowBatchUidModal(true);
+                      }}
+                      className="px-2.5 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60 border border-blue-200 dark:border-blue-800 rounded-md text-xs font-semibold text-[#1677ff] dark:text-[#38bdf8] flex items-center space-x-1.5 transition-colors cursor-pointer shrink-0 shadow-2xs"
+                      title="Mở hộp thoại dán danh sách Profile UID / ID từ Excel hoặc TXT để chọn hàng loạt"
+                    >
+                      <Clipboard className="w-3.5 h-3.5" />
+                      <span>Nhập danh sách UID</span>
+                    </button>
 
                     {/* Sort Dropdown */}
                     <div className="relative min-w-[160px]">
@@ -7360,8 +9875,60 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </button>
                   </div>
 
+                  {/* Banner khi tìm kiếm có kết quả hoặc đang lọc nhiều UID */}
+                  {searchQuery.trim() && (
+                    <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-blue-50/90 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/50 rounded-lg text-xs">
+                      <div className="flex items-center space-x-2 text-[#1e293b] dark:text-[#f1f5f9]">
+                        <Search className="w-3.5 h-3.5 text-[#1677ff] shrink-0" />
+                        <span>
+                          Kết quả tìm kiếm: Khớp <strong>{filteredProfiles.length}</strong> / {profiles.length} profile
+                        </span>
+                        {filteredProfiles.length > 0 && (
+                          <span className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                            ({filteredProfiles.filter((p) => selectedProfileIds.includes(String(p.id))).length} đã chọn)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        {filteredProfiles.length > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const filteredIds = filteredProfiles.map((p) => String(p.id));
+                              const allSelected = filteredIds.every((id) => selectedProfileIds.includes(id));
+                              if (allSelected) {
+                                const idSet = new Set(filteredIds);
+                                updateSelectedProfiles(selectedProfileIds.filter((id) => !idSet.has(id)));
+                              } else {
+                                updateSelectedProfiles(Array.from(new Set([...selectedProfileIds, ...filteredIds])));
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-[#1677ff] hover:bg-blue-600 text-white rounded font-medium flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
+                          >
+                            <CheckSquare className="w-3.5 h-3.5" />
+                            <span>
+                              {filteredProfiles.every((p) => selectedProfileIds.includes(String(p.id)))
+                                ? 'Bỏ chọn các profile này'
+                                : `Chọn tất cả ${filteredProfiles.length} profile tìm thấy`}
+                            </span>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSearchQuery('');
+                            setCurrentPage(1);
+                          }}
+                          className="px-2 py-1 bg-white dark:bg-[#0f172a] hover:bg-slate-100 dark:hover:bg-slate-800 border border-[#cbd5e1] dark:border-[#334155] rounded text-[#64748b] transition-colors cursor-pointer"
+                        >
+                          Xóa tìm kiếm
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   {/* Quick Selection Toolbar (Select All Ctrl+A, Deselect All, Invert, Count) */}
-                  <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#f8fafc] dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg text-xs">
+                  <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-[#f8fafc] dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg text-xs">
                     <div className="flex items-center space-x-2">
                       <button
                         type="button"
@@ -7416,6 +9983,31 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                           Saved
                         </span>
                       )}
+
+                      {/* Top Quick Pagination */}
+                      <div className="flex items-center space-x-1 pl-2.5 border-l border-[#e2e8f0] dark:border-[#1e293b]">
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                          disabled={safeCurrentPage <= 1}
+                          className="px-1.5 py-0.5 bg-white dark:bg-[#0a0f1d] hover:bg-slate-100 dark:hover:bg-slate-800 border border-[#d9d9d9] dark:border-[#1e293b] rounded text-[#64748b] hover:text-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer text-xs font-bold leading-none"
+                          title="Trang trước"
+                        >
+                          ‹
+                        </button>
+                        <span className="text-[#64748b] dark:text-[#94a3b8] font-medium text-xs whitespace-nowrap">
+                          Trang <span className="font-bold text-[#1e293b] dark:text-[#f1f5f9]">{safeCurrentPage}</span> / {totalPages}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                          disabled={safeCurrentPage >= totalPages}
+                          className="px-1.5 py-0.5 bg-white dark:bg-[#0a0f1d] hover:bg-slate-100 dark:hover:bg-slate-800 border border-[#d9d9d9] dark:border-[#1e293b] rounded text-[#64748b] hover:text-[#1677ff] disabled:opacity-40 disabled:cursor-not-allowed transition-colors cursor-pointer text-xs font-bold leading-none"
+                          title="Trang sau"
+                        >
+                          ›
+                        </button>
+                      </div>
                     </div>
                   </div>
 
@@ -7423,10 +10015,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                   <div
                     tabIndex={0}
                     title="Click in the table and press Ctrl+A to select all profiles, or Shift+Click to select a range"
-                    className="border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg overflow-hidden bg-white dark:bg-[#0f172a] shadow-2xs focus:outline-none focus:ring-1 focus:ring-[#1677ff]/50"
+                    className="flex-1 min-h-0 border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg overflow-hidden bg-white dark:bg-[#0f172a] shadow-2xs flex flex-col focus:outline-none focus:ring-1 focus:ring-[#1677ff]/50"
                   >
                     {/* Header */}
-                    <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#f8fafc] dark:bg-[#0a0f1d] border-b border-[#e2e8f0] dark:border-[#1e293b] text-xs font-semibold text-[#64748b] dark:text-[#94a3b8] items-center select-none">
+                    <div className="shrink-0 grid grid-cols-12 gap-2 px-4 py-2.5 bg-[#f8fafc] dark:bg-[#0a0f1d] border-b border-[#e2e8f0] dark:border-[#1e293b] text-xs font-semibold text-[#64748b] dark:text-[#94a3b8] items-center select-none">
                       <div className="col-span-1 flex items-center">
                         <input
                           type="checkbox"
@@ -7470,7 +10062,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </div>
 
                     {/* Table Rows */}
-                    <div className="divide-y divide-[#f1f5f9] dark:divide-[#1e293b] max-h-[380px] overflow-y-auto">
+                    <div className="flex-1 min-h-0 overflow-y-auto divide-y divide-[#f1f5f9] dark:divide-[#1e293b]">
                       {isLoadingProfiles ? (
                         <div className="py-16 flex flex-col items-center justify-center text-[#64748b] space-y-2">
                           <RefreshCw className="w-6 h-6 animate-spin text-[#1677ff]" />
@@ -7560,7 +10152,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     </div>
 
                     {/* Pagination Bar with Per-Page Input & Page Navigator */}
-                    <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-2.5 bg-[#f8fafc] dark:bg-[#0a0f1d] border-t border-[#e2e8f0] dark:border-[#1e293b] text-xs select-none">
+                    <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 py-2 bg-[#f8fafc] dark:bg-[#0a0f1d] border-t border-[#e2e8f0] dark:border-[#1e293b] text-xs select-none">
                       {/* Left: Info */}
                       <div className="flex items-center space-x-1.5 text-[#64748b] dark:text-[#94a3b8]">
                         <span>Hiển thị</span>
@@ -7707,11 +10299,612 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       </div>
                     </div>
                   </div>
+                  {/* Batch UID Selector Modal Dialog */}
+                  {showBatchUidModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+                      <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh] animate-in fade-in duration-150">
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-5 py-3.5 border-b border-[#e2e8f0] dark:border-[#1e293b] bg-[#f8fafc] dark:bg-[#0a0f1d]">
+                          <div className="flex items-center space-x-2.5">
+                            <div className="w-7 h-7 rounded-lg bg-blue-100 dark:bg-blue-950 text-[#1677ff] dark:text-[#38bdf8] flex items-center justify-center font-bold">
+                              <Clipboard className="w-4 h-4" />
+                            </div>
+                            <div>
+                              <h3 className="font-bold text-sm text-[#1e293b] dark:text-[#f1f5f9]">
+                                Chọn Profile theo danh sách UID / ID
+                              </h3>
+                              <p className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                                Dán danh sách UID hoặc ID từ Excel, file text để tự động tích chọn hàng loạt
+                              </p>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setShowBatchUidModal(false)}
+                            className="text-[#94a3b8] hover:text-[#1e293b] dark:hover:text-[#f1f5f9] p-1 rounded-md cursor-pointer transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+
+                        {/* Body */}
+                        <div className="p-5 space-y-3.5 overflow-y-auto text-xs">
+                          <div>
+                            <label className="font-semibold text-[#334155] dark:text-[#cbd5e1] block mb-1">
+                              Dán danh sách UID / ID (mỗi dòng 1 UID hoặc phân tách bằng dấu phẩy, khoảng trắng):
+                            </label>
+                            <textarea
+                              rows={6}
+                              value={batchUidText}
+                              onChange={(e) => setBatchUidText(e.target.value)}
+                              placeholder={`Ví dụ:\n80c3e196-40a3-42bb-8a62-4cfdab1340c4\nhcpjeonnmekeigmedgjjgemkofldjpfg\nNew profile 042\nNew profile 043`}
+                              className="w-full p-2.5 font-mono text-xs bg-[#fafbfc] dark:bg-[#050a15] border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] placeholder-[#94a3b8] focus:outline-none focus:border-[#1677ff] focus:ring-1 focus:ring-[#1677ff]"
+                            />
+                          </div>
+
+                          {/* Live Match Stats */}
+                          <div className="p-3 rounded-lg bg-[#f8fafc] dark:bg-[#0a0f1d] border border-[#e2e8f0] dark:border-[#1e293b] space-y-1.5">
+                            <div className="flex items-center justify-between font-medium">
+                              <span className="text-[#64748b]">Số UID đã nhập:</span>
+                              <span className="font-bold text-[#1e293b] dark:text-[#f1f5f9]">{parsedBatchUids.length}</span>
+                            </div>
+                            <div className="flex items-center justify-between font-medium">
+                              <span className="text-[#64748b]">Khớp trong danh sách:</span>
+                              <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                                {matchedBatchProfiles.length} / {profiles.length} profile
+                              </span>
+                            </div>
+                            {unmatchedBatchUids.length > 0 && (
+                              <div className="pt-1.5 border-t border-[#e2e8f0] dark:border-[#1e293b]">
+                                <div className="flex items-center justify-between text-amber-600 dark:text-amber-400 font-medium">
+                                  <span>Không tìm thấy trong hệ thống:</span>
+                                  <span className="font-bold">{unmatchedBatchUids.length} UID</span>
+                                </div>
+                                <div className="text-[10px] text-[#94a3b8] mt-1 max-h-16 overflow-y-auto font-mono bg-white dark:bg-[#050a15] p-1.5 rounded border border-[#e2e8f0] dark:border-[#1e293b]">
+                                  {unmatchedBatchUids.join(', ')}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Mode: Append or Replace */}
+                          <div className="space-y-1.5 pt-1">
+                            <label className="font-semibold text-[#334155] dark:text-[#cbd5e1] block">
+                              Chế độ chọn:
+                            </label>
+                            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4">
+                              <label className="flex items-center space-x-2 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="batchUidMode"
+                                  checked={batchUidMode === 'append'}
+                                  onChange={() => setBatchUidMode('append')}
+                                  className="text-[#1677ff] focus:ring-0"
+                                />
+                                <span className="text-[#1e293b] dark:text-[#f1f5f9]">
+                                  Thêm vào danh sách đã chọn ({selectedProfileIds.length})
+                                </span>
+                              </label>
+                              <label className="flex items-center space-x-2 cursor-pointer">
+                                <input
+                                  type="radio"
+                                  name="batchUidMode"
+                                  checked={batchUidMode === 'replace'}
+                                  onChange={() => setBatchUidMode('replace')}
+                                  className="text-[#1677ff] focus:ring-0"
+                                />
+                                <span className="text-[#1e293b] dark:text-[#f1f5f9]">
+                                  Thay thế (Chỉ chọn danh sách này)
+                                </span>
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="flex items-center justify-between px-5 py-3 border-t border-[#e2e8f0] dark:border-[#1e293b] bg-[#f8fafc] dark:bg-[#0a0f1d]">
+                          <button
+                            type="button"
+                            onClick={() => setBatchUidText('')}
+                            disabled={!batchUidText.trim()}
+                            className="px-3 py-1.5 border border-[#cbd5e1] dark:border-[#334155] rounded-lg text-[#64748b] hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 cursor-pointer"
+                          >
+                            Xóa trắng
+                          </button>
+
+                          <div className="flex items-center space-x-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (parsedBatchUids.length > 0) {
+                                  setSearchQuery(parsedBatchUids.join('\n'));
+                                  setCurrentPage(1);
+                                }
+                                setShowBatchUidModal(false);
+                              }}
+                              disabled={parsedBatchUids.length === 0}
+                              className="px-3 py-1.5 border border-[#1677ff] text-[#1677ff] dark:text-[#38bdf8] hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded-lg font-semibold disabled:opacity-40 cursor-pointer"
+                              title="Lọc danh sách hiển thị trên bảng theo các UID này"
+                            >
+                              🔍 Chỉ lọc trên bảng
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (matchedBatchIds.length > 0) {
+                                  let next: string[] = [];
+                                  if (batchUidMode === 'replace') {
+                                    next = matchedBatchIds;
+                                  } else {
+                                    next = Array.from(new Set([...selectedProfileIds, ...matchedBatchIds]));
+                                  }
+                                  updateSelectedProfiles(next);
+                                }
+                                setShowBatchUidModal(false);
+                              }}
+                              disabled={matchedBatchProfiles.length === 0}
+                              className="px-4 py-1.5 bg-[#1677ff] hover:bg-blue-600 text-white rounded-lg font-semibold flex items-center space-x-1.5 shadow-xs disabled:opacity-40 cursor-pointer"
+                            >
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Chọn {matchedBatchProfiles.length} profile</span>
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+
+              {/* ================= STEP 4: TẠO PROFILE MỚI & XÓA VĨNH VIỄN (Step 4 / 5) ================= */}
+              {step === 4 && (
+                <div className="max-w-6xl xl:max-w-7xl mx-auto space-y-4">
+                  {/* Top Header Card */}
+                  <div className="bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-emerald-50/80 dark:from-blue-950/40 dark:via-indigo-950/30 dark:to-emerald-950/40 border border-blue-200/80 dark:border-blue-900/50 rounded-xl p-4 shadow-xs flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-1">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-lg">✨</span>
+                        <h3 className="text-sm font-bold text-[#1e293b] dark:text-[#f1f5f9]">
+                          Cấu hình Tự tạo Profile mới &amp; Xóa vĩnh viễn sau khi chạy
+                        </h3>
+                        <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800">
+                          Auto-Clone &amp; Self-Clean
+                        </span>
+                      </div>
+                      <p className="text-xs text-[#64748b] dark:text-[#94a3b8] max-w-3xl">
+                        {autoGenProfilesMode ? (
+                          <>
+                            Tự động sinh <strong>{getEstimatedProfileCount()} Profile mới</strong> theo Profile Mẫu (UID: <code className="font-mono text-blue-600 dark:text-blue-400">{templateProfileUid || '80c3e196-40a3-42bb-8a62-4cfdab1340c4'}</code>): Đồng bộ <strong>100% Extensions (Bật Chế độ nhà phát triển &amp; Cho phép ở chế độ ẩn danh)</strong>, gán Proxy {proxyMode === 'rotating' ? `Xoay API (Đổi IP theo từng đợt ${numThreads} luồng)` : `từ danh sách${checkProxyBeforeCreate ? ' (tự động kiểm tra sống trước khi tạo)' : ''}`}. Profile mới sẽ <strong>tự động xóa vĩnh viễn</strong> ngay khi chạy xong, gặp lỗi hoặc bấm Stop.
+                          </>
+                        ) : (
+                          <>
+                            Tự động nhân bản các profile đã chọn thành profile mới tạm thời: Giữ nguyên <strong>Tên</strong>, <strong>Proxy</strong>, <strong>Trình duyệt (Browser Core/Version)</strong> và <strong>Đồng bộ toàn bộ Extensions (kích hoạt sẵn Allow in Incognito)</strong>.
+                            Profile mới sẽ chạy và <strong>tự động xóa vĩnh viễn</strong> (xóa database và thư mục dữ liệu trên ổ cứng) ngay khi chạy xong, gặp lỗi hoặc bấm Stop.
+                          </>
+                        )}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center space-x-2">
+                      <button
+                        onClick={() => goToStep(3)}
+                        className="px-3 py-1.5 rounded-lg border border-[#cbd5e1] dark:border-[#1e293b] bg-white dark:bg-[#0f172a] text-xs font-medium text-[#475569] dark:text-[#cbd5e1] hover:border-[#1677ff] cursor-pointer transition-colors"
+                      >
+                        ← {autoGenProfilesMode ? `Đổi cấu hình Auto-Gen (${getEstimatedProfileCount()} profiles)` : `Đổi danh sách Profile (${selectedProfileIds.length})`}
+                      </button>
+                      <button
+                        disabled={autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0}
+                        onClick={handleContinue}
+                        className={`px-4 py-1.5 rounded-lg text-xs font-bold flex items-center space-x-1.5 shadow-xs transition-colors ${
+                          (autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0)
+                            ? 'bg-slate-200 dark:bg-slate-800 text-[#94a3b8] cursor-not-allowed'
+                            : 'bg-[#1677ff] hover:bg-blue-600 text-white cursor-pointer'
+                        }`}
+                      >
+                        <Play className="w-3.5 h-3.5 fill-current" />
+                        <span>Bắt đầu chạy ngay</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Settings Grid */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    {/* Mode 1: Auto clone & Self clean toggle */}
+                    <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-4 space-y-3 shadow-xs md:col-span-2">
+                      <div className="flex items-center justify-between pb-2 border-b border-[#e2e8f0] dark:border-[#1e293b]">
+                        <div className="flex items-center space-x-2">
+                          <div className="w-6 h-6 rounded-md bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold text-xs">
+                            1
+                          </div>
+                          <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                            Cơ chế hoạt động Profile
+                          </span>
+                        </div>
+
+                        <label className="relative inline-flex items-center cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={autoCloneProfile}
+                            onChange={(e) => {
+                              setAutoCloneProfile(e.target.checked);
+                              saveConfigForCurrentProject({ autoCloneProfile: e.target.checked });
+                            }}
+                            className="sr-only peer"
+                          />
+                          <div className="w-11 h-6 bg-slate-200 peer-focus:outline-hidden rounded-full peer dark:bg-slate-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-slate-600 peer-checked:bg-emerald-600"></div>
+                          <span className="ml-2 text-xs font-semibold text-emerald-700 dark:text-emerald-400">
+                            {autoCloneProfile ? 'BẬT (Khuyên dùng)' : 'TẮT'}
+                          </span>
+                        </label>
+                      </div>
+
+                      <div className="space-y-2 text-xs">
+                        <div className="flex items-start space-x-2 text-[#334155] dark:text-[#cbd5e1]">
+                          <span className="text-emerald-600 font-bold">✔</span>
+                          <div>
+                            <strong>Tên Profile mới:</strong> Giữ nguyên giống hệt tên profile gốc đã chọn (ví dụ: <code className="text-blue-600 dark:text-blue-400 font-mono text-[11px]">{profiles.find((p) => selectedProfileIds.includes(String(p.id)))?.name || 'Profile_01'}</code>).
+                          </div>
+                        </div>
+                        <div className="flex items-start space-x-2 text-[#334155] dark:text-[#cbd5e1]">
+                          <span className="text-emerald-600 font-bold">✔</span>
+                          <div>
+                            <strong>Proxy &amp; Trình duyệt:</strong> Giữ nguyên địa chỉ Proxy (Host:Port:User:Pass) và phiên bản trình duyệt Core Chrome từ profile gốc đã chọn.
+                          </div>
+                        </div>
+                        <div className="flex items-start space-x-2 text-[#334155] dark:text-[#cbd5e1]">
+                          <span className="text-emerald-600 font-bold">✔</span>
+                          <div>
+                            <strong>Đồng bộ Extensions (Allow in Incognito):</strong> Sao chép toàn bộ các tiện ích mở rộng (Extensions) từ profile gốc và tự động bật <strong>Cho phép ở chế độ ẩn danh (Allow in Incognito)</strong> giống hệt profile gốc.
+                          </div>
+                        </div>
+                        <div className="flex items-start space-x-2 text-[#334155] dark:text-[#cbd5e1]">
+                          <span className="text-emerald-600 font-bold">✔</span>
+                          <div>
+                            <strong>Tự động Xóa vĩnh viễn:</strong> Khi luồng hoàn thành, gặp lỗi dừng, hoặc người dùng nhấn Dừng (Stop All), hệ thống sẽ đóng Chrome và xóa vĩnh viễn profile mới này khỏi SV Browser kèm xoá folder storage trên ổ đĩa.
+                          </div>
+                        </div>
+                        {!autoCloneProfile && (
+                          <div className="p-2.5 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg text-amber-800 dark:text-amber-300 text-[11px] flex items-center space-x-2 mt-2">
+                            <AlertTriangle className="w-4 h-4 shrink-0" />
+                            <span>
+                              Đang tắt chế độ tạo profile mới: Hệ thống sẽ mở và chạy trực tiếp trên các profile gốc đã chọn (không tạo profile mới và không xóa).
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Mode 2: Quick Features Inherited */}
+                    <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-4 space-y-3 shadow-xs">
+                      <div className="flex items-center space-x-2 pb-2 border-b border-[#e2e8f0] dark:border-[#1e293b]">
+                        <div className="w-6 h-6 rounded-md bg-blue-100 dark:bg-blue-950/60 text-[#1677ff] dark:text-[#38bdf8] flex items-center justify-center font-bold text-xs">
+                          2
+                        </div>
+                        <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                          Tính năng đã cấu hình
+                        </span>
+                      </div>
+
+                      <div className="space-y-2.5 text-xs">
+                        {/* Incognito mode toggle */}
+                        <label className="flex items-center justify-between cursor-pointer p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <div className="flex items-center space-x-2">
+                            <EyeOff className="w-4 h-4 text-indigo-500" />
+                            <div>
+                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Mở ẩn danh (start-incognito)</div>
+                              <div className="text-[10px] text-[#64748b]">Không lưu cache/cookie</div>
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={hideWindowWhenDone}
+                            onChange={(e) => {
+                              setHideWindowWhenDone(e.target.checked);
+                              saveConfigForCurrentProject({ hideWindowWhenDone: e.target.checked });
+                            }}
+                            className="rounded text-[#1677ff] cursor-pointer"
+                          />
+                        </label>
+
+                        {/* Virtual mouse toggle */}
+                        <label className="flex items-center justify-between cursor-pointer p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <div className="flex items-center space-x-2">
+                            <MousePointer className="w-4 h-4 text-red-500" />
+                            <div>
+                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Chuột ảo (Con trỏ đỏ)</div>
+                              <div className="text-[10px] text-[#64748b]">Di chuyển &amp; click độc lập</div>
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={useVirtualMouse}
+                            onChange={(e) => {
+                              setUseVirtualMouse(e.target.checked);
+                              localStorage.setItem('gpm_use_virtual_mouse', String(e.target.checked));
+                            }}
+                            className="rounded text-[#1677ff] cursor-pointer"
+                          />
+                        </label>
+
+                        {/* Auto tile windows */}
+                        <label className="flex items-center justify-between cursor-pointer p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <div className="flex items-center space-x-2">
+                            <Layout className="w-4 h-4 text-emerald-500" />
+                            <div>
+                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Chia lưới cửa sổ</div>
+                              <div className="text-[10px] text-[#64748b]">Tự xếp đều từ góc trái</div>
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={autoTileWindows}
+                            onChange={(e) => {
+                              setAutoTileWindows(e.target.checked);
+                              saveConfigForCurrentProject({ autoTileWindows: e.target.checked });
+                            }}
+                            className="rounded text-[#1677ff] cursor-pointer"
+                          />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Profiles Preview Table */}
+                  <div className="bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl overflow-hidden shadow-xs">
+                    <div className="px-4 py-3 bg-[#fafbfc] dark:bg-[#0c1322] border-b border-[#e2e8f0] dark:border-[#1e293b] flex items-center justify-between">
+                      <div className="flex items-center space-x-2">
+                        <Users className="w-4 h-4 text-[#1677ff]" />
+                        <span className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">
+                          Bảng xem trước danh sách Profile sẽ chạy ({autoGenProfilesMode ? getEstimatedProfileCount() : selectedProfileIds.length} profiles)
+                        </span>
+                      </div>
+                      <span className="text-[11px] text-[#64748b]">
+                        {autoGenProfilesMode
+                          ? `✨ Tự động sinh ${getEstimatedProfileCount()} profile từ Mẫu (Tự xóa vĩnh viễn)`
+                          : autoCloneProfile
+                          ? '✨ Sẽ tự tạo profile mới cùng tên & xóa vĩnh viễn'
+                          : '⚡ Chạy trực tiếp trên profile gốc'}
+                      </span>
+                    </div>
+
+                    <div className="overflow-x-auto max-h-[340px]">
+                      <table className="w-full text-left border-collapse text-xs">
+                        <thead className="bg-[#f1f5f9] dark:bg-[#162236] text-[#475569] dark:text-[#cbd5e1] font-semibold sticky top-0 z-10 text-[11px]">
+                          <tr>
+                            <th className="py-2.5 px-3 w-12 text-center">STT</th>
+                            <th className="py-2.5 px-3">{autoGenProfilesMode ? 'Profile Mẫu Kế Thừa' : 'Profile Gốc (Đã chọn)'}</th>
+                            <th className="py-2.5 px-3">Profile Mới Sẽ Tạo</th>
+                            <th className="py-2.5 px-3">Proxy</th>
+                            <th className="py-2.5 px-3">Browser / Core</th>
+                            <th className="py-2.5 px-3 text-center">Extensions</th>
+                            <th className="py-2.5 px-3 text-center">Chế độ</th>
+                            <th className="py-2.5 px-3 text-center">Xóa sau khi chạy</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#e2e8f0] dark:divide-[#1e293b]">
+                          {autoGenProfilesMode ? (
+                            getEstimatedProfileCount() === 0 ? (
+                              <tr>
+                                <td colSpan={8} className="py-8 text-center text-[#94a3b8]">
+                                  Chưa cấu hình số lượng profile cần tự động sinh. Vui lòng quay lại Bước 3 để cấu hình.
+                                </td>
+                              </tr>
+                            ) : (
+                              (() => {
+                                const total = getEstimatedProfileCount();
+                                const proxyLines = (proxyListText || '')
+                                  .split('\n')
+                                  .map((p) => p.trim())
+                                  .filter(Boolean);
+                                const templName = templateProfileInfo?.name || 'New profile 048';
+                                const templCore = templateProfileInfo?.browser?.name || 'chrome';
+                                const templVer = templateProfileInfo?.browser?.version || '153.0.8010.53';
+
+                                return Array.from({ length: total }).map((_, idx) => {
+                                  const isRotating = proxyMode === 'rotating';
+                                  const batchNumber = Math.floor(idx / Math.max(1, numThreads)) + 1;
+                                  const assignedProxy = isRotating
+                                    ? `Proxy Xoay (Đợt #${batchNumber})`
+                                    : (proxyLines.length > 0 ? proxyLines[idx % proxyLines.length] : '');
+                                  return (
+                                    <tr
+                                      key={idx}
+                                      className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors"
+                                    >
+                                      <td className="py-2.5 px-3 text-center font-mono text-[#64748b]">
+                                        {idx + 1}
+                                      </td>
+                                      <td className="py-2.5 px-3 font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
+                                        <div className="flex items-center space-x-1.5">
+                                          <span>🌐</span>
+                                          <span>{templName}</span>
+                                          <span className="text-[10px] text-[#64748b] font-mono">
+                                            ({templateProfileUid ? `${templateProfileUid.slice(0, 8)}...` : 'Mẫu'})
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td className="py-2.5 px-3 font-medium text-emerald-700 dark:text-emerald-400">
+                                        <div className="flex items-center space-x-1">
+                                          <span className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 font-semibold">
+                                            {templName} (Auto #{idx + 1})
+                                          </span>
+                                          <span className="text-[10px] text-slate-500 italic">
+                                            (Tự sinh • ID mới)
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td className="py-2.5 px-3 font-mono text-[11px] text-[#475569] dark:text-[#94a3b8]">
+                                        {isRotating ? (
+                                          <div className="flex items-center space-x-1.5">
+                                            <span className="px-2 py-0.5 rounded bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-blue-600 dark:text-blue-400 font-semibold flex items-center space-x-1">
+                                              <RotateCcw className="w-3 h-3 text-blue-500" />
+                                              <span>{assignedProxy}</span>
+                                            </span>
+                                            <span className="text-[10px] text-slate-500 italic">
+                                              (Chung IP cho {numThreads} luồng)
+                                            </span>
+                                          </div>
+                                        ) : assignedProxy ? (
+                                          <div className="flex items-center space-x-1.5">
+                                            <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400">
+                                              {assignedProxy}
+                                            </span>
+                                            {checkProxyBeforeCreate && (
+                                              <span
+                                                className="text-[10px] text-emerald-600 dark:text-emerald-400 font-sans"
+                                                title="Kiểm tra proxy trước khi tạo, nếu die sẽ bỏ qua không sinh profile"
+                                              >
+                                                ✓ Check live
+                                              </span>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-slate-400 italic">Direct / No proxy</span>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-[#475569] dark:text-[#cbd5e1]">
+                                        <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] font-mono">
+                                          {templCore} {templVer.split('.')[0] || ''}
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        <span
+                                          className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 inline-flex items-center space-x-1"
+                                          title="Đồng bộ 100% extensions của profile mẫu, tự động bật Chế độ nhà phát triển và Cho phép ở chế độ ẩn danh"
+                                        >
+                                          <span>🧩</span>
+                                          <span>100% Giống Mẫu (Dev &amp; Incognito)</span>
+                                        </span>
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center">
+                                        {hideWindowWhenDone ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                            Ẩn danh (Incognito)
+                                          </span>
+                                        ) : (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                            Bình thường
+                                          </span>
+                                        )}
+                                      </td>
+                                      <td className="py-2.5 px-3 text-center font-semibold">
+                                        <span className="px-2 py-0.5 rounded text-[10px] bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400 border border-red-200 dark:border-red-900 inline-flex items-center space-x-1">
+                                          <span>🗑 Xóa vĩnh viễn</span>
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                });
+                              })()
+                            )
+                          ) : selectedProfileIds.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} className="py-8 text-center text-[#94a3b8]">
+                                Chưa chọn profile nào ở Bước 3. Vui lòng quay lại Bước 3 để chọn profile.
+                              </td>
+                            </tr>
+                          ) : (
+                            selectedProfileIds.map((pId, idx) => {
+                              const prof = profiles.find((p) => String(p.id) === String(pId));
+                              const profName = prof?.name || `Profile #${pId}`;
+                              const proxyVal =
+                                workerProxies[idx + 1]?.trim() ||
+                                prof?.raw_proxy ||
+                                (prof as any)?.proxy ||
+                                (prof as any)?.profileProxy ||
+                                '';
+                              const browserName = prof?.browser?.name || 'chrome';
+                              const browserVer = prof?.browser?.version || '154.0.8037.58';
+
+                              return (
+                                <tr
+                                  key={pId}
+                                  className="hover:bg-blue-50/40 dark:hover:bg-blue-950/20 transition-colors"
+                                >
+                                  <td className="py-2.5 px-3 text-center font-mono text-[#64748b]">
+                                    {idx + 1}
+                                  </td>
+                                  <td className="py-2.5 px-3 font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
+                                    <div className="flex items-center space-x-1.5">
+                                      <span>🌐</span>
+                                      <span>{profName}</span>
+                                      <span className="text-[10px] text-[#64748b] font-mono">(ID: {pId})</span>
+                                    </div>
+                                  </td>
+                                  <td className="py-2.5 px-3 font-medium text-emerald-700 dark:text-emerald-400">
+                                    {autoCloneProfile ? (
+                                      <div className="flex items-center space-x-1">
+                                        <span className="px-2 py-0.5 rounded bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 font-semibold">
+                                          {profName}
+                                        </span>
+                                        <span className="text-[10px] text-slate-500 italic">
+                                          (Cùng tên • ID mới)
+                                        </span>
+                                      </div>
+                                    ) : (
+                                      <span className="text-[#64748b] italic">Không tạo mới</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-3 font-mono text-[11px] text-[#475569] dark:text-[#94a3b8]">
+                                    {proxyVal ? (
+                                      <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-blue-600 dark:text-blue-400">
+                                        {proxyVal}
+                                      </span>
+                                    ) : (
+                                      <span className="text-slate-400 italic">Direct / No proxy</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-[#475569] dark:text-[#cbd5e1]">
+                                    <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-[11px] font-mono">
+                                      {browserName} {browserVer.split('.')[0] || ''}
+                                    </span>
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center">
+                                    {autoCloneProfile ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 inline-flex items-center space-x-1" title="Tự động đồng bộ tất cả Extensions và bật Allow in Incognito">
+                                        <span>🧩</span>
+                                        <span>Giống gốc (Allow Incognito)</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">Theo profile gốc</span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center">
+                                    {hideWindowWhenDone ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
+                                        Ẩn danh (Incognito)
+                                      </span>
+                                    ) : (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                                        Bình thường
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="py-2.5 px-3 text-center font-semibold">
+                                    {autoCloneProfile ? (
+                                      <span className="px-2 py-0.5 rounded text-[10px] bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-400 border border-red-200 dark:border-red-900 inline-flex items-center space-x-1">
+                                        <span>🗑 Xóa vĩnh viễn</span>
+                                      </span>
+                                    ) : (
+                                      <span className="text-[10px] text-slate-400 italic">Giữ nguyên</span>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </div>
               )}
 
-              {/* ================= STEP 4: RUNNING MULTI-THREAD DASHBOARD (Matching official GPM / SV Browser Runtime) ================= */}
-              {step === 4 && (
+              {/* ================= STEP 5: RUNNING MULTI-THREAD DASHBOARD (Matching official GPM / SV Browser Runtime) ================= */}
+              {step === 5 && (
                 <div className="max-w-6xl xl:max-w-7xl mx-auto space-y-4">
                   {/* Top Summary Stats Cards & Actions matching media_1789722567215.png */}
                   <div className="flex flex-wrap items-center justify-between gap-3">
@@ -8019,16 +11212,33 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
             </div>
 
             {/* Modal Bottom Footer (Matching Image) */}
-            <div className="px-6 py-3 border-t border-[#e2e8f0] dark:border-[#162236] flex items-center justify-between bg-[#f8fafc] dark:bg-[#080d19] text-xs">
+            <div className="shrink-0 px-6 py-2.5 border-t border-[#e2e8f0] dark:border-[#162236] flex items-center justify-between bg-[#f8fafc] dark:bg-[#080d19] text-xs">
               {step === 3 ? (
                 <div className="flex items-center space-x-2 text-xs font-semibold text-[#1677ff] dark:text-[#38bdf8]">
                   <div className="w-4 h-4 rounded-full bg-blue-100 dark:bg-blue-950 text-[#1677ff] flex items-center justify-center">
                     <Check className="w-3 h-3" />
                   </div>
-                  <span>Selected {selectedProfileIds.length} profile(s)</span>
+                  <span>
+                    {autoGenProfilesMode
+                      ? `Tự động sinh: ${getEstimatedProfileCount()} profile(s)`
+                      : `Selected ${selectedProfileIds.length} profile(s)`}
+                  </span>
+                </div>
+              ) : step === 4 ? (
+                <div className="flex items-center space-x-2 text-xs font-semibold text-emerald-600 dark:text-emerald-400">
+                  <div className="w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+                    <Check className="w-3 h-3" />
+                  </div>
+                  <span>
+                    {autoGenProfilesMode
+                      ? `Sẽ tự động tạo & chạy ${getEstimatedProfileCount()} profile mới từ Mẫu (Xóa vĩnh viễn khi xong/lỗi/stop)`
+                      : autoCloneProfile
+                      ? `Sẽ tự động tạo & chạy ${selectedProfileIds.length} profile mới (Xóa vĩnh viễn khi xong/lỗi/stop)`
+                      : `Chạy trực tiếp ${selectedProfileIds.length} profile gốc đã chọn`}
+                  </span>
                 </div>
               ) : (
-                <span className="text-[#64748b]">Step {step} / 4</span>
+                <span className="text-[#64748b]">Step {step} / 5</span>
               )}
 
               <div className="flex items-center space-x-2.5">
@@ -8050,17 +11260,48 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                     <span>→</span>
                   </button>
                 ) : step === 3 ? (
+                  <div className="flex items-center space-x-2">
+                    <button
+                      disabled={autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0}
+                      onClick={() => {
+                        saveConfigForCurrentProject();
+                        setStep(5);
+                        startMultiThreadExecution();
+                      }}
+                      className={`px-3.5 py-1.5 rounded-lg font-medium text-xs transition-colors ${
+                        (autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0)
+                          ? 'bg-slate-200 dark:bg-slate-800 text-[#94a3b8] cursor-not-allowed'
+                          : 'bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-[#1e293b] dark:text-[#f1f5f9] cursor-pointer'
+                      }`}
+                      title="Chạy ngay không qua bước 4"
+                    >
+                      ▶ Start ngay
+                    </button>
+                    <button
+                      disabled={autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0}
+                      onClick={handleContinue}
+                      className={`px-5 py-1.5 rounded-lg font-semibold flex items-center space-x-1.5 shadow-xs transition-colors ${
+                        (autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0)
+                          ? 'bg-slate-200 dark:bg-slate-800 text-[#94a3b8] cursor-not-allowed'
+                          : 'bg-[#1677ff] hover:bg-blue-600 text-white cursor-pointer'
+                      }`}
+                    >
+                      <span>Tiếp tục (Tạo Profile)</span>
+                      <span>→</span>
+                    </button>
+                  </div>
+                ) : step === 4 ? (
                   <button
-                    disabled={selectedProfileIds.length === 0}
+                    disabled={autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0}
                     onClick={handleContinue}
                     className={`px-6 py-1.5 rounded-lg font-bold flex items-center space-x-1.5 shadow-xs transition-colors ${
-                      selectedProfileIds.length === 0
+                      (autoGenProfilesMode ? getEstimatedProfileCount() <= 0 : selectedProfileIds.length === 0)
                         ? 'bg-slate-200 dark:bg-slate-800 text-[#94a3b8] cursor-not-allowed'
-                        : 'bg-[#1677ff] hover:bg-blue-600 text-white cursor-pointer'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer'
                     }`}
                   >
                     <Play className="w-3.5 h-3.5 fill-current" />
-                    <span>Start</span>
+                    <span>Start Automation</span>
                   </button>
                 ) : (
                   <button

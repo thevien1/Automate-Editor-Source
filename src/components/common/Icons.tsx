@@ -105,6 +105,8 @@ export const Hand = createIcon('hand-index');
 export const HandFist = createIcon('front');
 export const Move = createIcon('arrows-move');
 export const Camera = createIcon('camera');
+export const Puzzle = createIcon('puzzle');
+export const PuzzlePiece = createIcon('puzzle');
 export const Image = createIcon('image');
 export const ImageIcon = createIcon('image');
 

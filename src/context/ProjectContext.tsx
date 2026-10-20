@@ -178,7 +178,7 @@ interface ProjectContextType {
   removeRecentProject: (pathOrId: string) => void;
   clearRecentProjects: () => void;
   closeProject: () => void;
-  saveProject: () => Promise<void>;
+  saveProject: (silent?: boolean | any) => Promise<void>;
   updateRuntimeConfig: (config: Partial<ProjectRuntimeConfig>) => void;
   selectNode: (id: string | null, blockKey?: 'before_init' | 'main_logic' | 'after_quit', isMulti?: boolean, isRange?: boolean) => void;
   selectAllNodes: () => void;
@@ -331,7 +331,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     const newSubScript: EditorFile = {
-      $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+      $type: 'SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models',
       before_init: createDefaultNormalBlock('Before browser opened'),
       main_logic: createDefaultNormalBlock('Normal block'),
       after_quit: createDefaultNormalBlock('After browser closed'),
@@ -389,7 +389,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if ((window as any).electronAPI?.saveProjectToDisk) {
-      await (window as any).electronAPI.saveProjectToDisk(updatedProject);
+      await (window as any).electronAPI.saveProjectToDisk({
+        ...updatedProject,
+        _deletedSubWorkflows: [name],
+      });
     }
     if (updatedProject.folderPath) {
       localStorage.setItem(`gpm_project_${updatedProject.folderPath}`, JSON.stringify(updatedProject));
@@ -417,7 +420,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (!parsed.main_logic) {
         if (Array.isArray(parsed)) {
           parsed = {
-            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            $type: 'SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models',
             before_init: createDefaultNormalBlock('Before browser opened'),
             main_logic: {
               ...createDefaultNormalBlock('Normal block'),
@@ -428,7 +431,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           };
         } else if ('nodes' in parsed) {
           parsed = {
-            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            $type: 'SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models',
             before_init: createDefaultNormalBlock('Before browser opened'),
             main_logic: parsed,
             after_quit: createDefaultNormalBlock('After browser closed'),
@@ -436,7 +439,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
           };
         } else {
           parsed = {
-            $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+            $type: 'SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models',
             before_init: createDefaultNormalBlock('Before browser opened'),
             main_logic: createDefaultNormalBlock('Normal block'),
             after_quit: createDefaultNormalBlock('After browser closed'),
@@ -690,6 +693,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const closeProject = () => {
+    // Không tự động lưu khi đóng dự án theo yêu cầu
     setCurrentProject(null);
     setScreen('home');
     setActiveWorkflowTabState('main');
@@ -699,13 +703,23 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setRedoStack([]);
   };
 
-  const saveProject = async () => {
+  const saveProject = async (silent?: boolean | any) => {
+    const isSilent = silent === true;
     if (!currentProject) return;
-    if ((window as any).electronAPI?.saveProjectToDisk) {
-      await (window as any).electronAPI.saveProjectToDisk(currentProject);
+    try {
+      if ((window as any).electronAPI?.saveProjectToDisk) {
+        await (window as any).electronAPI.saveProjectToDisk(currentProject);
+      }
+      localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(currentProject));
+      if (!isSilent) {
+        showToast('Save', 'Save Successful');
+      }
+    } catch (e) {
+      console.error('saveProject failed:', e);
+      if (!isSilent) {
+        showToast('Save Error', 'Failed to save project');
+      }
     }
-    localStorage.setItem(`gpm_project_${currentProject.folderPath}`, JSON.stringify(currentProject));
-    showToast('Save', 'Save Successful');
   };
 
   const updateRuntimeConfig = (cfg: Partial<ProjectRuntimeConfig>) => {
@@ -1010,7 +1024,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (actionDef.name === 'For' || actionDef.type === 102) {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.ForBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.ForBlockNode, SVBAutomateEditor.Models',
           start: '0',
           end: '10',
           step: '1',
@@ -1018,38 +1032,38 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       } else if (actionDef.name === 'While' || actionDef.type === 103) {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.WhileBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.WhileBlockNode, SVBAutomateEditor.Models',
           condition: 'hasElement(//div)',
         } as WhileBlockNode;
       } else if (actionDef.name.toLowerCase().includes('else if') || actionDef.type === 105) {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.IfBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.IfBlockNode, SVBAutomateEditor.Models',
           condition: '$x = 2',
           display_text: 'Else if',
         } as IfBlockNode;
       } else if (actionDef.name.toLowerCase() === 'else' || actionDef.type === 106) {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models',
           display_text: 'Else',
         } as NormalBlockNode;
       } else if (actionDef.name.startsWith('If') || actionDef.type === 104) {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.IfBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.IfBlockNode, SVBAutomateEditor.Models',
           condition: '$x = 1',
         } as IfBlockNode;
       } else {
         newNode = {
           ...baseBlock,
-          $type: 'GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models',
+          $type: 'SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models',
         } as NormalBlockNode;
       }
     } else {
       // It's a standard ActionNode
       newNode = {
-        $type: 'GPMAutomateEditor.Models.ActionNode, GPMAutomateEditor.Models',
+        $type: 'SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models',
         type: actionDef.type,
         element_xpath: actionDef.hasXPath ? '' : null,
         output_variable_name: actionDef.hasOutVar ? (actionDef.defaultOutVar || '') : null,
@@ -1746,6 +1760,17 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [selectedNodeId, selectedNodeIds, currentProject, undoStack, redoStack, selectedBlockKey]);
+
+  // Keep currentProject reference updated for window close / beforeunload auto-save
+  const currentProjectRef = React.useRef(currentProject);
+  React.useEffect(() => {
+    currentProjectRef.current = currentProject;
+  }, [currentProject]);
+
+  // Khi tắt cửa sổ / unload: Không tự động lưu đè lên đĩa (chỉ lưu khi người dùng bấm Lưu)
+  React.useEffect(() => {
+    // Không đăng ký auto-save on beforeunload
+  }, []);
 
   const customVariables = extractProjectOutputVariables(currentProject);
   const allVariables = Array.from(new Set([...SYSTEM_VARIABLES, ...customVariables]));

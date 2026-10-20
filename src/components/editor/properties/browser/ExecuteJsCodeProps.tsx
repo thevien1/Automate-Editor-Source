@@ -178,7 +178,7 @@ export const ExecuteJsCodeProps: React.FC<ActionPropsCommon> = ({
   updateNode,
 }) => {
   const [copied, setCopied] = useState(false);
-  const codeVal = getRawVal('FILE_OR_CODE', 'return document.title;');
+  const codeVal = getRawVal('FILE_OR_CODE', '');
 
   const handleBrowseFile = async () => {
     try {

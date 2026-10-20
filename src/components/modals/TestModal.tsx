@@ -2028,6 +2028,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             }
 
             if (found) {
+              vars.$lastImageSearchCoords = coords;
               if (varName) {
                 vars[varName] = coords;
                 vars[cleanName] = coords;
@@ -2098,12 +2099,24 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
         } else if (actType === 36 || actName === 'new tab') {
           try {
             if ((window as any).electronAPI?.cdpAction) {
-              await (window as any).electronAPI.cdpAction({ port: port.trim(), action: 'newTab' });
+              const res = await (window as any).electronAPI.cdpAction({ port: port.trim(), action: 'newTab' });
+              const newId = res?.tab?.id || res?.targetId;
+              if (newId) {
+                vars.$activePopupTargetId = newId;
+              }
             } else {
-              await fetch(`http://127.0.0.1:${port.trim()}/json/new`, { method: 'PUT', signal: AbortSignal.timeout(1200) });
+              const res = await fetch(`http://127.0.0.1:${port.trim()}/json/new`, { method: 'PUT', signal: AbortSignal.timeout(1200) });
+              const tab = await res.json().catch(() => null);
+              if (tab?.id) {
+                vars.$activePopupTargetId = tab.id;
+                await fetch(`http://127.0.0.1:${port.trim()}/json/activate/${tab.id}`, { method: 'POST', signal: AbortSignal.timeout(1200) }).catch(() => {});
+              }
             }
           } catch (e) {}
-          await sleep(60);
+          delete vars.$currentFrameContextId;
+          delete vars.$currentFrameXPath;
+          delete vars.$currentFrameOffset;
+          await sleep(150);
           if (stopSignalRef.current) break;
           addLog('success', '✔ NewTab');
           await sleep(40);
@@ -2128,11 +2141,15 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           }
           try {
             if ((window as any).electronAPI?.cdpAction) {
-              await (window as any).electronAPI.cdpAction({
+              const res = await (window as any).electronAPI.cdpAction({
                 port: port.trim(),
                 action: 'activeTab',
                 payload: { mode, target: resolvedTarget },
               });
+              const actId = res?.tab?.id || res?.targetId;
+              if (actId) {
+                vars.$activePopupTargetId = actId;
+              }
             } else {
               const tabsRes = await fetch(`http://127.0.0.1:${port.trim()}/json/list`, { signal: AbortSignal.timeout(1200) });
               const tabs = await tabsRes.json();
@@ -2145,12 +2162,16 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   targetTab = tabs[idx] || tabs[0];
                 }
                 if (targetTab && targetTab.id) {
+                  vars.$activePopupTargetId = targetTab.id;
                   await fetch(`http://127.0.0.1:${port.trim()}/json/activate/${targetTab.id}`, { method: 'POST', signal: AbortSignal.timeout(1200) });
                 }
               }
             }
           } catch (e) {}
-          await sleep(60);
+          delete vars.$currentFrameContextId;
+          delete vars.$currentFrameXPath;
+          delete vars.$currentFrameOffset;
+          await sleep(100);
           if (stopSignalRef.current) break;
           addLog('success', `✔ TabActive › ${resolvedTarget || '0'}`);
           await sleep(40);
@@ -2169,7 +2190,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               }
             }
           } catch (e) {}
-          await sleep(60);
+          delete vars.$activePopupTargetId;
+          delete vars.$currentFrameContextId;
+          delete vars.$currentFrameXPath;
+          delete vars.$currentFrameOffset;
+          await sleep(100);
           if (stopSignalRef.current) break;
           addLog('success', '✔ TabClose');
           await sleep(40);
@@ -2655,6 +2680,14 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             resolvedUrl = `https://${resolvedUrl}`;
           }
 
+          // 1. Capture current URL before navigation so we can verify the browser actually navigated away
+          let previousUrl = '';
+          try {
+            const curRes = await evaluateInChrome('window.location.href', vars.$activePopupTargetId);
+            const curVal = curRes?.value || (curRes as any)?.result?.value;
+            if (typeof curVal === 'string') previousUrl = curVal.trim();
+          } catch (e) {}
+
           addLog('info', `▶ Navigate › ${resolvedUrl} (Timeout: ${timeoutSec}s)`);
 
           let navStarted = true;
@@ -2668,6 +2701,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               if (res && res.success === false) {
                 navStarted = false;
                 addLog('error', `✕ Navigate failed: ${res.error || 'Port error'}`);
+              } else if (res?.targetId) {
+                vars.$activePopupTargetId = res.targetId;
               }
             } else {
               const tabsRes = await fetch(`http://127.0.0.1:${port.trim()}/json/list`, { signal: AbortSignal.timeout(1200) });
@@ -2688,7 +2723,26 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             addLog('error', `✕ Navigate failed: ${e.message}`);
           }
 
+          // Top-level navigation resets child frames
+          delete vars.$currentFrameContextId;
+          delete vars.$currentFrameXPath;
+          delete vars.$currentFrameOffset;
+
           if (navStarted) {
+            // Helper to compare URLs ignoring trailing slashes and hash anchors
+            const cleanUrl = (u: string) => {
+              if (!u) return '';
+              try {
+                const p = new URL(u);
+                return (p.origin + p.pathname).toLowerCase().replace(/\/+$/, '');
+              } catch {
+                return u.toLowerCase().replace(/#.*$/, '').replace(/\/+$/, '');
+              }
+            };
+            const targetClean = cleanUrl(resolvedUrl);
+            const prevClean = cleanUrl(previousUrl);
+            const isDifferentDest = Boolean(prevClean && targetClean && prevClean !== targetClean);
+
             // Wait for page to finish loading up to timeoutSec
             const start = Date.now();
             const maxWaitMs = timeoutSec * 1000;
@@ -2696,10 +2750,11 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             let errorMsg = '';
 
             // Initial sleep so Chrome has started navigating away from previous page
-            await sleep(500);
+            await sleep(350);
 
             while (Date.now() - start < maxWaitMs && !stopSignalRef.current) {
               await sleep(350);
+
               try {
                 const evalRes = await evaluateInChrome(`(() => {
                   try {
@@ -2718,17 +2773,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                       return { loaded: false, readyState, reason: 'Waiting for navigation from about:blank' };
                     }
 
-                    // When readyState is complete, page is ready
-                    if (readyState === 'complete') {
-                      return { loaded: true, readyState, url: href };
-                    }
-
-                    // For modern SPAs (Google Accounts, YouTube, etc.), interactive state with body content is ready
-                    if (readyState === 'interactive' && document.body && (document.body.children.length > 0 || document.body.innerText.length > 0)) {
-                      return { loaded: true, readyState, url: href };
-                    }
-
-                    return { loaded: false, readyState };
+                    const hasBody = !!(document.body && (document.body.children.length > 0 || document.body.innerText.length > 0));
+                    return { href, readyState, hasBody };
                   } catch(e) {
                     return { loaded: false, error: e.message };
                   }
@@ -2740,14 +2786,35 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     errorMsg = val.error;
                     break;
                   }
-                  if (val.loaded) {
+
+                  const curHref = val.href || '';
+                  const curClean = cleanUrl(curHref);
+                  const readyState = val.readyState;
+
+                  // CRITICAL FIX: If navigating to a different page, but Chrome is still on previousUrl,
+                  // do NOT treat readyState as complete yet!
+                  if (isDifferentDest && curClean && curClean === prevClean) {
+                    continue;
+                  }
+
+                  // When readyState is complete, page is ready
+                  if (readyState === 'complete') {
                     pageLoaded = true;
                     // Settling buffer: wait 400ms so dynamic SPAs/Web Components finish rendering
                     await sleep(400);
                     break;
                   }
+
+                  // For modern SPAs (Google Accounts, YouTube, Facebook, etc.), interactive state with body content is ready
+                  if (readyState === 'interactive' && val.hasBody) {
+                    pageLoaded = true;
+                    await sleep(400);
+                    break;
+                  }
                 }
-              } catch (e) {}
+              } catch (e) {
+                // Execution context may be reloading during navigation, continue waiting
+              }
             }
 
             if (!pageLoaded && !errorMsg) {
@@ -2758,8 +2825,12 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   hasBody: !!document.body,
                   hasContent: document.body ? document.body.innerText.length > 0 : false
                 }))()`, vars.$activePopupTargetId);
-                if (finalCheck?.value?.url && finalCheck.value.url.startsWith('http') && finalCheck.value.hasBody) {
-                  pageLoaded = true;
+                const fVal = finalCheck?.value;
+                if (fVal?.url && fVal.url.startsWith('http') && fVal.hasBody) {
+                  const fClean = cleanUrl(fVal.url);
+                  if (!isDifferentDest || fClean !== prevClean) {
+                    pageLoaded = true;
+                  }
                 }
               } catch (e) {}
             }
@@ -2777,7 +2848,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                     }
                     return true;
                   } catch(e) { return false; }
-                })()`).catch(() => {});
+                })()`, vars.$activePopupTargetId).catch(() => {});
               }
             } else {
               const detail = errorMsg || `Timed out after ${timeoutSec}s`;
@@ -3048,7 +3119,13 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const x = parseFloat(xStr) || 0;
             const y = parseFloat(yStr) || 0;
 
-            if (useVirtualMouse) {
+            if (vars.$lastImageSearchCoords && resolvedPos.trim() === vars.$lastImageSearchCoords && (window as any).electronAPI?.fileAction) {
+              await (window as any).electronAPI.fileAction({
+                action: 'osClick',
+                payload: { x, y, button: 'left', clicks: 1 },
+              }).catch(() => {});
+              addLog('success', `✔ Clicked screen coordinates [${x}, ${y}]`);
+            } else if (useVirtualMouse) {
               const evalRes = await evaluateInChrome(getVirtualMouseClickCoordsScript(x, y));
               if (evalRes.success) {
                 addLog('success', `✔ Clicked coordinates [${x}, ${y}]`);
@@ -3522,7 +3599,107 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           vars[cleanName] = jsVal;
           addLog('success', '✔ Execute JS code');
           addLog('arrow', `   ↳ ${varName} = "${jsVal.length > 80 ? jsVal.slice(0, 80) + '...' : jsVal}"`);
-        } else if (actType === 55 || actName === 'file upload') {
+        } else if (actType === 186 || actName === 'get extension id' || actName.includes('extension id') || actName.includes('tiện ích')) {
+          const rawExtName = getRawInputValue(act.raw_input, 'EXTENSION_NAME', '');
+          const extName = resolveVars(rawExtName, vars).trim();
+          const rawVar = act.output_variable_name || '';
+          const varName = rawVar ? (rawVar.startsWith('$') ? rawVar : `$${rawVar}`) : '$extension_id';
+          const cleanName = varName.replace(/^\$/, '');
+          addLog('info', `▶ Get extension id › Tìm tiện ích "${extName}"`);
+
+          let extId = '';
+          const findExtScript = `(() => {
+            function getExtensionId(name) {
+              const root = (document.querySelector("extensions-manager")?.shadowRoot || document)
+                .querySelector("extensions-item-list")?.shadowRoot;
+              if (!root) return null;
+              const target = name.trim().toLowerCase();
+              const match = Array.from(root.querySelectorAll("extensions-item")).find(item => {
+                const text = item.shadowRoot?.querySelector("#name")?.textContent || "";
+                return text.trim().toLowerCase().includes(target);
+              });
+              return match ? (match.id || match.getAttribute("id")) : null;
+            }
+            return getExtensionId(${JSON.stringify(extName)}) || '';
+          })()`;
+
+          const res = await evaluateInChrome(findExtScript);
+          if (res.success && res.value) {
+            extId = String(res.value).trim();
+          }
+
+          if (!extId && (window as any).electronAPI?.cdpAction) {
+            const targetsRes = await (window as any).electronAPI.cdpAction({
+              port: port.trim() || '43076',
+              action: 'listTargets',
+            });
+            if (targetsRes?.success && Array.isArray(targetsRes.targets)) {
+              for (const t of targetsRes.targets) {
+                const url = String(t.url || '');
+                const title = String(t.title || '');
+                if (url.startsWith('chrome-extension://')) {
+                  const match = url.match(/chrome-extension:\/\/([a-z0-9]+)/i);
+                  if (match && match[1]) {
+                    if (!extName || title.toLowerCase().includes(extName.toLowerCase()) || url.toLowerCase().includes(extName.toLowerCase())) {
+                      extId = match[1];
+                      break;
+                    }
+                  }
+                }
+              }
+            }
+          }
+
+        if (rawVar) {
+          vars[varName] = extId;
+          vars[cleanName] = extId;
+        }
+        if (extId) {
+          addLog('success', `✔ Get extension id › ${varName} = "${extId}"`);
+        } else {
+          addLog('info', `⚠ Không tìm thấy Extension ID cho "${extName}". Cần mở trang chrome://extensions/ trước.`);
+        }
+      } else if (actType === 187 || actName === 'screenshot' || actName.includes('screenshot') || actName.includes('chụp ảnh')) {
+        const rawOutPath = getRawInputValue(act.raw_input, 'OUTPUT_PATH', getRawInputValue(act.raw_input, 'FOLDER_PATH', ''));
+        const rawFileName = getRawInputValue(act.raw_input, 'FILE_NAME', '');
+        const rawFullPage = getRawInputValue(act.raw_input, 'FULL_PAGE', 'false');
+        const resolvedOutPath = resolveVars(rawOutPath, vars).trim();
+        let resolvedFileName = resolveVars(rawFileName, vars).trim();
+        const isFullPage = rawFullPage === 'true' || rawFullPage === 'True' || rawFullPage === '1';
+        const rawVar = act.output_variable_name || '';
+        const varName = rawVar ? (rawVar.startsWith('$') ? rawVar : `$${rawVar}`) : '$saved_image_path';
+        const cleanName = varName.replace(/^\$/, '');
+
+        if (!resolvedFileName) {
+          resolvedFileName = `screenshot_${Date.now()}.png`;
+        } else if (!resolvedFileName.toLowerCase().endsWith('.png') && !resolvedFileName.toLowerCase().endsWith('.jpg') && !resolvedFileName.toLowerCase().endsWith('.jpeg')) {
+          resolvedFileName += '.png';
+        }
+
+        addLog('info', `▶ Screenshot › Chụp ảnh màn hình (${isFullPage ? 'Toàn trang' : 'Khung nhìn'})`);
+        let savedFilePath = '';
+        if ((window as any).electronAPI?.cdpAction) {
+          const snapRes = await (window as any).electronAPI.cdpAction({
+            port: port.trim() || '43076',
+            action: 'screenshot',
+            payload: {
+              outputPath: resolvedOutPath,
+              fileName: resolvedFileName,
+              fullPage: isFullPage,
+            },
+          });
+          if (snapRes?.success && snapRes.filePath) {
+            savedFilePath = snapRes.filePath;
+            addLog('success', `✔ Đã lưu ảnh chụp: "${savedFilePath}"`);
+          } else {
+            addLog('error', `❌ Không thể chụp ảnh: ${snapRes?.error || 'Unknown error'}`);
+          }
+        }
+        if (rawVar) {
+          vars[varName] = savedFilePath;
+          vars[cleanName] = savedFilePath;
+        }
+      } else if (actType === 55 || actName === 'file upload') {
           const rawPath = getRawInputValue(act.raw_input, 'FILE_PATH', '');
           const resolvedPath = resolveVars(rawPath, vars).trim();
           const rawXPath = (act.element_xpath || getRawInputValue(act.raw_input, 'XPATH', '')).trim();
@@ -4190,7 +4367,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             const lower = resolvedKey.toLowerCase().trim();
             addLog('info', `▶ Key press (${effectiveType}) › "${resolvedKey}"`);
 
-            if (lower === 'enter') {
+            if (lower === 'enter' || lower === 'return') {
               if ((window as any).electronAPI?.cdpAction) {
                 await (window as any).electronAPI.cdpAction({
                   port: activePort,
@@ -4216,6 +4393,118 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
                   port: activePort,
                   action: 'dispatchKeyEvent',
                   payload: { type: 'keyUp', windowsVirtualKeyCode: 8, key: 'Backspace', code: 'Backspace' },
+                });
+              }
+            } else if (lower === 'tab') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 9, key: 'Tab', code: 'Tab' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 9, key: 'Tab', code: 'Tab' },
+                });
+              }
+            } else if (lower === 'escape' || lower === 'esc') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 27, key: 'Escape', code: 'Escape' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 27, key: 'Escape', code: 'Escape' },
+                });
+              }
+            } else if (lower === 'space') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 32, key: ' ', code: 'Space', text: ' ' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 32, key: ' ', code: 'Space' },
+                });
+              }
+            } else if (lower === 'arrowleft' || lower === 'left') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 37, key: 'ArrowLeft', code: 'ArrowLeft' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 37, key: 'ArrowLeft', code: 'ArrowLeft' },
+                });
+              }
+            } else if (lower === 'arrowup' || lower === 'up') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 38, key: 'ArrowUp', code: 'ArrowUp' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 38, key: 'ArrowUp', code: 'ArrowUp' },
+                });
+              }
+            } else if (lower === 'arrowright' || lower === 'right') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 39, key: 'ArrowRight', code: 'ArrowRight' },
+                });
+              }
+            } else if (lower === 'arrowdown' || lower === 'down') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 40, key: 'ArrowDown', code: 'ArrowDown' },
+                });
+              }
+            } else if (lower === 'delete') {
+              if ((window as any).electronAPI?.cdpAction) {
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'rawKeyDown', windowsVirtualKeyCode: 46, key: 'Delete', code: 'Delete' },
+                });
+                await sleep(50);
+                await (window as any).electronAPI.cdpAction({
+                  port: activePort,
+                  action: 'dispatchKeyEvent',
+                  payload: { type: 'keyUp', windowsVirtualKeyCode: 46, key: 'Delete', code: 'Delete' },
                 });
               }
             } else if (lower === 'control+a' || lower === 'ctrl+a') {
@@ -4257,6 +4546,39 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             addLog('success', `✔ Sent key: "${resolvedKey}" (${effectiveType})`);
           }
         }
+      } else if (actType === 66 || actName === 'accept alert' || actType === 67 || actName === 'cancel alert') {
+        const isAccept = actType === 66 || actName === 'accept alert';
+        const label = isAccept ? 'Accept alert' : 'Cancel alert';
+        const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
+        addLog('info', `▶ ${label} › Đang tìm và nhấn nút xác nhận hộp thoại (${isAccept ? 'Thêm tiện ích / OK / Allow' : 'Huỷ / Cancel'})...`);
+
+        try {
+          if ((window as any).electronAPI?.cdpAction) {
+            const res = await (window as any).electronAPI.cdpAction({
+              port: port.trim() || '43076',
+              action: isAccept ? 'acceptAlert' : 'cancelAlert',
+              payload: { targetId: vars.$activePopupTargetId },
+            });
+            if (res && res.success) {
+              addLog('success', `✔ ${label} › Đã nhấn nút "${res.button || (isAccept ? 'OK / Thêm tiện ích' : 'Huỷ / Cancel')}" thành công`);
+            } else {
+              if (contOnError) {
+                addLog('info', `⚠ ${label} › ${res?.error || 'Không tìm thấy hộp thoại'} (Continue on error)`);
+              } else {
+                addLog('error', `✕ ${label} thất bại: ${res?.error || 'Không tìm thấy hộp thoại cảnh báo hoặc nút Thêm tiện ích'}`);
+                break;
+              }
+            }
+          }
+        } catch (err: any) {
+          if (contOnError) {
+            addLog('info', `⚠ ${label} › ${err.message} (Continue on error)`);
+          } else {
+            addLog('error', `✕ ${label} exception: ${err.message}`);
+            break;
+          }
+        }
+        await sleep(100);
       } else {
           // Generic action
           const target = act.element_xpath || act.output_variable_name || '';

@@ -10,7 +10,7 @@ export function generateGuid(): string {
 
 export function createDefaultNormalBlock(name: string): NormalBlockNode {
   return {
-    $type: 'GPMAutomateEditor.Models.NormalBlockNode, GPMAutomateEditor.Models',
+    $type: 'SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models',
     nodes: [],
     expanded: true,
     continue_on_error: false,
@@ -23,7 +23,7 @@ export function createDefaultNormalBlock(name: string): NormalBlockNode {
 
 export function createDefaultScript(): EditorFile {
   return {
-    $type: 'GPMAutomateEditor.Models.Editor, GPMAutomateEditor.Models',
+    $type: 'SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models',
     before_init: createDefaultNormalBlock('Before browser opened'),
     main_logic: createDefaultNormalBlock('Main logic'),
     after_quit: createDefaultNormalBlock('After browser closed'),
