@@ -1,10 +1,12 @@
 import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import { spawn, execSync } from 'child_process';
 import * as XLSX from 'xlsx';
 import http from 'http';
 import WebSocket from 'ws';
+import { RUNTIME_ICON_BASE64 } from './runtimeIconBase64';
 
 // Set Windows AppUserModelId for Taskbar icon grouping and display
 app.setAppUserModelId('com.svbrowser.automateeditor');
@@ -448,38 +450,74 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       execSync(`attrib +h "${finalPackagePath}"`, { stdio: 'ignore' });
     } catch {}
 
-    // Copy runtime icon to targetDir
-    const iconCandidates = [
+    // 1. Obtain runtime 3D lightning icon bytes (guaranteed never empty with embedded Base64)
+    let iconBuffer: Buffer | null = null;
+    const candidateIconPaths = [
       path.join(__dirname, '../public/runtime_icon.ico'),
-      path.join(__dirname, 'public/runtime_icon.ico'),
+      path.join(__dirname, '../dist/runtime_icon.ico'),
+      path.join(__dirname, 'runtime_icon.ico'),
       path.join(process.cwd(), 'public/runtime_icon.ico'),
+      path.join(process.cwd(), 'dist/runtime_icon.ico'),
+      path.join(app.getAppPath(), 'public/runtime_icon.ico'),
+      path.join(app.getAppPath(), 'dist/runtime_icon.ico'),
     ];
-    const iconSrc = iconCandidates.find(p => fs.existsSync(p));
-    if (iconSrc) {
+    for (const p of candidateIconPaths) {
       try {
-        const destIcon = path.join(targetDir, 'icon.ico');
-        fs.copyFileSync(iconSrc, destIcon);
-        // Hide loose icon.ico so it does not clutter output directory
-        execSync(`attrib +h "${destIcon}"`, { stdio: 'ignore' });
+        if (fs.existsSync(p)) {
+          const b = fs.readFileSync(p);
+          if (b && b.length > 0) {
+            iconBuffer = b;
+            break;
+          }
+        }
       } catch {}
     }
+    if (!iconBuffer || iconBuffer.length === 0) {
+      iconBuffer = Buffer.from(RUNTIME_ICON_BASE64, 'base64');
+    }
 
-    // Generate native .exe launcher with runtime lightning icon via Windows built-in csc.exe
+    // Write real physical icon to temp directory for csc.exe compiler
+    const physicalIconPath = path.join(os.tmpdir(), `svb_icon_${Date.now()}.ico`);
+    try {
+      fs.writeFileSync(physicalIconPath, iconBuffer);
+    } catch {}
+
+    // Also write icon.ico to targetDir and mark hidden
+    const destIcon = path.join(targetDir, 'icon.ico');
+    try {
+      fs.writeFileSync(destIcon, iconBuffer);
+      execSync(`attrib +h "${destIcon}"`, { stdio: 'ignore' });
+    } catch {}
+
+    // Clean up any old .bat files in targetDir so no gear-icon batch file is ever visible
+    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
+    try {
+      if (fs.existsSync(batPath)) {
+        fs.unlinkSync(batPath);
+      }
+    } catch {}
+
+    // Find C# compiler in Windows
     let runnerExePath: string | null = null;
     const cscCandidates = [
       'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
       'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
+      'C:\\Windows\\Microsoft.NET\\Framework64\\v3.5\\csc.exe',
+      'C:\\Windows\\Microsoft.NET\\Framework\\v3.5\\csc.exe',
     ];
     const cscPath = cscCandidates.find(p => fs.existsSync(p));
-    const targetExePath = path.join(targetDir, `${safeName}.exe`);
+
+    const chayExePath = path.join(targetDir, `Chay_${safeName}.exe`);
+    const plainExePath = path.join(targetDir, `${safeName}.exe`);
     const appExeName = 'SV Browser Automate Editor.exe';
 
-    if (cscPath && iconSrc) {
-      const tempCsPath = path.join(targetDir, `__temp_${Date.now()}.cs`);
+    if (cscPath && fs.existsSync(physicalIconPath)) {
+      const tempCsPath = path.join(os.tmpdir(), `__temp_runner_${Date.now()}.cs`);
       const csSource = `
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Windows.Forms;
 
 namespace SVBRunner {
     static class Program {
@@ -488,6 +526,13 @@ namespace SVBRunner {
             try {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string pkgPath = Path.Combine(baseDir, @"${safeName}.svblaunch");
+                if (!File.Exists(pkgPath)) {
+                    string[] svbFiles = Directory.GetFiles(baseDir, "*.svblaunch");
+                    if (svbFiles.Length > 0) {
+                        pkgPath = svbFiles[0];
+                    }
+                }
+
                 string exeName = @"${appExeName}";
                 string targetExe = null;
 
@@ -495,6 +540,8 @@ namespace SVBRunner {
                     Path.Combine(baseDir, exeName),
                     Path.Combine(baseDir, "..", exeName),
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "sv-browser-automate-editor", exeName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SV Browser Automate Editor", exeName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SV Browser Automate Editor", exeName),
                     @"${process.execPath.replace(/\\/g, '\\\\')}"
                 };
 
@@ -505,44 +552,54 @@ namespace SVBRunner {
                     }
                 }
 
-                if (targetExe != null) {
+                if (targetExe != null && File.Exists(targetExe)) {
                     ProcessStartInfo psi = new ProcessStartInfo();
                     psi.FileName = targetExe;
                     psi.Arguments = "--runtime --package \\"" + pkgPath + "\\"";
                     psi.UseShellExecute = true;
                     Process.Start(psi);
+                } else {
+                    MessageBox.Show(
+                        "Không tìm thấy ứng dụng SV Browser Automate Editor để thực thi kịch bản này.\\nVui lòng cài đặt SV Browser Automate Editor trước.",
+                        "SV Browser Automate Runtime",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Warning
+                    );
                 }
-            } catch {}
+            } catch (Exception ex) {
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
     }
 }
 `;
       try {
         fs.writeFileSync(tempCsPath, csSource, 'utf-8');
-        const compileCmd = `"${cscPath}" /nologo /target:winexe /win32icon:"${iconSrc}" /out:"${targetExePath}" "${tempCsPath}"`;
+        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /out:"${chayExePath}" "${tempCsPath}"`;
         execSync(compileCmd, { stdio: 'pipe' });
-        if (fs.existsSync(targetExePath)) {
-          runnerExePath = targetExePath;
+        if (fs.existsSync(chayExePath)) {
+          runnerExePath = chayExePath;
+          // Also create <AppName>.exe copy so user has both Chay_<AppName>.exe and <AppName>.exe with 3D lightning icon
+          try {
+            fs.copyFileSync(chayExePath, plainExePath);
+          } catch {}
         }
-      } catch (e) {
-        console.warn('Native launcher compilation warning:', e);
+      } catch (compileErr) {
+        console.warn('Native launcher compilation warning:', compileErr);
       } finally {
         if (fs.existsSync(tempCsPath)) {
           try { fs.unlinkSync(tempCsPath); } catch {}
         }
+        if (fs.existsSync(physicalIconPath)) {
+          try { fs.unlinkSync(physicalIconPath); } catch {}
+        }
       }
     }
 
-    // Generate fallback runner .bat file
-    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
-    const batContent = `@echo off\r\ntitle ${app_name} - SV Browser Automate Runtime\r\ncd /d "%~dp0"\r\nchcp 65001 >nul\r\n\r\necho Dang khoi dong ${app_name} trong giao dien SV Browser Automate Runtime...\r\n\r\nif exist "%~dp0..\\${appExeName}" (\r\n  start "" "%~dp0..\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%~dp0${appExeName}" (\r\n  start "" "%~dp0${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" (\r\n  start "" "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\n\r\nstart "" "${process.execPath}" "%~dp0..\\dist-electron\\main.js" --runtime --package "%~dp0${safeName}.svblaunch"\r\n`;
-    fs.writeFileSync(batPath, batContent, 'utf-8');
-
-    // If native exe was created, hide the .bat file too so user only sees the branded .exe
-    if (runnerExePath && fs.existsSync(runnerExePath)) {
-      try {
-        execSync(`attrib +h "${batPath}"`, { stdio: 'ignore' });
-      } catch {}
+    // Only if native exe compilation completely failed (e.g. non-Windows or no csc), generate .bat fallback
+    if (!runnerExePath) {
+      const batContent = `@echo off\r\ntitle ${app_name} - SV Browser Automate Runtime\r\ncd /d "%~dp0"\r\nchcp 65001 >nul\r\n\r\necho Dang khoi dong ${app_name} trong giao dien SV Browser Automate Runtime...\r\n\r\nif exist "%~dp0..\\${appExeName}" (\r\n  start "" "%~dp0..\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%~dp0${appExeName}" (\r\n  start "" "%~dp0${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" (\r\n  start "" "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\n\r\nstart "" "${process.execPath}" "%~dp0..\\dist-electron\\main.js" --runtime --package "%~dp0${safeName}.svblaunch"\r\n`;
+      fs.writeFileSync(batPath, batContent, 'utf-8');
     }
 
     return {
@@ -550,7 +607,7 @@ namespace SVBRunner {
       packagePath: finalPackagePath,
       launcherPath: runnerExePath || batPath,
       exePath: runnerExePath || undefined,
-      batPath,
+      batPath: runnerExePath ? undefined : batPath,
       targetDir,
       appName: app_name,
     };
