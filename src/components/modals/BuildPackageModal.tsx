@@ -118,24 +118,30 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
         clearTimeout(t2);
         clearTimeout(t3);
 
-        setBuildProgress(100);
-        setProgressStatus('Đóng gói hoàn tất 100%!');
-        setBuildResult(res);
-
         if (res.success) {
+          setBuildProgress(100);
+          setProgressStatus('Đóng gói hoàn tất 100%!');
+          setBuildResult(res);
+
           // Sau khi chạy xong 100%: hiển thị ngắn và tự động trở lại bảng code bình thường (Ảnh 3)
           setTimeout(() => {
             onClose();
             showToast(
               'Build Package hoàn tất',
-              `Đã đóng gói ${appName}.svblaunch thành công. Toàn bộ mã nguồn đã được bảo mật.`
+              `Đã đóng gói ${appName} thành công. Toàn bộ mã nguồn đã được bảo mật.`
             );
           }, 1400);
+        } else {
+          setBuildProgress(0);
+          setProgressStatus('');
+          setBuildResult(res);
         }
       } else {
         clearTimeout(t1);
         clearTimeout(t2);
         clearTimeout(t3);
+        setBuildProgress(0);
+        setProgressStatus('');
         setBuildResult({
           success: false,
           error: 'Chức năng build package chỉ khả dụng trong môi trường Electron desktop.',
@@ -145,6 +151,8 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
       clearTimeout(t1);
       clearTimeout(t2);
       clearTimeout(t3);
+      setBuildProgress(0);
+      setProgressStatus('');
       setBuildResult({
         success: false,
         error: err.message || 'Lỗi không xác định khi build package',

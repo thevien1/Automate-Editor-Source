@@ -428,21 +428,41 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       fs.mkdirSync(targetDir, { recursive: true });
     }
 
-    // Clean any raw code files (.gscript, .gpmsln, .svbsln, .build) in targetDir to protect source code
+    // Safe helper to strip Windows hidden/readonly attributes and remove file before overwriting
+    const safePrepareFile = (filePath: string) => {
+      try {
+        if (fs.existsSync(filePath)) {
+          try {
+            execSync(`attrib -h -r -s "${filePath}"`, { stdio: 'ignore' });
+          } catch {}
+          try {
+            fs.unlinkSync(filePath);
+          } catch {}
+        }
+      } catch {}
+    };
+
+    const safeName = app_name.replace(/[\\/:*?"<>|]/g, '_');
+
+    // Terminate any currently running instance of the launcher if open
+    try {
+      execSync(`taskkill /F /IM "Chay_${safeName}.exe" /T`, { stdio: 'ignore' });
+      execSync(`taskkill /F /IM "${safeName}.exe" /T`, { stdio: 'ignore' });
+    } catch {}
+
+    // Clean any raw code files (.gscript, .gpmsln, .svbsln, .build, .bat) in targetDir to protect source code
     try {
       const existingInTarget = fs.readdirSync(targetDir);
       for (const f of existingInTarget) {
-        if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build') {
-          try {
-            fs.unlinkSync(path.join(targetDir, f));
-          } catch {}
+        if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build' || f.endsWith('.bat')) {
+          safePrepareFile(path.join(targetDir, f));
         }
       }
     } catch {}
 
-    // Save .svblaunch file
-    const safeName = app_name.replace(/[\\/:*?"<>|]/g, '_');
+    // Safely write .svblaunch file
     const finalPackagePath = path.join(targetDir, `${safeName}.svblaunch`);
+    safePrepareFile(finalPackagePath);
     fs.writeFileSync(finalPackagePath, svbLaunchContent, 'utf-8');
 
     // Hide .svblaunch so end users do not see it in Explorer
@@ -478,12 +498,14 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
 
     // Write real physical icon to temp directory for csc.exe compiler
     const physicalIconPath = path.join(os.tmpdir(), `svb_icon_${Date.now()}.ico`);
+    safePrepareFile(physicalIconPath);
     try {
       fs.writeFileSync(physicalIconPath, iconBuffer);
     } catch {}
 
     // Also write icon.ico to targetDir and mark hidden
     const destIcon = path.join(targetDir, 'icon.ico');
+    safePrepareFile(destIcon);
     try {
       fs.writeFileSync(destIcon, iconBuffer);
       execSync(`attrib +h "${destIcon}"`, { stdio: 'ignore' });
@@ -491,11 +513,7 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
 
     // Clean up any old .bat files in targetDir so no gear-icon batch file is ever visible
     const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
-    try {
-      if (fs.existsSync(batPath)) {
-        fs.unlinkSync(batPath);
-      }
-    } catch {}
+    safePrepareFile(batPath);
 
     // Find C# compiler in Windows
     let runnerExePath: string | null = null;
@@ -509,6 +527,8 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
 
     const chayExePath = path.join(targetDir, `Chay_${safeName}.exe`);
     const plainExePath = path.join(targetDir, `${safeName}.exe`);
+    safePrepareFile(chayExePath);
+    safePrepareFile(plainExePath);
     const appExeName = 'SV Browser Automate Editor.exe';
 
     if (cscPath && fs.existsSync(physicalIconPath)) {
