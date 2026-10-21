@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -8,8 +8,19 @@ import http from 'http';
 import WebSocket from 'ws';
 import { RUNTIME_ICON_BASE64 } from './runtimeIconBase64';
 
-// Set Windows AppUserModelId for Taskbar icon grouping and display
-app.setAppUserModelId('com.svbrowser.automateeditor');
+// Detect if this instance is running in runtime mode (e.g. running standalone built .exe or --runtime)
+const isInitialRuntime = process.argv.includes('--runtime') ||
+  process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+
+// Set Windows AppUserModelId for Taskbar icon grouping and display:
+// Completely separate ID for Runtime so it NEVER groups with or inherits the Editor taskbar icon!
+if (isInitialRuntime) {
+  app.setAppUserModelId('com.svbrowser.automate.runtime');
+  app.setName('SV Browser Automate Runtime');
+} else {
+  app.setAppUserModelId('com.svbrowser.automateeditor');
+  app.setName('SV Browser Automate Editor');
+}
 
 const windows = new Set<BrowserWindow>();
 
@@ -44,11 +55,24 @@ function createWindow(customArgv?: string[]): BrowserWindow {
   const iconPath = path.join(__dirname, `../public/${iconName}.ico`);
   const iconPngPath = path.join(__dirname, `../public/${iconName}.png`);
 
-  const resolvedIcon = fs.existsSync(iconPath)
+  let resolvedIcon: any = fs.existsSync(iconPath)
     ? iconPath
     : fs.existsSync(iconPngPath)
     ? iconPngPath
     : undefined;
+
+  let runtimeIconDiskPath: string | undefined = undefined;
+  if (isRuntimeArg) {
+    try {
+      const diskDir = path.join(app.getPath('userData'), 'icons');
+      if (!fs.existsSync(diskDir)) fs.mkdirSync(diskDir, { recursive: true });
+      runtimeIconDiskPath = path.join(diskDir, 'runtime_icon.ico');
+      fs.writeFileSync(runtimeIconDiskPath, Buffer.from(RUNTIME_ICON_BASE64, 'base64'));
+      resolvedIcon = nativeImage.createFromPath(runtimeIconDiskPath);
+    } catch {
+      resolvedIcon = nativeImage.createFromBuffer(Buffer.from(RUNTIME_ICON_BASE64, 'base64'));
+    }
+  }
 
   const pkgVersion = (() => {
     try {
@@ -85,6 +109,24 @@ function createWindow(customArgv?: string[]): BrowserWindow {
 
   if (resolvedIcon) {
     win.setIcon(resolvedIcon);
+  }
+
+  // Instruct Windows Taskbar shell explicitly for this window:
+  if (isRuntimeArg) {
+    try {
+      win.setAppDetails({
+        appId: 'com.svbrowser.automate.runtime',
+        appIconPath: runtimeIconDiskPath,
+        relaunchDisplayName: 'SV Browser Automate Runtime',
+      });
+    } catch {}
+  } else {
+    try {
+      win.setAppDetails({
+        appId: 'com.svbrowser.automateeditor',
+        relaunchDisplayName: 'SV Browser Automate Editor',
+      });
+    } catch {}
   }
 
   // Tự động mở toàn màn hình (maximized) khi khởi chạy
@@ -306,15 +348,7 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
       }
     }
 
-    let manifest: any = undefined;
-    const buildPath = path.join(folderPath, '.build');
-    if (fs.existsSync(buildPath)) {
-      try {
-        manifest = JSON.parse(fs.readFileSync(buildPath, 'utf-8'));
-      } catch {}
-    }
-
-    return { success: true, project: { folderPath, info, script, subWorkflows, runtimeConfig, manifest } };
+    return { success: true, project: { folderPath, info, script, subWorkflows, runtimeConfig } };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
@@ -390,13 +424,13 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
     const script = JSON.parse(fs.readFileSync(scriptPath, 'utf-8'));
 
-    // Update note / description in project info
+    // Keep original project untouched. Note, password, and author are packaged exclusively for the export bundle.
     const noteText = note !== undefined ? note : (info.description || '');
-    info.description = noteText;
-    if (author) info.author_info = author;
-    if (version) info.version = version;
+
+    // Clean up any old .build file in the original project folder so it never gets locked
     try {
-      fs.writeFileSync(infoPath, JSON.stringify(info, null, 2), 'utf-8');
+      const existingBuild = path.join(folderPath, '.build');
+      if (fs.existsSync(existingBuild)) fs.unlinkSync(existingBuild);
     } catch {}
 
     // Read subworkflows
@@ -425,7 +459,7 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     const app_version = version || info.version || '1.0.0';
     const author_info = author || info.author_info || 'SV Browser - svbrowser.com';
 
-    // Build manifest (.build)
+    // Build manifest (.build) for the packaged bundle
     const buildManifest = {
       app_id,
       app_name,
@@ -438,14 +472,19 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       built_at: new Date().toISOString(),
     };
 
-    // Save .build to project folder according to SKILL.md
-    fs.writeFileSync(path.join(folderPath, '.build'), JSON.stringify(buildManifest, null, 2), 'utf-8');
+    const packagedInfo = {
+      ...info,
+      name: app_name,
+      version: app_version,
+      author_info,
+      description: noteText,
+    };
 
     // Create packaged bundle
     const packagePayload = {
       format: 'SVB_LAUNCH_V1',
       manifest: buildManifest,
-      info,
+      info: packagedInfo,
       script,
       subWorkflows,
       runtimeConfig,

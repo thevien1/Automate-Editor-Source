@@ -253,7 +253,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     ''
   ).trim();
 
-  const isPasswordRequired = targetPassword.length > 0;
+  // CRITICAL: Password protection is EXCLUSIVELY for packaged applications (.svblaunch / built .exe).
+  // The original project in the Editor (isPackaged !== true) must NEVER be password-protected!
+  const isPasswordRequired = !!currentProject?.isPackaged && targetPassword.length > 0;
   const currentProjectKey =
     currentProject?.packagePath ||
     currentProject?.folderPath ||
