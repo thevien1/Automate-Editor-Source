@@ -199,31 +199,23 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
         <div className="relative">
           <button
             onClick={() => toggleMenu('build')}
-            className={`px-2 py-0.5 rounded hover:bg-[#1e293b] transition-colors ${
-              activeMenu === 'build' ? 'bg-[#1e293b] text-white' : ''
+            className={`px-2 py-0.5 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] transition-colors ${
+              activeMenu === 'build' ? 'bg-[#f1f5f9] dark:bg-[#1e293b] text-black dark:text-white font-medium' : ''
             }`}
           >
             Build
           </button>
           {activeMenu === 'build' && (
             <div
-              className="absolute left-0 top-full mt-0.5 w-64 bg-[#0f172a] border border-[#1e293b] shadow-2xl rounded-md py-1 z-50 text-xs text-[#cbd5e1]"
+              className="absolute left-0 top-full mt-0.5 w-56 bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] shadow-xl rounded-lg py-1 z-50 text-xs text-[#1e293b] dark:text-[#cbd5e1]"
               onClick={() => setActiveMenu(null)}
             >
               <div
                 onClick={() => setShowBuildModal(true)}
-                className="px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
+                className="px-3 py-2 hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] hover:text-[#1677ff] dark:hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
               >
                 <span>Build .svblaunch (Package)</span>
-                <span className="text-[10px] text-amber-400 font-medium">Đóng gói</span>
-              </div>
-              <div className="border-t border-[#1e293b] my-1" />
-              <div
-                onClick={() => setScreen('runtime')}
-                className="px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
-              >
-                <span>Mở bảng Runtime toàn màn hình</span>
-                <span className="text-[10px] text-emerald-400 font-medium">Ảnh 2</span>
+                <span className="text-[10px] text-amber-500 font-medium">Đóng gói</span>
               </div>
             </div>
           )}
@@ -233,22 +225,22 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
         <div className="relative">
           <button
             onClick={() => toggleMenu('support')}
-            className={`px-2 py-0.5 rounded hover:bg-[#1e293b] transition-colors ${
-              activeMenu === 'support' ? 'bg-[#1e293b] text-white' : ''
+            className={`px-2 py-0.5 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] transition-colors ${
+              activeMenu === 'support' ? 'bg-[#f1f5f9] dark:bg-[#1e293b] text-black dark:text-white font-medium' : ''
             }`}
           >
             Support
           </button>
           {activeMenu === 'support' && (
             <div
-              className="absolute left-0 top-full mt-0.5 w-44 bg-[#0f172a] border border-[#1e293b] shadow-2xl rounded-md py-1 z-50 text-xs text-[#cbd5e1]"
+              className="absolute left-0 top-full mt-0.5 w-44 bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] shadow-xl rounded-lg py-1 z-50 text-xs text-[#1e293b] dark:text-[#cbd5e1]"
               onClick={() => setActiveMenu(null)}
             >
               <a
                 href="http://localhost:3080/docs"
                 target="_blank"
                 rel="noreferrer"
-                className="block px-3 py-1.5 hover:bg-[#1e293b] text-[#cbd5e1]"
+                className="block px-3 py-1.5 hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#1e293b] dark:text-[#cbd5e1]"
               >
                 Documentation (Docs)
               </a>

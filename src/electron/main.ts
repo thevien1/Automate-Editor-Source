@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { spawn } from 'child_process';
+import { spawn, execSync } from 'child_process';
 import * as XLSX from 'xlsx';
 import http from 'http';
 import WebSocket from 'ws';
@@ -303,7 +303,13 @@ ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; run
 ipcMain.handle('app:getLaunchArgs', () => {
   const isRuntime = process.argv.includes('--runtime') ||
     process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
-  const packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  let packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  if (!packageArg) {
+    const pkgIdx = process.argv.indexOf('--package');
+    if (pkgIdx !== -1 && process.argv[pkgIdx + 1]) {
+      packageArg = process.argv[pkgIdx + 1];
+    }
+  }
   const projectArgIndex = process.argv.indexOf('--project');
   const projectArg = projectArgIndex !== -1 ? process.argv[projectArgIndex + 1] : undefined;
   return {
@@ -322,9 +328,10 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
   author?: string;
   password?: string;
   useLicense?: boolean;
+  note?: string;
 }) => {
   try {
-    const { folderPath, exportPath, packageName, version, author, password, useLicense } = data;
+    const { folderPath, exportPath, packageName, version, author, password, useLicense, note } = data;
     if (!fs.existsSync(folderPath)) {
       return { success: false, error: 'Thư mục dự án không tồn tại: ' + folderPath };
     }
@@ -340,6 +347,15 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
 
     const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
     const script = JSON.parse(fs.readFileSync(scriptPath, 'utf-8'));
+
+    // Update note / description in project info
+    const noteText = note !== undefined ? note : (info.description || '');
+    info.description = noteText;
+    if (author) info.author_info = author;
+    if (version) info.version = version;
+    try {
+      fs.writeFileSync(infoPath, JSON.stringify(info, null, 2), 'utf-8');
+    } catch {}
 
     // Read subworkflows
     const subWorkflows: Record<string, any> = {};
@@ -373,6 +389,8 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       app_name,
       app_password: password || '',
       author_info,
+      note: noteText,
+      description: noteText,
       use_license_system: !!useLicense,
       version: app_version,
       built_at: new Date().toISOString(),
@@ -425,24 +443,114 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     const finalPackagePath = path.join(targetDir, `${safeName}.svblaunch`);
     fs.writeFileSync(finalPackagePath, svbLaunchContent, 'utf-8');
 
-    // Copy runtime icon to targetDir
+    // Hide .svblaunch so end users do not see it in Explorer
     try {
-      const iconSrc = path.join(__dirname, '../public/runtime_icon.ico');
-      if (fs.existsSync(iconSrc)) {
-        fs.copyFileSync(iconSrc, path.join(targetDir, 'icon.ico'));
-      }
+      execSync(`attrib +h "${finalPackagePath}"`, { stdio: 'ignore' });
     } catch {}
 
-    // Generate quick runner .bat file
-    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
+    // Copy runtime icon to targetDir
+    const iconCandidates = [
+      path.join(__dirname, '../public/runtime_icon.ico'),
+      path.join(__dirname, 'public/runtime_icon.ico'),
+      path.join(process.cwd(), 'public/runtime_icon.ico'),
+    ];
+    const iconSrc = iconCandidates.find(p => fs.existsSync(p));
+    if (iconSrc) {
+      try {
+        const destIcon = path.join(targetDir, 'icon.ico');
+        fs.copyFileSync(iconSrc, destIcon);
+        // Hide loose icon.ico so it does not clutter output directory
+        execSync(`attrib +h "${destIcon}"`, { stdio: 'ignore' });
+      } catch {}
+    }
+
+    // Generate native .exe launcher with runtime lightning icon via Windows built-in csc.exe
+    let runnerExePath: string | null = null;
+    const cscCandidates = [
+      'C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319\\csc.exe',
+      'C:\\Windows\\Microsoft.NET\\Framework\\v4.0.30319\\csc.exe',
+    ];
+    const cscPath = cscCandidates.find(p => fs.existsSync(p));
+    const targetExePath = path.join(targetDir, `${safeName}.exe`);
     const appExeName = 'SV Browser Automate Editor.exe';
+
+    if (cscPath && iconSrc) {
+      const tempCsPath = path.join(targetDir, `__temp_${Date.now()}.cs`);
+      const csSource = `
+using System;
+using System.Diagnostics;
+using System.IO;
+
+namespace SVBRunner {
+    static class Program {
+        [STAThread]
+        static void Main(string[] args) {
+            try {
+                string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string pkgPath = Path.Combine(baseDir, @"${safeName}.svblaunch");
+                string exeName = @"${appExeName}";
+                string targetExe = null;
+
+                string[] searchPaths = new string[] {
+                    Path.Combine(baseDir, exeName),
+                    Path.Combine(baseDir, "..", exeName),
+                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "sv-browser-automate-editor", exeName),
+                    @"${process.execPath.replace(/\\/g, '\\\\')}"
+                };
+
+                foreach (var p in searchPaths) {
+                    if (!string.IsNullOrEmpty(p) && File.Exists(p)) {
+                        targetExe = p;
+                        break;
+                    }
+                }
+
+                if (targetExe != null) {
+                    ProcessStartInfo psi = new ProcessStartInfo();
+                    psi.FileName = targetExe;
+                    psi.Arguments = "--runtime --package \\"" + pkgPath + "\\"";
+                    psi.UseShellExecute = true;
+                    Process.Start(psi);
+                }
+            } catch {}
+        }
+    }
+}
+`;
+      try {
+        fs.writeFileSync(tempCsPath, csSource, 'utf-8');
+        const compileCmd = `"${cscPath}" /nologo /target:winexe /win32icon:"${iconSrc}" /out:"${targetExePath}" "${tempCsPath}"`;
+        execSync(compileCmd, { stdio: 'pipe' });
+        if (fs.existsSync(targetExePath)) {
+          runnerExePath = targetExePath;
+        }
+      } catch (e) {
+        console.warn('Native launcher compilation warning:', e);
+      } finally {
+        if (fs.existsSync(tempCsPath)) {
+          try { fs.unlinkSync(tempCsPath); } catch {}
+        }
+      }
+    }
+
+    // Generate fallback runner .bat file
+    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
     const batContent = `@echo off\r\ntitle ${app_name} - SV Browser Automate Runtime\r\ncd /d "%~dp0"\r\nchcp 65001 >nul\r\n\r\necho Dang khoi dong ${app_name} trong giao dien SV Browser Automate Runtime...\r\n\r\nif exist "%~dp0..\\${appExeName}" (\r\n  start "" "%~dp0..\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%~dp0${appExeName}" (\r\n  start "" "%~dp0${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" (\r\n  start "" "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\n\r\nstart "" "${process.execPath}" "%~dp0..\\dist-electron\\main.js" --runtime --package "%~dp0${safeName}.svblaunch"\r\n`;
     fs.writeFileSync(batPath, batContent, 'utf-8');
+
+    // If native exe was created, hide the .bat file too so user only sees the branded .exe
+    if (runnerExePath && fs.existsSync(runnerExePath)) {
+      try {
+        execSync(`attrib +h "${batPath}"`, { stdio: 'ignore' });
+      } catch {}
+    }
 
     return {
       success: true,
       packagePath: finalPackagePath,
-      launcherPath: batPath,
+      launcherPath: runnerExePath || batPath,
+      exePath: runnerExePath || undefined,
+      batPath,
       targetDir,
       appName: app_name,
     };
@@ -466,6 +574,7 @@ ipcMain.handle('fs:readPackage', async (_, packagePath: string) => {
         project: {
           folderPath: path.dirname(packagePath),
           packagePath,
+          manifest: decoded.manifest,
           info: decoded.info,
           script: decoded.script,
           subWorkflows: decoded.subWorkflows || {},

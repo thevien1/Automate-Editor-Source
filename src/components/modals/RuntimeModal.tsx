@@ -8563,6 +8563,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                             <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] font-mono mt-0.5">
                               {currentProject?.packagePath || currentProject?.folderPath || appPath}
                             </div>
+                            {(currentProject?.info?.description || (currentProject as any)?.manifest?.note) && (
+                              <div className="mt-2 text-[11px] text-[#334155] dark:text-[#cbd5e1] bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-md px-2.5 py-1.5 max-w-lg leading-relaxed">
+                                <span className="font-semibold text-amber-700 dark:text-amber-400">Ghi chú (Note): </span>
+                                <span>{currentProject?.info?.description || (currentProject as any)?.manifest?.note}</span>
+                              </div>
+                            )}
                           </div>
                         </div>
 
@@ -8614,6 +8620,15 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                           <span className="text-[#94a3b8] italic">- not selected</span>
                         </div>
                       </div>
+
+                      {(currentProject?.info?.description || (currentProject as any)?.manifest?.note) && (
+                        <div className="pt-2 border-t border-[#e2e8f0] dark:border-[#1e293b] space-y-0.5">
+                          <div className="text-[10px] uppercase font-bold text-amber-600 dark:text-amber-400">Ghi chú (Note)</div>
+                          <div className="text-[11px] text-[#334155] dark:text-[#cbd5e1] leading-relaxed whitespace-pre-wrap">
+                            {currentProject?.info?.description || (currentProject as any)?.manifest?.note}
+                          </div>
+                        </div>
+                      )}
 
                       <div className="pt-2 border-t border-[#e2e8f0] dark:border-[#1e293b] flex items-center space-x-1.5 text-[10px] text-[#64748b]">
                         <Shield className="w-3 h-3 text-[#1677ff] shrink-0" />

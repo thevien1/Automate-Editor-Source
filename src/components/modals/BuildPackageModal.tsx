@@ -22,6 +22,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
 
   const [appVersion, setAppVersion] = useState(() => currentProject?.info.version || '1.0.0');
   const [authorInfo, setAuthorInfo] = useState(() => currentProject?.info.author_info || 'SV Browser - svbrowser.com');
+  const [note, setNote] = useState(() => currentProject?.info.description || '');
   const [password, setPassword] = useState('');
   const [useEncryption, setUseEncryption] = useState(true);
   const [exportPath, setExportPath] = useState(() => {
@@ -51,6 +52,9 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
       } else {
         setAppName(raw);
       }
+      setAuthorInfo(currentProject.info.author_info || 'SV Browser - svbrowser.com');
+      setNote(currentProject.info.description || '');
+      setAppVersion(currentProject.info.version || '1.0.0');
       setBuildResult(null);
       setIsBuilding(false);
       setBuildProgress(0);
@@ -105,6 +109,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
           packageName: appName.trim(),
           version: appVersion.trim(),
           author: authorInfo.trim(),
+          note: note.trim(),
           password: password.trim() || undefined,
           useLicense: false,
         });
@@ -226,28 +231,28 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
               <div className="p-4 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 flex items-start space-x-3 text-emerald-800 dark:text-emerald-200">
                 <CheckCircle2 className="w-6 h-6 text-emerald-500 shrink-0 mt-0.5" />
                 <div>
-                  <div className="font-bold text-sm">Đóng gói .svblaunch thành công!</div>
+                  <div className="font-bold text-sm">Đóng gói hoàn tất thành công!</div>
                   <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
-                    Toàn bộ kịch bản và các sub-workflows đã được mã hoá bảo mật. Thư mục xuất chỉ gồm file .svblaunch và launcher (không còn các file .gscript thô).
+                    Đã tạo file thực thi (.exe) có icon sấm sét 3D riêng biệt. File .svblaunch và các mã nguồn thô đã được ẩn an toàn, người nhận chỉ cần mở file .exe là bảng Runtime tự động kích hoạt.
                   </div>
                 </div>
               </div>
 
               <div className="bg-[#fafbfc] dark:bg-[#080d19] border border-[#e2e8f0] dark:border-[#1e293b] rounded-xl p-3.5 space-y-2 font-mono text-[11px]">
-                <div>
-                  <span className="text-[#64748b] dark:text-[#94a3b8]">File Package: </span>
-                  <span className="text-[#1e293b] dark:text-[#38bdf8] font-bold select-all break-all">
-                    {buildResult.packagePath}
-                  </span>
-                </div>
                 {buildResult.launcherPath && (
                   <div>
-                    <span className="text-[#64748b] dark:text-[#94a3b8]">File Launcher: </span>
+                    <span className="text-[#64748b] dark:text-[#94a3b8]">File chạy (Launcher EXE): </span>
                     <span className="text-emerald-600 dark:text-emerald-400 font-bold select-all break-all">
                       {buildResult.launcherPath}
                     </span>
                   </div>
                 )}
+                <div>
+                  <span className="text-[#64748b] dark:text-[#94a3b8]">File Package (.svblaunch đã ẩn): </span>
+                  <span className="text-[#1e293b] dark:text-[#38bdf8] font-bold select-all break-all">
+                    {buildResult.packagePath}
+                  </span>
+                </div>
               </div>
 
               <div className="flex items-center justify-end space-x-2.5 pt-2 border-t border-[#e2e8f0] dark:border-[#1e293b]">
@@ -314,6 +319,21 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                 />
               </div>
 
+              {/* Note / Description */}
+              <div className="space-y-1">
+                <label className="font-semibold text-[#1e293b] dark:text-[#f1f5f9] flex items-center justify-between">
+                  <span>Ghi chú / Mô tả (Note)</span>
+                  <span className="text-[10px] text-blue-500 font-normal">Hiển thị khi mở chạy</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="w-full px-3 py-1.5 text-xs bg-white dark:bg-[#080d19] border border-[#cbd5e1] dark:border-[#1e293b] rounded-lg text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] resize-none"
+                  placeholder="Nhập ghi chú hoặc hướng dẫn sử dụng kịch bản khi mở chạy..."
+                />
+              </div>
+
               {/* Export Folder */}
               <div className="space-y-1">
                 <label className="font-semibold text-[#1e293b] dark:text-[#f1f5f9] flex items-center justify-between">
@@ -362,11 +382,11 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                     className="rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                   />
                   <span className="text-xs text-[#334155] dark:text-[#cbd5e1] font-medium">
-                    🔒 Mã hóa toàn bộ kịch bản & gom tất cả sub-workflows vào 1 file .svblaunch
+                    🔒 Mã hóa toàn bộ kịch bản & tự động ẩn file .svblaunch
                   </span>
                 </label>
                 <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
-                  Thư mục xuất bản sẽ <strong className="text-[#1e293b] dark:text-white">hoàn toàn không có các file .gscript thô</strong>. Người nhận chỉ cần chạy file <span className="font-mono text-emerald-600 dark:text-emerald-400">Chay_{appName}.bat</span> để mở thẳng bảng điều khiển Runtime (Ảnh 2) mà không thấy mã nguồn.
+                  Thư mục xuất bản sẽ <strong className="text-[#1e293b] dark:text-white">hoàn toàn không có các file .gscript thô và file .svblaunch được ẩn</strong>. Người nhận chỉ cần chạy file <span className="font-mono text-emerald-600 dark:text-emerald-400">{appName}.exe</span> có biểu tượng sấm sét 3D để mở thẳng bảng Runtime mà không thấy mã nguồn.
                 </div>
               </div>
 
