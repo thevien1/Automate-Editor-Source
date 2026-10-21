@@ -778,6 +778,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const saveProject = async (silent?: boolean | any) => {
     const isSilent = silent === true;
     if (!currentProject) return;
+    // CRITICAL: Packaged projects (.svblaunch) must NEVER write raw code files to disk!
+    if (currentProject.isPackaged) return;
     try {
       let cleanProj = currentProject;
       try {

@@ -1135,11 +1135,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
     updateRuntimeConfig(cfg);
 
-    if (currentProject.folderPath) {
+    if (currentProject.folderPath && !currentProject.isPackaged) {
       if ((window as any).electronAPI?.saveRuntimeConfig) {
         (window as any).electronAPI.saveRuntimeConfig({
           folderPath: currentProject.folderPath,
           runtimeConfig: cfg,
+          isPackaged: currentProject.isPackaged,
         }).catch(() => {});
       } else if ((window as any).electronAPI?.fileAction) {
         const cleanPath = `${currentProject.folderPath.replace(/[\\/\\\\]+$/, '')}/runtime.json`;
@@ -1413,7 +1414,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   // Multi-thread automation runner
   const startMultiThreadExecution = async () => {
     saveConfigForCurrentProject();
-    if (saveProject) {
+    if (saveProject && !currentProject?.isPackaged) {
       try {
         await saveProject(true);
       } catch (e) {}

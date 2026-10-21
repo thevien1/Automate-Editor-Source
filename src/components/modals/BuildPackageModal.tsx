@@ -394,7 +394,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                   </span>
                 </label>
                 <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
-                  Thư mục xuất bản sẽ <strong className="text-[#1e293b] dark:text-white">hoàn toàn không có các file .gscript thô và file .svblaunch được ẩn</strong>. Người nhận chỉ cần chạy file <span className="font-mono text-emerald-600 dark:text-emerald-400">{appName}.exe</span> có biểu tượng sấm sét 3D để mở thẳng bảng Runtime mà không thấy mã nguồn.
+                  Toàn bộ mã nguồn kịch bản được nhúng mã hóa trực tiếp vào file <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">{appName}.exe</span>. Khi gửi cho người khác hoặc khi mở chạy, hệ thống <strong className="text-[#1e293b] dark:text-white">tuyệt đối không giải nén file code (.gscript) ra thư mục</strong>, bảo mật 100% mã nguồn.
                 </div>
               </div>
 

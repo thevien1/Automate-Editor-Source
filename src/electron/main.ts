@@ -215,6 +215,11 @@ ipcMain.handle('dialog:saveFile', async (event, options?: { title?: string; defa
 // Save Project according to SKILL.md format: info.gpmsln + src.gscript + runtime.json + sub-workflows
 ipcMain.handle('fs:saveProject', async (_, projectData: any) => {
   try {
+    if (!projectData) return { success: false, error: 'No project data' };
+    if (projectData.isPackaged) {
+      // Packaged bundles (.svblaunch) must NEVER write raw code files to disk!
+      return { success: true };
+    }
     const { folderPath, info, script, runtimeConfig, subWorkflows } = projectData;
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
@@ -316,9 +321,10 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
 });
 
 // Save Runtime Config directly to runtime.json in project folder
-ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; runtimeConfig: any }) => {
+ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; runtimeConfig: any; isPackaged?: boolean }) => {
   try {
-    const { folderPath, runtimeConfig } = data;
+    const { folderPath, runtimeConfig, isPackaged } = data;
+    if (isPackaged) return { success: true };
     if (!folderPath) return { success: false, error: 'No folderPath provided' };
     if (!fs.existsSync(folderPath)) {
       fs.mkdirSync(folderPath, { recursive: true });
@@ -484,15 +490,19 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       execSync(`taskkill /F /IM "${safeName}.exe" /T`, { stdio: 'ignore' });
     } catch {}
 
-    // Clean any raw code files (.gscript, .gpmsln, .svbsln, .build, .bat) in targetDir to protect source code
-    try {
-      const existingInTarget = fs.readdirSync(targetDir);
-      for (const f of existingInTarget) {
-        if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build' || f.endsWith('.bat')) {
-          safePrepareFile(path.join(targetDir, f));
+    const isExportingToProjectFolder = path.resolve(targetDir) === path.resolve(folderPath);
+
+    // Clean any raw code files (.gscript, .gpmsln, .svbsln, .build, .bat, runtime.json) in targetDir to protect source code
+    if (!isExportingToProjectFolder) {
+      try {
+        const existingInTarget = fs.readdirSync(targetDir);
+        for (const f of existingInTarget) {
+          if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build' || f.endsWith('.bat') || f === 'runtime.json') {
+            safePrepareFile(path.join(targetDir, f));
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     // Safely write .svblaunch file
     const finalPackagePath = path.join(targetDir, `${safeName}.svblaunch`);
@@ -566,10 +576,15 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
 
     if (cscPath && fs.existsSync(physicalIconPath)) {
       const tempCsPath = path.join(os.tmpdir(), `__temp_runner_${Date.now()}.cs`);
+      const tempPkgPath = path.join(os.tmpdir(), `__temp_pkg_${Date.now()}.svblaunch`);
+      safePrepareFile(tempPkgPath);
+      fs.writeFileSync(tempPkgPath, svbLaunchContent, 'utf-8');
+
       const csSource = `
 using System;
 using System.Diagnostics;
 using System.IO;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace SVBRunner {
@@ -578,11 +593,51 @@ namespace SVBRunner {
         static void Main(string[] args) {
             try {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string pkgPath = Path.Combine(baseDir, @"${safeName}.svblaunch");
+
+                // Clean any loose raw script files in baseDir so they NEVER appear to the user
+                try {
+                    string[] looseScripts = Directory.GetFiles(baseDir, "*.gscript");
+                    foreach (var f in looseScripts) {
+                        try { File.Delete(f); } catch {}
+                    }
+                    string looseGpmsln = Path.Combine(baseDir, "info.gpmsln");
+                    if (File.Exists(looseGpmsln)) { try { File.Delete(looseGpmsln); } catch {} }
+                    string looseSvbsln = Path.Combine(baseDir, "info.svbsln");
+                    if (File.Exists(looseSvbsln)) { try { File.Delete(looseSvbsln); } catch {} }
+                    string looseRuntime = Path.Combine(baseDir, "runtime.json");
+                    if (File.Exists(looseRuntime)) { try { File.Delete(looseRuntime); } catch {} }
+                } catch {}
+
+                string runtimeDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sv-browser-automate-runtime");
+                Directory.CreateDirectory(runtimeDir);
+                string pkgDir = Path.Combine(runtimeDir, "packages");
+                Directory.CreateDirectory(pkgDir);
+                string pkgPath = Path.Combine(pkgDir, @"${safeName}.svblaunch");
+
+                // Extract embedded package resource into isolated runtime AppData
+                try {
+                    var assembly = Assembly.GetExecutingAssembly();
+                    using (Stream stream = assembly.GetManifestResourceStream("EmbeddedPackage.svblaunch")) {
+                        if (stream != null) {
+                            using (FileStream fs = new FileStream(pkgPath, FileMode.Create, FileAccess.Write)) {
+                                byte[] buffer = new byte[81920];
+                                int read;
+                                while ((read = stream.Read(buffer, 0, buffer.Length)) > 0) {
+                                    fs.Write(buffer, 0, read);
+                                }
+                            }
+                        }
+                    }
+                } catch {}
+
+                // Fallback: If not in AppData, check local file
                 if (!File.Exists(pkgPath)) {
-                    string[] svbFiles = Directory.GetFiles(baseDir, "*.svblaunch");
-                    if (svbFiles.Length > 0) {
-                        pkgPath = svbFiles[0];
+                    string localPkg = Path.Combine(baseDir, @"${safeName}.svblaunch");
+                    if (File.Exists(localPkg)) {
+                        pkgPath = localPkg;
+                    } else {
+                        string[] svbFiles = Directory.GetFiles(baseDir, "*.svblaunch");
+                        if (svbFiles.Length > 0) pkgPath = svbFiles[0];
                     }
                 }
 
@@ -629,7 +684,7 @@ namespace SVBRunner {
 `;
       try {
         fs.writeFileSync(tempCsPath, csSource, 'utf-8');
-        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /out:"${targetExePath}" "${tempCsPath}"`;
+        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /resource:"${tempPkgPath},EmbeddedPackage.svblaunch" /out:"${targetExePath}" "${tempCsPath}"`;
         execSync(compileCmd, { stdio: 'pipe' });
         if (fs.existsSync(targetExePath)) {
           runnerExePath = targetExePath;
@@ -639,6 +694,9 @@ namespace SVBRunner {
       } finally {
         if (fs.existsSync(tempCsPath)) {
           try { fs.unlinkSync(tempCsPath); } catch {}
+        }
+        if (fs.existsSync(tempPkgPath)) {
+          try { fs.unlinkSync(tempPkgPath); } catch {}
         }
         if (fs.existsSync(physicalIconPath)) {
           try { fs.unlinkSync(physicalIconPath); } catch {}
@@ -669,6 +727,19 @@ ipcMain.handle('fs:readPackage', async (_, packagePath: string) => {
     const json = JSON.parse(raw);
     if (json.header === 'SVB_LAUNCH_PACKAGE' && json.payload) {
       const decoded = JSON.parse(Buffer.from(json.payload, 'base64').toString('utf-8'));
+      const folderPath = path.dirname(packagePath);
+
+      // Clean up any stray raw script files in folderPath so they NEVER appear to the user
+      try {
+        const files = fs.readdirSync(folderPath);
+        for (const f of files) {
+          if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build' || f.endsWith('.bat') || f === 'runtime.json') {
+            try {
+              fs.unlinkSync(path.join(folderPath, f));
+            } catch {}
+          }
+        }
+      } catch {}
       return {
         success: true,
         project: {
