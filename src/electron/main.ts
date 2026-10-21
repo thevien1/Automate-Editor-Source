@@ -21,9 +21,24 @@ function getTargetWindow(event?: Electron.IpcMainInvokeEvent | Electron.IpcMainE
   return BrowserWindow.getFocusedWindow() || (windows.size > 0 ? Array.from(windows)[0] : null);
 }
 
-function createWindow(): BrowserWindow {
-  const isRuntimeArg = process.argv.includes('--runtime') ||
-    process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+// Map to track launch args per window instance
+const windowLaunchArgs = new Map<number, { isRuntime: boolean; packagePath?: string; projectPath?: string }>();
+
+function createWindow(customArgv?: string[]): BrowserWindow {
+  const argv = customArgv || process.argv;
+  const isRuntimeArg = argv.includes('--runtime') ||
+    argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+
+  let packageArg = argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  if (!packageArg) {
+    const pkgIdx = argv.indexOf('--package');
+    if (pkgIdx !== -1 && argv[pkgIdx + 1]) {
+      packageArg = argv[pkgIdx + 1];
+    }
+  }
+
+  const projectArgIndex = argv.indexOf('--project');
+  const projectArg = projectArgIndex !== -1 ? argv[projectArgIndex + 1] : undefined;
 
   const iconName = isRuntimeArg ? 'runtime_icon' : 'icon';
   const iconPath = path.join(__dirname, `../public/${iconName}.ico`);
@@ -62,6 +77,12 @@ function createWindow(): BrowserWindow {
     title: `${titlePrefix} v${pkgVersion}-stable`,
   });
 
+  windowLaunchArgs.set(win.id, {
+    isRuntime: isRuntimeArg,
+    packagePath: packageArg,
+    projectPath: projectArg,
+  });
+
   if (resolvedIcon) {
     win.setIcon(resolvedIcon);
   }
@@ -69,10 +90,10 @@ function createWindow(): BrowserWindow {
   // Tự động mở toàn màn hình (maximized) khi khởi chạy
   win.maximize();
 
-  const packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
   const queryParams: Record<string, string> = {};
   if (isRuntimeArg) queryParams.mode = 'runtime';
   if (packageArg) queryParams.package = packageArg;
+  if (projectArg) queryParams.project = projectArg;
 
   const queryString = Object.keys(queryParams).length > 0
     ? '?' + new URLSearchParams(queryParams).toString()
@@ -89,6 +110,7 @@ function createWindow(): BrowserWindow {
 
   win.on('closed', () => {
     windows.delete(win);
+    windowLaunchArgs.delete(win.id);
   });
 
   return win;
@@ -302,7 +324,11 @@ ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; run
 });
 
 // App Launch arguments IPC
-ipcMain.handle('app:getLaunchArgs', () => {
+ipcMain.handle('app:getLaunchArgs', (event) => {
+  const win = getTargetWindow(event);
+  if (win && windowLaunchArgs.has(win.id)) {
+    return windowLaunchArgs.get(win.id)!;
+  }
   const isRuntime = process.argv.includes('--runtime') ||
     process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
   let packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
@@ -511,9 +537,9 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
       execSync(`attrib +h "${destIcon}"`, { stdio: 'ignore' });
     } catch {}
 
-    // Clean up any old .bat files in targetDir so no gear-icon batch file is ever visible
-    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
-    safePrepareFile(batPath);
+    // Clean up any old files with Chay_ prefix or .bat so ONLY <safeName>.exe remains
+    safePrepareFile(path.join(targetDir, `Chay_${safeName}.exe`));
+    safePrepareFile(path.join(targetDir, `Chay_${safeName}.bat`));
 
     // Find C# compiler in Windows
     let runnerExePath: string | null = null;
@@ -525,10 +551,9 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     ];
     const cscPath = cscCandidates.find(p => fs.existsSync(p));
 
-    const chayExePath = path.join(targetDir, `Chay_${safeName}.exe`);
-    const plainExePath = path.join(targetDir, `${safeName}.exe`);
-    safePrepareFile(chayExePath);
-    safePrepareFile(plainExePath);
+    // Target executable: ONLY <safeName>.exe (without Chay_ prefix)
+    const targetExePath = path.join(targetDir, `${safeName}.exe`);
+    safePrepareFile(targetExePath);
     const appExeName = 'SV Browser Automate Editor.exe';
 
     if (cscPath && fs.existsSync(physicalIconPath)) {
@@ -573,9 +598,10 @@ namespace SVBRunner {
                 }
 
                 if (targetExe != null && File.Exists(targetExe)) {
+                    string runtimeUserData = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sv-browser-automate-runtime");
                     ProcessStartInfo psi = new ProcessStartInfo();
                     psi.FileName = targetExe;
-                    psi.Arguments = "--runtime --package \\"" + pkgPath + "\\"";
+                    psi.Arguments = "--runtime --package \\"" + pkgPath + "\\" --user-data-dir=\\"" + runtimeUserData + "\\"";
                     psi.UseShellExecute = true;
                     Process.Start(psi);
                 } else {
@@ -595,14 +621,10 @@ namespace SVBRunner {
 `;
       try {
         fs.writeFileSync(tempCsPath, csSource, 'utf-8');
-        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /out:"${chayExePath}" "${tempCsPath}"`;
+        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /out:"${targetExePath}" "${tempCsPath}"`;
         execSync(compileCmd, { stdio: 'pipe' });
-        if (fs.existsSync(chayExePath)) {
-          runnerExePath = chayExePath;
-          // Also create <AppName>.exe copy so user has both Chay_<AppName>.exe and <AppName>.exe with 3D lightning icon
-          try {
-            fs.copyFileSync(chayExePath, plainExePath);
-          } catch {}
+        if (fs.existsSync(targetExePath)) {
+          runnerExePath = targetExePath;
         }
       } catch (compileErr) {
         console.warn('Native launcher compilation warning:', compileErr);
@@ -616,18 +638,11 @@ namespace SVBRunner {
       }
     }
 
-    // Only if native exe compilation completely failed (e.g. non-Windows or no csc), generate .bat fallback
-    if (!runnerExePath) {
-      const batContent = `@echo off\r\ntitle ${app_name} - SV Browser Automate Runtime\r\ncd /d "%~dp0"\r\nchcp 65001 >nul\r\n\r\necho Dang khoi dong ${app_name} trong giao dien SV Browser Automate Runtime...\r\n\r\nif exist "%~dp0..\\${appExeName}" (\r\n  start "" "%~dp0..\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%~dp0${appExeName}" (\r\n  start "" "%~dp0${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" (\r\n  start "" "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\n\r\nstart "" "${process.execPath}" "%~dp0..\\dist-electron\\main.js" --runtime --package "%~dp0${safeName}.svblaunch"\r\n`;
-      fs.writeFileSync(batPath, batContent, 'utf-8');
-    }
-
     return {
       success: true,
       packagePath: finalPackagePath,
-      launcherPath: runnerExePath || batPath,
+      launcherPath: runnerExePath || undefined,
       exePath: runnerExePath || undefined,
-      batPath: runnerExePath ? undefined : batPath,
       targetDir,
       appName: app_name,
     };
@@ -3054,10 +3069,10 @@ if (!gotTheLock) {
   // without disk cache locks or errors.
   app.quit();
 } else {
-  app.on('second-instance', () => {
-    // When the user opens the application again (e.g. running Chay_Phan_Mem.bat),
-    // create and focus a new window!
-    const newWin = createWindow();
+  app.on('second-instance', (_, commandLine) => {
+    // When the user opens the application again or launches a package .exe,
+    // create and focus a new window with the given commandLine arguments!
+    const newWin = createWindow(commandLine);
     if (newWin) {
       if (newWin.isMinimized()) newWin.restore();
       newWin.focus();
