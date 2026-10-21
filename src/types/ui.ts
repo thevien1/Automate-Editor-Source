@@ -5,7 +5,7 @@ export interface RecentProject {
   lastOpened: string;
 }
 
-export type ActiveScreen = 'home' | 'editor';
+export type ActiveScreen = 'home' | 'editor' | 'runtime';
 
 export interface ActionDefinition {
   type: number;

@@ -22,5 +22,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getDefaultSavePath: () => ipcRenderer.invoke('app:getDefaultSavePath'),
   checkPathExists: (targetPath: string) => ipcRenderer.invoke('app:checkPathExists', targetPath),
   openExternal: (url: string) => ipcRenderer.invoke('app:openExternal', url),
+  buildPackage: (data: any) => ipcRenderer.invoke('fs:buildPackage', data),
+  readPackage: (packagePath: string) => ipcRenderer.invoke('fs:readPackage', packagePath),
+  showInFolder: (targetPath: string) => ipcRenderer.invoke('fs:showInFolder', targetPath),
+  getLaunchArgs: () => ipcRenderer.invoke('app:getLaunchArgs'),
 });
 

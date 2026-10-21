@@ -163,6 +163,8 @@ export interface ProjectRuntimeConfig {
 
 export interface ProjectData {
   folderPath: string;
+  packagePath?: string;
+  isPackaged?: boolean;
   info: ProjectInfo;
   script: EditorFile;
   subWorkflows?: Record<string, EditorFile>;

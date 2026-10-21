@@ -9,6 +9,7 @@ import { UpdateModal } from './components/modals/UpdateModal';
 import { JsonCodeModal } from './components/modals/JsonCodeModal';
 import { TestModal } from './components/modals/TestModal';
 import { RuntimeModal } from './components/modals/RuntimeModal';
+import { BuildPackageModal } from './components/modals/BuildPackageModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
 import { SaveToast } from './components/common/SaveToast';
 import { useProject } from './context/ProjectContext';
@@ -16,11 +17,14 @@ import { useProject } from './context/ProjectContext';
 export const App: React.FC = () => {
   const {
     screen,
+    setScreen,
     currentProject,
     showTestModal,
     setShowTestModal,
     showRuntimeModal,
     setShowRuntimeModal,
+    showBuildModal,
+    setShowBuildModal,
     showSettingsModal,
     setShowSettingsModal,
     showUpdateModal,
@@ -50,6 +54,25 @@ export const App: React.FC = () => {
       setIsOpenModalOpen(true);
     }
   };
+
+  // Nếu đang ở chế độ Runtime: Hiển thị giao diện Runtime toàn màn hình (Ảnh 2), không hiển thị code
+  if (screen === 'runtime') {
+    return (
+      <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f8fafc] dark:bg-[#080d19] select-none text-[#1e293b] dark:text-[#e2e8f0]">
+        <RuntimeModal
+          isOpen={true}
+          fullWindow={true}
+          onClose={() => setScreen(currentProject ? 'editor' : 'home')}
+        />
+        <ConfirmModal
+          isOpen={!!confirmModalState}
+          onClose={closeConfirmModal}
+          options={confirmModalState}
+        />
+        <SaveToast />
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-screen w-screen overflow-hidden bg-[#f8fafc] dark:bg-[#080d19] select-none text-[#1e293b] dark:text-[#e2e8f0] transition-colors">
@@ -102,6 +125,10 @@ export const App: React.FC = () => {
       <RuntimeModal
         isOpen={showRuntimeModal}
         onClose={() => setShowRuntimeModal(false)}
+      />
+      <BuildPackageModal
+        isOpen={showBuildModal}
+        onClose={() => setShowBuildModal(false)}
       />
       <ConfirmModal
         isOpen={!!confirmModalState}

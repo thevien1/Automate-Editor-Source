@@ -159,6 +159,8 @@ interface ProjectContextType {
   setShowTestModal: (show: boolean) => void;
   showRuntimeModal: boolean;
   setShowRuntimeModal: (show: boolean) => void;
+  showBuildModal: boolean;
+  setShowBuildModal: (show: boolean) => void;
   showSettingsModal: boolean;
   setShowSettingsModal: (show: boolean) => void;
   showUpdateModal: boolean;
@@ -492,6 +494,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
 
   const [showTestModal, setShowTestModal] = useState<boolean>(false);
   const [showRuntimeModal, setShowRuntimeModal] = useState<boolean>(false);
+  const [showBuildModal, setShowBuildModal] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
   const [showUpdateModal, setShowUpdateModal] = useState<boolean>(false);
   const [showJsonModal, setShowJsonModal] = useState<boolean>(false);
@@ -533,6 +536,52 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       checkAppUpdate(false);
     }, 2000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Check launch args / URL query for Runtime mode
+  useEffect(() => {
+    const initLaunchMode = async () => {
+      let isRuntime = false;
+      let targetPackage: string | undefined = undefined;
+      let targetProject: string | undefined = undefined;
+
+      try {
+        const search = window.location.search;
+        const params = new URLSearchParams(search);
+        if (params.get('mode') === 'runtime') isRuntime = true;
+        if (params.get('package')) targetPackage = params.get('package') || undefined;
+      } catch {}
+
+      if ((window as any).electronAPI?.getLaunchArgs) {
+        try {
+          const args = await (window as any).electronAPI.getLaunchArgs();
+          if (args?.isRuntime) isRuntime = true;
+          if (args?.packagePath) targetPackage = args.packagePath;
+          if (args?.projectPath) targetProject = args.projectPath;
+        } catch {}
+      }
+
+      if (isRuntime) {
+        setScreen('runtime');
+        if (targetPackage) {
+          openProjectByPath(targetPackage);
+        } else if (targetProject) {
+          openProjectByPath(targetProject);
+        } else {
+          try {
+            const savedRecents = localStorage.getItem('gpm_recent_projects');
+            if (savedRecents) {
+              const recents = JSON.parse(savedRecents);
+              if (recents && recents.length > 0 && recents[0]?.path) {
+                openProjectByPath(recents[0].path);
+              }
+            }
+          } catch {}
+        }
+      }
+    };
+
+    initLaunchMode();
   }, []);
 
   const [undoStack, setUndoStack] = useState<EditorFile[]>([]);
@@ -634,11 +683,20 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const openProjectByPath = async (rawPath: string, name?: string) => {
-    // If a file inside the project directory was picked, extract directory
-    const path = (rawPath || '').trim().replace(/[/\\](info\.gpmsln|src\.gscript|runtime\.json|test\.gscript)$/i, '');
     let proj: ProjectData | null = null;
+    const isSvbLaunch = rawPath.toLowerCase().endsWith('.svblaunch');
 
-    if ((window as any).electronAPI?.readProjectFromDisk) {
+    if (isSvbLaunch && (window as any).electronAPI?.readPackage) {
+      const pkgRes = await (window as any).electronAPI.readPackage(rawPath);
+      if (pkgRes.success && pkgRes.project) {
+        proj = pkgRes.project;
+      }
+    }
+
+    // If a file inside the project directory was picked, extract directory
+    const path = (rawPath || '').trim().replace(/[/\\](info\.gpmsln|src\.gscript|runtime\.json|test\.gscript|\.svblaunch)$/i, '');
+
+    if (!proj && (window as any).electronAPI?.readProjectFromDisk) {
       const res = await (window as any).electronAPI.readProjectFromDisk(path);
       if (res.success && res.project) {
         proj = res.project;
@@ -692,7 +750,11 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     setCurrentProject(proj);
-    setScreen('editor');
+    if (proj?.isPackaged) {
+      setScreen('runtime');
+    } else {
+      setScreen(prev => prev === 'runtime' ? 'runtime' : 'editor');
+    }
     setActiveWorkflowTabState('main');
     setUndoStack([]);
     setRedoStack([]);
@@ -1828,6 +1890,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         setShowTestModal,
         showRuntimeModal,
         setShowRuntimeModal,
+        showBuildModal,
+        setShowBuildModal,
         showSettingsModal,
         setShowSettingsModal,
         showUpdateModal,

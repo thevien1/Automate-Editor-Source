@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   X,
+  Minus,
   Globe,
   Monitor,
   Smartphone,
@@ -55,10 +56,12 @@ import {
 } from '../../utils/virtualMouseScript';
 import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
 import { resolveVariableString } from '../../utils/variableResolver';
+import runtimeLogoImg from '../../assets/runtime_logo.png';
 
 interface RuntimeModalProps {
   isOpen: boolean;
   onClose: () => void;
+  fullWindow?: boolean;
 }
 
 export interface GpmTag {
@@ -225,8 +228,8 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   rotatingProxyBatchWait: true,
 };
 
-export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) => {
-  const { currentProject, updateRuntimeConfig, saveProject } = useProject();
+export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, fullWindow = false }) => {
+  const { currentProject, updateRuntimeConfig, saveProject, openProjectByPath } = useProject();
 
   // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Tạo Profile mới (Clone & Ephemeral), 5 = Running
   // Always starts at Step 1 (Select app) when user clicks Run
@@ -1245,6 +1248,34 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
       setSessionName(`${currentProject.info.name}-${hash}`);
     }
   }, [currentProject?.info.name]);
+
+  const handlePickApplication = async () => {
+    if ((window as any).electronAPI?.openFileDialog) {
+      try {
+        const res = await (window as any).electronAPI.openFileDialog({
+          title: 'Select Application Package (.svblaunch, .gpmlaunch) or Project',
+          filters: [
+            { name: 'SV Browser Package & Project', extensions: ['svblaunch', 'gpmlaunch', 'gpmsln', 'svbsln', 'gscript'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+        });
+        if (res && res[0]) {
+          openProjectByPath(res[0]);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    } else if ((window as any).electronAPI?.openFolderDialog) {
+      try {
+        const res = await (window as any).electronAPI.openFolderDialog();
+        if (res) {
+          openProjectByPath(res);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    }
+  };
 
   // Elapsed timer when running
   useEffect(() => {
@@ -8183,23 +8214,44 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 select-none text-left">
-      <div className="bg-white dark:bg-[#0c1220] border border-[#cbd5e1] dark:border-[#1e293b] rounded-xl shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[94vh] max-h-[920px] overflow-hidden flex flex-col relative animate-in fade-in zoom-in-95 duration-150">
+    <div className={fullWindow ? "w-full h-full flex flex-col overflow-hidden bg-white dark:bg-[#0c1220] select-none text-left" : "fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-3 select-none text-left"}>
+      <div className={fullWindow ? "flex-1 flex flex-col overflow-hidden bg-white dark:bg-[#0c1220]" : "bg-white dark:bg-[#0c1220] border border-[#cbd5e1] dark:border-[#1e293b] rounded-xl shadow-2xl w-full max-w-6xl xl:max-w-7xl h-[94vh] max-h-[920px] overflow-hidden flex flex-col relative animate-in fade-in zoom-in-95 duration-150"}>
         {/* Top Window Title Bar (Matching Image 2) */}
         <div className="shrink-0 flex items-center justify-between px-3 py-2 border-b border-[#e2e8f0] dark:border-[#1a2538] bg-[#f8fafc] dark:bg-[#080d19]">
           <div className="flex items-center space-x-2 text-xs font-semibold text-[#1e293b] dark:text-[#f1f5f9]">
-            <div className="w-4 h-4 rounded bg-[#1677ff] text-white flex items-center justify-center font-bold text-[10px] shadow-xs">
-              <span className="scale-75">🤖</span>
+            <div className="w-4 h-4 rounded overflow-hidden flex items-center justify-center shadow-xs">
+              <img src={runtimeLogoImg} alt="SV Browser Runtime" className="w-full h-full object-contain" />
             </div>
             <span>{appName} 1.0.0 - SV Browser Automate Runtime v3.1.0-stable</span>
           </div>
 
           <div className="flex items-center space-x-1">
             <button
-              onClick={handleModalClose}
-              className="p-1 rounded text-[#64748b] hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
+              onClick={() => (window as any).electronAPI?.minimize?.()}
+              className="w-7 h-6 flex items-center justify-center rounded text-[#64748b] hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Minimize"
             >
-              <X className="w-4 h-4" />
+              <Minus className="w-3.5 h-3.5" />
+            </button>
+            <button
+              onClick={() => (window as any).electronAPI?.maximize?.()}
+              className="w-7 h-6 flex items-center justify-center rounded text-[#64748b] hover:text-black dark:hover:text-white hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+              title="Maximize"
+            >
+              <Square className="w-3 h-3" />
+            </button>
+            <button
+              onClick={() => {
+                if (fullWindow) {
+                  (window as any).electronAPI?.close?.();
+                } else {
+                  handleModalClose();
+                }
+              }}
+              className="w-7 h-6 flex items-center justify-center rounded text-[#64748b] hover:text-white hover:bg-red-500 transition-colors cursor-pointer"
+              title="Close"
+            >
+              <X className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
@@ -8210,8 +8262,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
           <div className="w-12 bg-[#f1f5f9] dark:bg-[#080c16] border-r border-[#e2e8f0] dark:border-[#162236] flex flex-col items-center py-3 justify-between shrink-0">
             <div className="flex flex-col items-center space-y-4">
               {/* App logo button */}
-              <div className="w-8 h-8 rounded-lg bg-[#1677ff] flex items-center justify-center text-white shadow-sm cursor-pointer">
-                <span className="text-sm font-bold">🤖</span>
+              <div className="w-8 h-8 rounded-lg overflow-hidden flex items-center justify-center shadow-sm cursor-pointer hover:scale-105 transition-transform">
+                <img src={runtimeLogoImg} alt="App Logo" className="w-full h-full object-cover" />
               </div>
 
               {/* Browser Automation (Active) */}
@@ -8466,11 +8518,17 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                         </div>
 
                         <div className="flex items-center space-x-3 text-xs">
-                          <button className="flex items-center space-x-1 text-[#ea580c] hover:underline cursor-pointer">
+                          <button
+                            onClick={handlePickApplication}
+                            className="flex items-center space-x-1 text-[#ea580c] hover:underline cursor-pointer"
+                          >
                             <FolderOpen className="w-3.5 h-3.5" />
                             <span>Open existing session</span>
                           </button>
-                          <button className="flex items-center space-x-1 text-[#1677ff] hover:underline font-semibold cursor-pointer">
+                          <button
+                            onClick={handlePickApplication}
+                            className="flex items-center space-x-1 text-[#1677ff] hover:underline font-semibold cursor-pointer"
+                          >
                             <Plus className="w-3.5 h-3.5" />
                             <span>Add Application ▾</span>
                           </button>
@@ -8490,8 +8548,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       {/* Selected App Item Card (Image 2) */}
                       <div className="bg-white dark:bg-[#0a0f1d] border border-[#e2e8f0] dark:border-[#1e293b] rounded-lg p-3 flex items-center justify-between shadow-xs">
                         <div className="flex items-center space-x-3">
-                          <div className="w-8 h-8 rounded-lg bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-900/50 flex items-center justify-center text-[#1677ff]">
-                            <Globe className="w-4 h-4" />
+                          <div className="w-8 h-8 rounded-lg overflow-hidden border border-blue-200 dark:border-blue-900/50 flex items-center justify-center shrink-0">
+                            <img src={runtimeLogoImg} alt={appName} className="w-full h-full object-cover" />
                           </div>
                           <div>
                             <div className="flex items-center space-x-2">
@@ -8503,7 +8561,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                               </span>
                             </div>
                             <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] font-mono mt-0.5">
-                              {appPath}
+                              {currentProject?.packagePath || currentProject?.folderPath || appPath}
                             </div>
                           </div>
                         </div>
@@ -8529,8 +8587,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose }) =
                       </div>
 
                       <div className="flex items-center space-x-2.5 pb-3 border-b border-[#e2e8f0] dark:border-[#1e293b]">
-                        <div className="w-8 h-8 rounded-lg bg-[#1677ff] text-white flex items-center justify-center shadow-xs">
-                          <Globe className="w-4 h-4" />
+                        <div className="w-8 h-8 rounded-lg overflow-hidden shadow-xs flex items-center justify-center shrink-0">
+                          <img src={runtimeLogoImg} alt="SV Browser Automate" className="w-full h-full object-cover" />
                         </div>
                         <div>
                           <div className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9]">SV Browser Automate</div>

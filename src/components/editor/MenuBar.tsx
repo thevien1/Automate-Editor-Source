@@ -26,6 +26,9 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
     setShowJsonModal,
     setJsonModalMode,
     setShowUpdateModal,
+    setShowBuildModal,
+    setShowRuntimeModal,
+    setScreen,
   } = useProject();
   const [activeMenu, setActiveMenu] = useState<string | null>(null);
 
@@ -204,14 +207,23 @@ export const MenuBar: React.FC<MenuBarProps> = ({ onNewProject, onOpenProject })
           </button>
           {activeMenu === 'build' && (
             <div
-              className="absolute left-0 top-full mt-0.5 w-48 bg-[#0f172a] border border-[#1e293b] shadow-2xl rounded-md py-1 z-50 text-xs text-[#cbd5e1]"
+              className="absolute left-0 top-full mt-0.5 w-64 bg-[#0f172a] border border-[#1e293b] shadow-2xl rounded-md py-1 z-50 text-xs text-[#cbd5e1]"
               onClick={() => setActiveMenu(null)}
             >
               <div
-                onClick={() => alert('Build .svblaunch package')}
-                className="px-3 py-1.5 hover:bg-[#1e293b] cursor-pointer"
+                onClick={() => setShowBuildModal(true)}
+                className="px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
               >
-                Build .svblaunch (Package)
+                <span>Build .svblaunch (Package)</span>
+                <span className="text-[10px] text-amber-400 font-medium">Đóng gói</span>
+              </div>
+              <div className="border-t border-[#1e293b] my-1" />
+              <div
+                onClick={() => setScreen('runtime')}
+                className="px-3 py-1.5 hover:bg-[#1e293b] hover:text-[#38bdf8] flex items-center justify-between cursor-pointer"
+              >
+                <span>Mở bảng Runtime toàn màn hình</span>
+                <span className="text-[10px] text-emerald-400 font-medium">Ảnh 2</span>
               </div>
             </div>
           )}

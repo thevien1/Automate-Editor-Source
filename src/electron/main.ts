@@ -20,14 +20,29 @@ function getTargetWindow(event?: Electron.IpcMainInvokeEvent | Electron.IpcMainE
 }
 
 function createWindow(): BrowserWindow {
-  const iconPath = path.join(__dirname, '../public/icon.ico');
-  const iconPngPath = path.join(__dirname, '../public/icon.png');
+  const isRuntimeArg = process.argv.includes('--runtime') ||
+    process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+
+  const iconName = isRuntimeArg ? 'runtime_icon' : 'icon';
+  const iconPath = path.join(__dirname, `../public/${iconName}.ico`);
+  const iconPngPath = path.join(__dirname, `../public/${iconName}.png`);
 
   const resolvedIcon = fs.existsSync(iconPath)
     ? iconPath
     : fs.existsSync(iconPngPath)
     ? iconPngPath
     : undefined;
+
+  const pkgVersion = (() => {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf-8'));
+      return pkg.version || '3.1.0';
+    } catch {
+      return '3.1.0';
+    }
+  })();
+
+  const titlePrefix = isRuntimeArg ? 'SV Browser Automate Runtime' : 'SV Browser Automate Editor';
 
   const win = new BrowserWindow({
     width: 1280,
@@ -42,14 +57,7 @@ function createWindow(): BrowserWindow {
       nodeIntegration: false,
       contextIsolation: true,
     },
-    title: `SV Browser Automate Editor v${(() => {
-      try {
-        const pkg = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf-8'));
-        return pkg.version || '3.1.0';
-      } catch {
-        return '3.1.0';
-      }
-    })()}-stable`,
+    title: `${titlePrefix} v${pkgVersion}-stable`,
   });
 
   if (resolvedIcon) {
@@ -59,11 +67,20 @@ function createWindow(): BrowserWindow {
   // Tự động mở toàn màn hình (maximized) khi khởi chạy
   win.maximize();
 
+  const packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  const queryParams: Record<string, string> = {};
+  if (isRuntimeArg) queryParams.mode = 'runtime';
+  if (packageArg) queryParams.package = packageArg;
+
+  const queryString = Object.keys(queryParams).length > 0
+    ? '?' + new URLSearchParams(queryParams).toString()
+    : '';
+
   const indexPath = path.join(__dirname, '../dist/index.html');
   if (fs.existsSync(indexPath)) {
-    win.loadFile(indexPath);
+    win.loadFile(indexPath, Object.keys(queryParams).length > 0 ? { query: queryParams } : undefined);
   } else {
-    win.loadURL('http://localhost:5173');
+    win.loadURL(`http://localhost:5173${queryString}`);
   }
 
   windows.add(win);
@@ -277,6 +294,200 @@ ipcMain.handle('fs:saveRuntimeConfig', async (_, data: { folderPath: string; run
     const runtimePath = path.join(folderPath, 'runtime.json');
     fs.writeFileSync(runtimePath, JSON.stringify(runtimeConfig, null, 2), 'utf-8');
     return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// App Launch arguments IPC
+ipcMain.handle('app:getLaunchArgs', () => {
+  const isRuntime = process.argv.includes('--runtime') ||
+    process.argv.some(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  const packageArg = process.argv.find(a => a.toLowerCase().endsWith('.svblaunch') || a.toLowerCase().endsWith('.gpmlaunch'));
+  const projectArgIndex = process.argv.indexOf('--project');
+  const projectArg = projectArgIndex !== -1 ? process.argv[projectArgIndex + 1] : undefined;
+  return {
+    isRuntime,
+    packagePath: packageArg,
+    projectPath: projectArg,
+  };
+});
+
+// Build .svblaunch Package IPC
+ipcMain.handle('fs:buildPackage', async (_, data: {
+  folderPath: string;
+  exportPath?: string;
+  packageName?: string;
+  version?: string;
+  author?: string;
+  password?: string;
+  useLicense?: boolean;
+}) => {
+  try {
+    const { folderPath, exportPath, packageName, version, author, password, useLicense } = data;
+    if (!fs.existsSync(folderPath)) {
+      return { success: false, error: 'Thư mục dự án không tồn tại: ' + folderPath };
+    }
+
+    const infoPath = fs.existsSync(path.join(folderPath, 'info.svbsln'))
+      ? path.join(folderPath, 'info.svbsln')
+      : path.join(folderPath, 'info.gpmsln');
+    const scriptPath = path.join(folderPath, 'src.gscript');
+
+    if (!fs.existsSync(infoPath) || !fs.existsSync(scriptPath)) {
+      return { success: false, error: 'Thư mục dự án không hợp lệ (thiếu info.gpmsln hoặc src.gscript)' };
+    }
+
+    const info = JSON.parse(fs.readFileSync(infoPath, 'utf-8'));
+    const script = JSON.parse(fs.readFileSync(scriptPath, 'utf-8'));
+
+    // Read subworkflows
+    const subWorkflows: Record<string, any> = {};
+    const diskFiles = fs.readdirSync(folderPath);
+    for (const f of diskFiles) {
+      if (f.endsWith('.gscript') && f !== 'src.gscript') {
+        const baseName = path.basename(f, '.gscript');
+        try {
+          subWorkflows[baseName] = JSON.parse(fs.readFileSync(path.join(folderPath, f), 'utf-8'));
+        } catch {}
+      }
+    }
+
+    // Read runtime config if exists
+    let runtimeConfig: any = null;
+    const runtimePath = path.join(folderPath, 'runtime.json');
+    if (fs.existsSync(runtimePath)) {
+      try {
+        runtimeConfig = JSON.parse(fs.readFileSync(runtimePath, 'utf-8'));
+      } catch {}
+    }
+
+    const app_name = packageName || info.name || 'Application';
+    const app_id = info.id || 'svb_' + Date.now();
+    const app_version = version || info.version || '1.0.0';
+    const author_info = author || info.author_info || 'SV Browser - svbrowser.com';
+
+    // Build manifest (.build)
+    const buildManifest = {
+      app_id,
+      app_name,
+      app_password: password || '',
+      author_info,
+      use_license_system: !!useLicense,
+      version: app_version,
+      built_at: new Date().toISOString(),
+    };
+
+    // Save .build to project folder according to SKILL.md
+    fs.writeFileSync(path.join(folderPath, '.build'), JSON.stringify(buildManifest, null, 2), 'utf-8');
+
+    // Create packaged bundle
+    const packagePayload = {
+      format: 'SVB_LAUNCH_V1',
+      manifest: buildManifest,
+      info,
+      script,
+      subWorkflows,
+      runtimeConfig,
+    };
+
+    // Obfuscate / encrypt bundle with Base64 payload & signature so source code is not visible
+    const encodedPayload = Buffer.from(JSON.stringify(packagePayload)).toString('base64');
+    const svbLaunchContent = JSON.stringify({
+      header: 'SVB_LAUNCH_PACKAGE',
+      version: '1.0',
+      app_id,
+      app_name,
+      checksum: Buffer.from(app_id + app_name).toString('hex'),
+      payload: encodedPayload,
+    }, null, 2);
+
+    // Determine target directory
+    const targetDir = exportPath ? exportPath : path.join(folderPath, 'build');
+    if (!fs.existsSync(targetDir)) {
+      fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    // Clean any raw code files (.gscript, .gpmsln, .svbsln, .build) in targetDir to protect source code
+    try {
+      const existingInTarget = fs.readdirSync(targetDir);
+      for (const f of existingInTarget) {
+        if (f.endsWith('.gscript') || f === 'info.gpmsln' || f === 'info.svbsln' || f === '.build') {
+          try {
+            fs.unlinkSync(path.join(targetDir, f));
+          } catch {}
+        }
+      }
+    } catch {}
+
+    // Save .svblaunch file
+    const safeName = app_name.replace(/[\\/:*?"<>|]/g, '_');
+    const finalPackagePath = path.join(targetDir, `${safeName}.svblaunch`);
+    fs.writeFileSync(finalPackagePath, svbLaunchContent, 'utf-8');
+
+    // Copy runtime icon to targetDir
+    try {
+      const iconSrc = path.join(__dirname, '../public/runtime_icon.ico');
+      if (fs.existsSync(iconSrc)) {
+        fs.copyFileSync(iconSrc, path.join(targetDir, 'icon.ico'));
+      }
+    } catch {}
+
+    // Generate quick runner .bat file
+    const batPath = path.join(targetDir, `Chay_${safeName}.bat`);
+    const appExeName = 'SV Browser Automate Editor.exe';
+    const batContent = `@echo off\r\ntitle ${app_name} - SV Browser Automate Runtime\r\ncd /d "%~dp0"\r\nchcp 65001 >nul\r\n\r\necho Dang khoi dong ${app_name} trong giao dien SV Browser Automate Runtime...\r\n\r\nif exist "%~dp0..\\${appExeName}" (\r\n  start "" "%~dp0..\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%~dp0${appExeName}" (\r\n  start "" "%~dp0${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\nif exist "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" (\r\n  start "" "%LOCALAPPDATA%\\Programs\\sv-browser-automate-editor\\${appExeName}" --runtime --package "%~dp0${safeName}.svblaunch"\r\n  exit /b\r\n)\r\n\r\nstart "" "${process.execPath}" "%~dp0..\\dist-electron\\main.js" --runtime --package "%~dp0${safeName}.svblaunch"\r\n`;
+    fs.writeFileSync(batPath, batContent, 'utf-8');
+
+    return {
+      success: true,
+      packagePath: finalPackagePath,
+      launcherPath: batPath,
+      targetDir,
+      appName: app_name,
+    };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Read and unpack .svblaunch package
+ipcMain.handle('fs:readPackage', async (_, packagePath: string) => {
+  try {
+    if (!fs.existsSync(packagePath)) {
+      return { success: false, error: 'File gói không tồn tại: ' + packagePath };
+    }
+    const raw = fs.readFileSync(packagePath, 'utf-8');
+    const json = JSON.parse(raw);
+    if (json.header === 'SVB_LAUNCH_PACKAGE' && json.payload) {
+      const decoded = JSON.parse(Buffer.from(json.payload, 'base64').toString('utf-8'));
+      return {
+        success: true,
+        project: {
+          folderPath: path.dirname(packagePath),
+          packagePath,
+          info: decoded.info,
+          script: decoded.script,
+          subWorkflows: decoded.subWorkflows || {},
+          runtimeConfig: decoded.runtimeConfig || undefined,
+          isPackaged: true,
+        },
+      };
+    }
+    return { success: false, error: 'Định dạng gói .svblaunch không hợp lệ' };
+  } catch (err: any) {
+    return { success: false, error: err.message };
+  }
+});
+
+// Show file/folder in Explorer
+ipcMain.handle('fs:showInFolder', async (_, targetPath: string) => {
+  try {
+    if (fs.existsSync(targetPath)) {
+      shell.showItemInFolder(targetPath);
+      return { success: true };
+    }
+    return { success: false, error: 'Đường dẫn không tồn tại' };
   } catch (err: any) {
     return { success: false, error: err.message };
   }
