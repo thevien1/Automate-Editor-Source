@@ -23,6 +23,10 @@ import {
   RotateCcw,
   AlertTriangle,
   Cpu,
+  Lock,
+  Unlock,
+  Key,
+  Eye,
   EyeOff,
   MousePointer,
   RefreshCw,
@@ -234,6 +238,54 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Tạo Profile mới (Clone & Ephemeral), 5 = Running
   // Always starts at Step 1 (Select app) when user clicks Run
   const [step, setStep] = useState<number>(1);
+
+  // Password Protection for Packaged / Protected Applications
+  const [unlockedProjectKeys, setUnlockedProjectKeys] = useState<Set<string>>(new Set());
+  const [passwordInput, setPasswordInput] = useState<string>('');
+  const [showPassword, setShowPassword] = useState<boolean>(false);
+  const [passwordError, setPasswordError] = useState<string>('');
+  const [isVerifyingPassword, setIsVerifyingPassword] = useState<boolean>(false);
+
+  // Extract password from manifest or info if set
+  const targetPassword = String(
+    (currentProject as any)?.manifest?.app_password ??
+    (currentProject as any)?.manifest?.password ??
+    ''
+  ).trim();
+
+  const isPasswordRequired = targetPassword.length > 0;
+  const currentProjectKey =
+    currentProject?.packagePath ||
+    currentProject?.folderPath ||
+    currentProject?.info?.id ||
+    'default_project';
+
+  const isUnlocked = !isPasswordRequired || unlockedProjectKeys.has(currentProjectKey);
+
+  useEffect(() => {
+    setPasswordInput('');
+    setPasswordError('');
+  }, [currentProjectKey]);
+
+  const handleUnlock = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!passwordInput) {
+      setPasswordError('Vui lòng nhập mật khẩu');
+      return;
+    }
+
+    setIsVerifyingPassword(true);
+    setTimeout(() => {
+      if (passwordInput === targetPassword) {
+        setUnlockedProjectKeys((prev) => new Set([...prev, currentProjectKey]));
+        setPasswordError('');
+        setPasswordInput('');
+      } else {
+        setPasswordError('Mật khẩu không chính xác! Vui lòng kiểm tra lại.');
+      }
+      setIsVerifyingPassword(false);
+    }, 120);
+  };
 
   // Step 1: Session name
   const [sessionName, setSessionName] = useState<string>(() => {
@@ -8256,8 +8308,142 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           </div>
         </div>
 
-        {/* Modal Main Body: Left Vertical Nav + Center Content */}
-        <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Modal Main Body: Password Authentication Screen if Protected */}
+        {!isUnlocked ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-6 bg-slate-50/60 dark:bg-[#070b14] overflow-y-auto">
+            <div className="w-full max-w-md bg-white dark:bg-[#0f172a] border border-[#e2e8f0] dark:border-[#1e293b] rounded-2xl shadow-xl p-6 sm:p-8 space-y-6 animate-in fade-in zoom-in-95 duration-200">
+              
+              {/* Icon & Title */}
+              <div className="text-center space-y-2">
+                <div className="relative inline-flex items-center justify-center">
+                  <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-blue-500 to-indigo-600 p-0.5 shadow-lg shadow-blue-500/25">
+                    <div className="w-full h-full bg-white dark:bg-[#0a0f1d] rounded-[14px] flex items-center justify-center overflow-hidden">
+                      <img src={runtimeLogoImg} alt={appName} className="w-10 h-10 object-contain" />
+                    </div>
+                  </div>
+                  <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-blue-600 text-white flex items-center justify-center shadow-md border-2 border-white dark:border-[#0f172a]">
+                    <Lock className="w-3 h-3" />
+                  </div>
+                </div>
+
+                <div className="space-y-1 pt-1">
+                  <h2 className="text-base sm:text-lg font-bold text-[#1e293b] dark:text-[#f8fafc]">
+                    Xác thực mật khẩu
+                  </h2>
+                  <div className="flex items-center justify-center space-x-1.5 text-xs text-[#64748b] dark:text-[#94a3b8]">
+                    <span>Kịch bản:</span>
+                    <span className="font-semibold text-[#1677ff] dark:text-[#38bdf8] truncate max-w-[200px]">
+                      {appName}
+                    </span>
+                    {(currentProject as any)?.manifest?.version && (
+                      <span className="px-1.5 py-0.2 rounded bg-slate-100 dark:bg-slate-800 text-[10px] font-mono text-[#64748b] dark:text-[#94a3b8]">
+                        v{(currentProject as any)?.manifest?.version}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              {/* Note / Description from build package if available */}
+              {((currentProject as any)?.manifest?.note || currentProject?.info?.description) && (
+                <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/60 rounded-xl p-3 text-left text-xs text-[#334155] dark:text-[#cbd5e1] space-y-1">
+                  <div className="flex items-center space-x-1.5 font-semibold text-amber-700 dark:text-amber-400">
+                    <Lightbulb className="w-3.5 h-3.5 shrink-0" />
+                    <span>Ghi chú từ tác giả:</span>
+                  </div>
+                  <p className="text-[11px] leading-relaxed text-[#475569] dark:text-[#cbd5e1]">
+                    {(currentProject as any)?.manifest?.note || currentProject?.info?.description}
+                  </p>
+                </div>
+              )}
+
+              {/* Password Form */}
+              <form onSubmit={handleUnlock} className="space-y-4 text-left">
+                <div className="space-y-1.5">
+                  <label className="text-xs font-semibold text-[#334155] dark:text-[#cbd5e1] flex items-center justify-between">
+                    <span>Mật khẩu bảo vệ (Password)</span>
+                    {passwordError && (
+                      <span className="text-red-500 text-[11px] font-medium">{passwordError}</span>
+                    )}
+                  </label>
+
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-[#94a3b8]">
+                      <Key className="w-4 h-4" />
+                    </div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      autoFocus
+                      value={passwordInput}
+                      onChange={(e) => {
+                        setPasswordInput(e.target.value);
+                        if (passwordError) setPasswordError('');
+                      }}
+                      placeholder="Nhập mật khẩu để mở khóa kịch bản..."
+                      className={`w-full pl-9 pr-10 py-2.5 text-xs bg-slate-50 dark:bg-[#080d19] border rounded-xl text-[#1e293b] dark:text-[#f8fafc] focus:outline-none transition-all ${
+                        passwordError
+                          ? 'border-red-500 focus:border-red-500 ring-2 ring-red-500/20'
+                          : 'border-[#cbd5e1] dark:border-[#1e293b] focus:border-[#1677ff] focus:ring-2 focus:ring-blue-500/20'
+                      }`}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-3 flex items-center text-[#94a3b8] hover:text-[#1e293b] dark:hover:text-white transition-colors cursor-pointer"
+                      title={showPassword ? 'Ẩn mật khẩu' : 'Hiện mật khẩu'}
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex items-center space-x-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (fullWindow) {
+                        (window as any).electronAPI?.close?.();
+                      } else {
+                        handleModalClose();
+                      }
+                    }}
+                    className="flex-1 py-2.5 px-4 rounded-xl border border-[#cbd5e1] dark:border-[#1e293b] text-xs font-semibold text-[#475569] dark:text-[#cbd5e1] hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors cursor-pointer"
+                  >
+                    Thoát
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isVerifyingPassword}
+                    className="flex-1 py-2.5 px-4 rounded-xl bg-[#1677ff] hover:bg-blue-600 text-white text-xs font-bold flex items-center justify-center space-x-1.5 shadow-md shadow-blue-500/25 transition-all cursor-pointer active:scale-98 disabled:opacity-50"
+                  >
+                    {isVerifyingPassword ? (
+                      <span>Đang xác thực...</span>
+                    ) : (
+                      <>
+                        <Lock className="w-3.5 h-3.5" />
+                        <span>Mở khóa kịch bản</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </form>
+
+              {/* Option to pick different application */}
+              <div className="pt-2 border-t border-[#e2e8f0] dark:border-[#1e293b] text-center">
+                <button
+                  type="button"
+                  onClick={handlePickApplication}
+                  className="text-[11px] text-[#64748b] dark:text-[#94a3b8] hover:text-[#1677ff] dark:hover:text-[#38bdf8] transition-colors cursor-pointer inline-flex items-center space-x-1"
+                >
+                  <FolderOpen className="w-3 h-3 text-amber-500" />
+                  <span>Hoặc mở file kịch bản khác (.svblaunch)</span>
+                </button>
+              </div>
+
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-1 min-h-0 overflow-hidden">
           {/* Left Vertical Slim Navigation Bar (Images 2-5) */}
           <div className="w-12 bg-[#f1f5f9] dark:bg-[#080c16] border-r border-[#e2e8f0] dark:border-[#162236] flex flex-col items-center py-3 justify-between shrink-0">
             <div className="flex flex-col items-center space-y-4">
@@ -11388,6 +11574,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             </div>
           </div>
         </div>
+        )}
       </div>
     </div>
   );

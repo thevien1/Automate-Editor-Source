@@ -301,7 +301,15 @@ ipcMain.handle('fs:readProject', async (_, folderPath: string) => {
       }
     }
 
-    return { success: true, project: { folderPath, info, script, subWorkflows, runtimeConfig } };
+    let manifest: any = undefined;
+    const buildPath = path.join(folderPath, '.build');
+    if (fs.existsSync(buildPath)) {
+      try {
+        manifest = JSON.parse(fs.readFileSync(buildPath, 'utf-8'));
+      } catch {}
+    }
+
+    return { success: true, project: { folderPath, info, script, subWorkflows, runtimeConfig, manifest } };
   } catch (err: any) {
     return { success: false, error: err.message };
   }

@@ -165,6 +165,7 @@ export interface ProjectData {
   folderPath: string;
   packagePath?: string;
   isPackaged?: boolean;
+  manifest?: any;
   info: ProjectInfo;
   script: EditorFile;
   subWorkflows?: Record<string, EditorFile>;

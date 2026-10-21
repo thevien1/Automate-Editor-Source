@@ -111,6 +111,8 @@ export const Image = createIcon('image');
 export const ImageIcon = createIcon('image');
 
 // Security & Account
+export const Lock = createIcon('lock-fill');
+export const Unlock = createIcon('unlock-fill');
 export const Key = createIcon('key-fill');
 export const Shield = createIcon('shield-check');
 export const Users = createIcon('people-fill');
