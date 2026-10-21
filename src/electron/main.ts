@@ -684,13 +684,16 @@ namespace SVBRunner {
 `;
       try {
         fs.writeFileSync(tempCsPath, csSource, 'utf-8');
-        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /resource:"${tempPkgPath},EmbeddedPackage.svblaunch" /out:"${targetExePath}" "${tempCsPath}"`;
+        const compileCmd = `"${cscPath}" /nologo /target:winexe /r:System.Windows.Forms.dll /win32icon:"${physicalIconPath}" /resource:"${tempPkgPath}",EmbeddedPackage.svblaunch /out:"${targetExePath}" "${tempCsPath}"`;
         execSync(compileCmd, { stdio: 'pipe' });
         if (fs.existsSync(targetExePath)) {
           runnerExePath = targetExePath;
+          try {
+            execSync(`attrib -h -r "${targetExePath}"`, { stdio: 'ignore' });
+          } catch {}
         }
-      } catch (compileErr) {
-        console.warn('Native launcher compilation warning:', compileErr);
+      } catch (compileErr: any) {
+        console.error('Native launcher compilation error:', compileErr?.stdout?.toString() || compileErr?.message);
       } finally {
         if (fs.existsSync(tempCsPath)) {
           try { fs.unlinkSync(tempCsPath); } catch {}
@@ -704,11 +707,18 @@ namespace SVBRunner {
       }
     }
 
+    if (!runnerExePath || !fs.existsSync(runnerExePath)) {
+      return {
+        success: false,
+        error: 'Không thể biên dịch file .exe khởi chạy kịch bản. Vui lòng thử lại.',
+      };
+    }
+
     return {
       success: true,
       packagePath: finalPackagePath,
-      launcherPath: runnerExePath || undefined,
-      exePath: runnerExePath || undefined,
+      launcherPath: runnerExePath,
+      exePath: runnerExePath,
       targetDir,
       appName: app_name,
     };
