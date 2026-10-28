@@ -41,6 +41,7 @@ export const RotateCw = createIcon('arrow-clockwise');
 export const Undo2 = createIcon('arrow-counterclockwise');
 export const Redo2 = createIcon('arrow-clockwise');
 export const RefreshCw = createIcon('arrow-repeat');
+export const Filter = createIcon('funnel-fill');
 
 // Folders & Files
 export const Folder = createIcon('folder2');
@@ -119,6 +120,7 @@ export const Users = createIcon('people-fill');
 export const LogOut = createIcon('box-arrow-right');
 export const Eye = createIcon('eye');
 export const EyeOff = createIcon('eye-slash');
+export const Incognito = createIcon('incognito');
 
 // UI Controls & Settings
 export const Settings = createIcon('gear-fill');

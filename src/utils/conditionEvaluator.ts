@@ -61,6 +61,41 @@ export function transformContainsOperators(expr: string): string {
   return s;
 }
 
+/**
+ * Transforms GPM string operators (contains, startsWith, endsWith) into valid JavaScript expressions.
+ */
+export function transformStringOperators(expr: string): string {
+  let s = transformContainsOperators(expr);
+
+  const operandPattern = `(?:"(?:[^"\\\\]|\\\\.)*"|'(?:[^'\\\\]|\\\\.)*'|[^\\s&|()]+)`;
+
+  // Infix !startsWith: "A" !startsWith "B"
+  const infixNotStartsRegex = new RegExp(`(${operandPattern})\\s+!startsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixNotStartsRegex, (_, a, b) => `(!String(${a}).startsWith(String(${b})))`);
+
+  // Negated prefix with startsWith: !"A" startsWith "B"
+  const negatedPrefixStartsRegex = new RegExp(`!\\s*(${operandPattern})\\s+startsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(negatedPrefixStartsRegex, (_, a, b) => `(!String(${a}).startsWith(String(${b})))`);
+
+  // Infix startsWith: "A" startsWith "B"
+  const infixStartsRegex = new RegExp(`(${operandPattern})\\s+startsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixStartsRegex, (_, a, b) => `(String(${a}).startsWith(String(${b})))`);
+
+  // Infix !endsWith: "A" !endsWith "B"
+  const infixNotEndsRegex = new RegExp(`(${operandPattern})\\s+!endsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixNotEndsRegex, (_, a, b) => `(!String(${a}).endsWith(String(${b})))`);
+
+  // Negated prefix with endsWith: !"A" endsWith "B"
+  const negatedPrefixEndsRegex = new RegExp(`!\\s*(${operandPattern})\\s+endsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(negatedPrefixEndsRegex, (_, a, b) => `(!String(${a}).endsWith(String(${b})))`);
+
+  // Infix endsWith: "A" endsWith "B"
+  const infixEndsRegex = new RegExp(`(${operandPattern})\\s+endsWith\\s+(${operandPattern})`, 'gi');
+  s = s.replace(infixEndsRegex, (_, a, b) => `(String(${a}).endsWith(String(${b})))`);
+
+  return s;
+}
+
 export function evaluateGpmCondition(conditionStr: string, vars: Record<string, string>): boolean {
   if (!conditionStr || !conditionStr.trim()) return true;
   let expr = conditionStr.trim();
@@ -269,8 +304,8 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   // Normalize standalone True / False literals to true / false
   expr = expr.replace(/\bTrue\b/g, 'true').replace(/\bFalse\b/g, 'false');
 
-  // Handle contains / !contains operators
-  expr = transformContainsOperators(expr);
+  // Handle contains / !contains / startsWith / endsWith operators
+  expr = transformStringOperators(expr);
 
   // Handle string-to-boolean equality coercions in JavaScript
   expr = expr.replace(/"(true|True)"\s*==\s*true/g, 'true');

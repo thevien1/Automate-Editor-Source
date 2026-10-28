@@ -25,6 +25,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
   const [note, setNote] = useState(() => currentProject?.info.description || '');
   const [password, setPassword] = useState('');
   const [useEncryption, setUseEncryption] = useState(true);
+  const [isPortable, setIsPortable] = useState(false);
   const [exportPath, setExportPath] = useState(() => {
     if (currentProject?.folderPath) {
       return `${currentProject.folderPath}\\build`;
@@ -112,6 +113,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
           note: note.trim(),
           password: password.trim() || undefined,
           useLicense: false,
+          isPortable: isPortable,
         });
 
         clearTimeout(t1);
@@ -395,6 +397,21 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                 </label>
                 <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
                   Toàn bộ mã nguồn kịch bản được nhúng mã hóa trực tiếp vào file <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">{appName}.exe</span>. Khi gửi cho người khác hoặc khi mở chạy, hệ thống <strong className="text-[#1e293b] dark:text-white">tuyệt đối không giải nén file code (.gscript) ra thư mục</strong>, bảo mật 100% mã nguồn.
+                </div>
+
+                <label className="flex items-center space-x-2 cursor-pointer pt-1">
+                  <input
+                    type="checkbox"
+                    checked={isPortable}
+                    onChange={(e) => setIsPortable(e.target.checked)}
+                    className="rounded text-[#1677ff] focus:ring-0 cursor-pointer"
+                  />
+                  <span className="text-xs text-[#334155] dark:text-[#cbd5e1] font-medium">
+                    📦 Đóng gói Portable (Kèm bộ Runtime để chạy trên mọi máy tính không cần cài đặt Editor)
+                  </span>
+                </label>
+                <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
+                  Tự động sao chép kèm bộ thư viện chạy Runtime vào thư mục build. Người dùng chỉ cần sao chép cả thư mục sang máy tính khác là có thể nhấp đúp file .exe chạy trực tiếp mà không cần cài đặt phần mềm trước.
                 </div>
               </div>
 

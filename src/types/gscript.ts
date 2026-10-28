@@ -125,6 +125,8 @@ export interface ProjectRuntimeConfig {
   closeBrowserOnDone?: boolean;
   performanceLimit?: boolean;
   hideWindowWhenDone?: boolean;
+  isHeadlessMode?: boolean;
+  isIncognitoMode?: boolean;
   useVirtualMouse?: boolean;
   restartOnError?: boolean;
   retryCount?: number;

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell, nativeImage } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, clipboard, desktopCapturer, screen, shell, nativeImage, powerSaveBlocker } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
@@ -7,6 +7,17 @@ import * as XLSX from 'xlsx';
 import http from 'http';
 import WebSocket from 'ws';
 import { RUNTIME_ICON_BASE64 } from './runtimeIconBase64';
+
+// Disable all background throttling in Chromium so automation never freezes or lags when unfocused/occluded
+app.commandLine.appendSwitch('disable-background-timer-throttling');
+app.commandLine.appendSwitch('disable-backgrounding-occluded-windows');
+app.commandLine.appendSwitch('disable-renderer-backgrounding');
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion');
+
+// Prevent Windows OS from suspending the app or throttling power in background
+try {
+  powerSaveBlocker.start('prevent-app-suspension');
+} catch (e) {}
 
 // Detect if this instance is running in runtime mode (e.g. running standalone built .exe or --runtime)
 const isInitialRuntime = process.argv.includes('--runtime') ||
@@ -97,6 +108,7 @@ function createWindow(customArgv?: string[]): BrowserWindow {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
       contextIsolation: true,
+      backgroundThrottling: false, // Prevents pausing/throttling when unfocused or occluded by other windows
     },
     title: `${titlePrefix} v${pkgVersion}-stable`,
   });
@@ -405,9 +417,10 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
   password?: string;
   useLicense?: boolean;
   note?: string;
+  isPortable?: boolean;
 }) => {
   try {
-    const { folderPath, exportPath, packageName, version, author, password, useLicense, note } = data;
+    const { folderPath, exportPath, packageName, version, author, password, useLicense, note, isPortable } = data;
     if (!fs.existsSync(folderPath)) {
       return { success: false, error: 'Thư mục dự án không tồn tại: ' + folderPath };
     }
@@ -613,6 +626,52 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     safePrepareFile(targetExePath);
     const appExeName = 'SV Browser Automate Editor.exe';
 
+    // If Portable mode is selected: copy runtime dependencies into targetDir/runtime so it runs anywhere without install
+    if (isPortable) {
+      try {
+        const candidateRuntimeDirs = [
+          path.dirname(process.execPath),
+          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'SV Browser Automate Editor'),
+          path.join(process.env.LOCALAPPDATA || '', 'Programs', 'sv-browser-automate-editor'),
+          'C:\\Program Files\\SV Browser Automate Editor',
+        ];
+        const sourceRuntimeDir = candidateRuntimeDirs.find(d => 
+          fs.existsSync(d) && (
+            fs.existsSync(path.join(d, 'SV Browser Automate Editor.exe')) ||
+            fs.existsSync(path.join(d, 'resources', 'app.asar'))
+          )
+        );
+
+        if (sourceRuntimeDir) {
+          const runtimeTargetDir = path.join(targetDir, 'runtime');
+          if (!fs.existsSync(runtimeTargetDir)) {
+            fs.mkdirSync(runtimeTargetDir, { recursive: true });
+          }
+
+          const copyRecursive = (src: string, dest: string) => {
+            if (!fs.existsSync(dest)) fs.mkdirSync(dest, { recursive: true });
+            const entries = fs.readdirSync(src, { withFileTypes: true });
+            for (const entry of entries) {
+              if (entry.name.startsWith('Uninstall') || entry.name.endsWith('.log') || entry.name === '.git') continue;
+              const sPath = path.join(src, entry.name);
+              const dPath = path.join(dest, entry.name);
+              if (entry.isDirectory()) {
+                copyRecursive(sPath, dPath);
+              } else {
+                try {
+                  fs.copyFileSync(sPath, dPath);
+                } catch {}
+              }
+            }
+          };
+
+          copyRecursive(sourceRuntimeDir, runtimeTargetDir);
+        }
+      } catch (copyErr) {
+        console.error('Lỗi sao chép runtime portable:', copyErr);
+      }
+    }
+
     if (cscPath && fs.existsSync(physicalIconPath)) {
       const tempCsPath = path.join(os.tmpdir(), `__temp_runner_${Date.now()}.cs`);
       const tempPkgPath = path.join(os.tmpdir(), `__temp_pkg_${Date.now()}.svblaunch`);
@@ -625,15 +684,154 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 namespace SVBRunner {
     static class Program {
+        static string FindEditor(string baseDir, string exeName) {
+            // 1. Kiểm tra đường dẫn lưu trong bộ nhớ đệm (nếu người dùng đã từng chỉ định)
+            try {
+                string cacheFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sv-browser-automate-runtime", "editor_path.txt");
+                if (File.Exists(cacheFile)) {
+                    string cached = File.ReadAllText(cacheFile).Trim();
+                    if (File.Exists(cached)) return cached;
+                    if (Directory.Exists(cached) && File.Exists(Path.Combine(cached, exeName))) return Path.Combine(cached, exeName);
+                }
+            } catch {}
+
+            // 2. Kiểm tra tương đối từ thư mục của file chạy (Chế độ Portable hoặc cùng thư mục)
+            string[] relativeDirs = new string[] {
+                baseDir,
+                Path.Combine(baseDir, "runtime"),
+                Path.Combine(baseDir, "bin"),
+                Path.Combine(baseDir, "editor"),
+                Path.Combine(baseDir, ".."),
+                Path.Combine(baseDir, "..", "runtime"),
+                Path.Combine(baseDir, "..", "..")
+            };
+            foreach (var d in relativeDirs) {
+                try {
+                    string candidate = Path.Combine(d, exeName);
+                    if (File.Exists(candidate)) return Path.GetFullPath(candidate);
+                } catch {}
+            }
+
+            // 3. Tự động nhận diện thư mục AppData\\Local của người dùng HIỆN TẠI trên máy này
+            try {
+                string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+                if (!string.IsNullOrEmpty(localAppData)) {
+                    string[] appDataCandidates = new string[] {
+                        Path.Combine(localAppData, "Programs", "SV Browser Automate Editor", exeName),
+                        Path.Combine(localAppData, "Programs", "sv-browser-automate-editor", exeName),
+                        Path.Combine(localAppData, "SV Browser Automate Editor", exeName),
+                        Path.Combine(localAppData, "sv-browser-automate-editor", exeName)
+                    };
+                    foreach (var c in appDataCandidates) {
+                        if (File.Exists(c)) return c;
+                    }
+                }
+            } catch {}
+
+            // 4. Kiểm tra Program Files & Program Files (x86)
+            try {
+                string pf = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+                if (!string.IsNullOrEmpty(pf)) {
+                    string c = Path.Combine(pf, "SV Browser Automate Editor", exeName);
+                    if (File.Exists(c)) return c;
+                }
+                string pfx86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+                if (!string.IsNullOrEmpty(pfx86)) {
+                    string c = Path.Combine(pfx86, "SV Browser Automate Editor", exeName);
+                    if (File.Exists(c)) return c;
+                }
+            } catch {}
+
+            // 5. Quét Registry Windows (App Paths & Uninstall) trên HKCU và HKLM
+            try {
+                RegistryKey[] rootKeys = new RegistryKey[] { Registry.CurrentUser, Registry.LocalMachine };
+                foreach (var baseKey in rootKeys) {
+                    try {
+                        using (var k = baseKey.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\" + exeName)) {
+                            if (k != null) {
+                                string p = k.GetValue(null) as string;
+                                if (!string.IsNullOrEmpty(p) && File.Exists(p)) return p;
+                            }
+                        }
+                    } catch {}
+
+                    try {
+                        using (var u = baseKey.OpenSubKey(@"Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall")) {
+                            if (u != null) {
+                                foreach (var sub in u.GetSubKeyNames()) {
+                                    try {
+                                        using (var subKey = u.OpenSubKey(sub)) {
+                                            if (subKey == null) continue;
+                                            string disp = subKey.GetValue("DisplayName") as string;
+                                            if (disp != null && disp.IndexOf("SV Browser Automate", StringComparison.OrdinalIgnoreCase) >= 0) {
+                                                string icon = subKey.GetValue("DisplayIcon") as string;
+                                                if (!string.IsNullOrEmpty(icon)) {
+                                                    icon = icon.Split(',')[0].Trim('"');
+                                                    if (File.Exists(icon) && icon.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)) return icon;
+                                                }
+                                                string loc = subKey.GetValue("InstallLocation") as string;
+                                                if (!string.IsNullOrEmpty(loc)) {
+                                                    string exePath = Path.Combine(loc.Trim('"'), exeName);
+                                                    if (File.Exists(exePath)) return exePath;
+                                                }
+                                                string uninst = subKey.GetValue("UninstallString") as string;
+                                                if (!string.IsNullOrEmpty(uninst)) {
+                                                    uninst = uninst.Split(new string[] { ".exe" }, StringSplitOptions.None)[0] + ".exe";
+                                                    uninst = uninst.Trim('"');
+                                                    string dir = Path.GetDirectoryName(uninst);
+                                                    if (!string.IsNullOrEmpty(dir)) {
+                                                        string exePath = Path.Combine(dir, exeName);
+                                                        if (File.Exists(exePath)) return exePath;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch {}
+                                }
+                            }
+                        }
+                    } catch {}
+                }
+            } catch {}
+
+            // 6. Quét các user profile khác trên máy (nếu cài dưới user khác như Administrator)
+            try {
+                string userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                string usersDir = Path.GetDirectoryName(userProfile);
+                if (!string.IsNullOrEmpty(usersDir) && Directory.Exists(usersDir)) {
+                    foreach (var userFolder in Directory.GetDirectories(usersDir)) {
+                        try {
+                            string otherPath = Path.Combine(userFolder, "AppData", "Local", "Programs", "SV Browser Automate Editor", exeName);
+                            if (File.Exists(otherPath)) return otherPath;
+                        } catch {}
+                    }
+                }
+            } catch {}
+
+            // 7. Các đường dẫn cài đặt thông dụng khác trên các ổ đĩa
+            string[] commonPaths = new string[] {
+                @"D:\\Phần mềm\\GPMAutomateEditor\\" + exeName,
+                @"D:\\Phần mềm\\SV Browser Automate Editor\\" + exeName,
+                @"C:\\Phần mềm\\GPMAutomateEditor\\" + exeName,
+                @"C:\\Phần mềm\\SV Browser Automate Editor\\" + exeName
+            };
+            foreach (var cp in commonPaths) {
+                if (File.Exists(cp)) return cp;
+            }
+
+            return null;
+        }
+
         [STAThread]
         static void Main(string[] args) {
             try {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
 
-                // Clean any loose raw script files in baseDir so they NEVER appear to the user
+                // Dọn dẹp các file kịch bản thô nếu có trong thư mục để bảo mật
                 try {
                     string[] looseScripts = Directory.GetFiles(baseDir, "*.gscript");
                     foreach (var f in looseScripts) {
@@ -653,7 +851,7 @@ namespace SVBRunner {
                 Directory.CreateDirectory(pkgDir);
                 string pkgPath = Path.Combine(pkgDir, @"${safeName}.svblaunch");
 
-                // Extract embedded package resource into isolated runtime AppData
+                // Trích xuất tài nguyên nhúng vào AppData runtime
                 try {
                     var assembly = Assembly.GetExecutingAssembly();
                     using (Stream stream = assembly.GetManifestResourceStream("EmbeddedPackage.svblaunch")) {
@@ -669,7 +867,7 @@ namespace SVBRunner {
                     }
                 } catch {}
 
-                // Fallback: If not in AppData, check local file
+                // Dự phòng: Nếu không có trong AppData, kiểm tra tệp cục bộ
                 if (!File.Exists(pkgPath)) {
                     string localPkg = Path.Combine(baseDir, @"${safeName}.svblaunch");
                     if (File.Exists(localPkg)) {
@@ -681,21 +879,32 @@ namespace SVBRunner {
                 }
 
                 string exeName = @"${appExeName}";
-                string targetExe = null;
+                string targetExe = FindEditor(baseDir, exeName);
 
-                string[] searchPaths = new string[] {
-                    Path.Combine(baseDir, exeName),
-                    Path.Combine(baseDir, "..", exeName),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "sv-browser-automate-editor", exeName),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "SV Browser Automate Editor", exeName),
-                    Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "SV Browser Automate Editor", exeName),
-                    @"${process.execPath.replace(/\\/g, '\\\\')}"
-                };
+                // Nếu vẫn chưa tìm thấy tự động, hiển thị hộp thoại hỏi người dùng có muốn chỉ định file exe không
+                if (targetExe == null || !File.Exists(targetExe)) {
+                    DialogResult dr = MessageBox.Show(
+                        "Không tìm thấy tự động ứng dụng SV Browser Automate Editor trên máy tính này.\\n\\n" +
+                        "Nếu bạn đã cài đặt hoặc có thư mục SV Browser Automate Editor trên máy, bạn có muốn chọn vị trí file 'SV Browser Automate Editor.exe' không?",
+                        "SV Browser Automate Runtime",
+                        MessageBoxButtons.YesNo,
+                        MessageBoxIcon.Question
+                    );
 
-                foreach (var p in searchPaths) {
-                    if (!string.IsNullOrEmpty(p) && File.Exists(p)) {
-                        targetExe = p;
-                        break;
+                    if (dr == DialogResult.Yes) {
+                        using (OpenFileDialog ofd = new OpenFileDialog()) {
+                            ofd.Title = "Chọn file SV Browser Automate Editor.exe";
+                            ofd.Filter = "SV Browser Automate Editor|SV Browser Automate Editor.exe;*.exe|Tất cả tệp (*.*)|*.*";
+                            ofd.FileName = exeName;
+                            if (ofd.ShowDialog() == DialogResult.OK && File.Exists(ofd.FileName)) {
+                                targetExe = ofd.FileName;
+                                try {
+                                    string cacheDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "sv-browser-automate-runtime");
+                                    Directory.CreateDirectory(cacheDir);
+                                    File.WriteAllText(Path.Combine(cacheDir, "editor_path.txt"), targetExe);
+                                } catch {}
+                            }
+                        }
                     }
                 }
 
@@ -1751,6 +1960,10 @@ const launchChrome = (
     `--user-data-dir=${profileDir}`,
     '--no-first-run',
     '--no-default-browser-check',
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=CalculateNativeWinOcclusion',
   ];
 
   if (proxy && proxy.trim()) {
@@ -2848,7 +3061,31 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
 
     if (action === 'uploadFile' || action === 'setFileInputFiles') {
       const { xpath, files } = payload || {};
-      const fileList: string[] = Array.isArray(files) ? files : (files ? [String(files)] : []);
+      let fileList: string[] = [];
+
+      if (Array.isArray(files)) {
+        fileList = files.map((f: any) => String(f).trim()).filter(Boolean);
+      } else if (typeof files === 'string') {
+        const trimmed = files.trim();
+        if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (Array.isArray(parsed)) {
+              fileList = parsed.map((f: any) => String(f).trim()).filter(Boolean);
+            }
+          } catch (e) {}
+        }
+        if (fileList.length === 0 && trimmed) {
+          if (trimmed.includes('\n')) {
+            fileList = trimmed.split('\n').map((f: string) => f.trim()).filter(Boolean);
+          } else if (trimmed.includes('|')) {
+            fileList = trimmed.split('|').map((f: string) => f.trim()).filter(Boolean);
+          } else {
+            fileList = [trimmed];
+          }
+        }
+      }
+
       if (fileList.length === 0) {
         return { success: false, error: 'No files provided to upload' };
       }

@@ -28,6 +28,7 @@ import {
   Key,
   Eye,
   EyeOff,
+  Incognito,
   MousePointer,
   RefreshCw,
   ArrowLeft,
@@ -48,6 +49,7 @@ import {
   Layout,
   Tag,
   Tags,
+  Filter,
 } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 import { WorkflowNode, ActionNode, ProjectRuntimeConfig, EditorFile } from '../../types/gscript';
@@ -201,6 +203,8 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   closeBrowserOnDone: false,
   performanceLimit: false,
   hideWindowWhenDone: false,
+  isHeadlessMode: false,
+  isIncognitoMode: false,
   useVirtualMouse: true,
   restartOnError: false,
   retryCount: 3,
@@ -612,6 +616,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   const [closeBrowserOnDone, setCloseBrowserOnDone] = useState<boolean>(false);
   const [performanceLimit, setPerformanceLimit] = useState<boolean>(false);
   const [hideWindowWhenDone, setHideWindowWhenDone] = useState<boolean>(false);
+  const [isHeadlessMode, setIsHeadlessMode] = useState<boolean>(false);
+  const [isIncognitoMode, setIsIncognitoMode] = useState<boolean>(false);
   const [useVirtualMouse, setUseVirtualMouse] = useState<boolean>(() => {
     const saved = localStorage.getItem('gpm_use_virtual_mouse');
     return saved !== null ? saved === 'true' : true;
@@ -1002,6 +1008,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     closeBrowserOnDone,
     performanceLimit,
     hideWindowWhenDone,
+    isHeadlessMode,
+    isIncognitoMode,
     useVirtualMouse,
     restartOnError,
     retryCount,
@@ -1083,6 +1091,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     setCloseBrowserOnDone(cfg.closeBrowserOnDone ?? false);
     setPerformanceLimit(cfg.performanceLimit ?? false);
     setHideWindowWhenDone(cfg.hideWindowWhenDone ?? false);
+    setIsHeadlessMode(cfg.isHeadlessMode ?? false);
+    setIsIncognitoMode(cfg.isIncognitoMode ?? false);
     setUseVirtualMouse(cfg.useVirtualMouse ?? true);
     setRestartOnError(cfg.restartOnError ?? false);
     setRetryCount(cfg.retryCount ?? 3);
@@ -1263,6 +1273,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     closeBrowserOnDone,
     performanceLimit,
     hideWindowWhenDone,
+    isHeadlessMode,
+    isIncognitoMode,
     useVirtualMouse,
     restartOnError,
     retryCount,
@@ -3544,19 +3556,36 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           }
         }
 
-        const isIncognitoMode = Boolean(hideWindowWhenDone);
-        const actionPath = isIncognitoMode ? 'start-incognito' : 'start';
+        const effectiveHeadless = Boolean(isHeadlessMode);
+        const effectiveIncognito = Boolean(isIncognitoMode);
+        let actionPath = 'start';
+        if (effectiveHeadless) {
+          actionPath = 'start-headless';
+        } else if (effectiveIncognito) {
+          actionPath = 'start-incognito';
+        }
+
+        const modeBadge = effectiveHeadless && effectiveIncognito
+          ? '(Headless & Incognito / Ẩn ngầm & Ẩn danh)'
+          : effectiveHeadless
+          ? '(Headless / Chạy ẩn ngầm)'
+          : effectiveIncognito
+          ? '(Incognito / Ẩn danh)'
+          : '';
+
         updateThreadLog(
           threadId,
           'info',
-          `🚀 Opening SV Browser profile ${isIncognitoMode ? '(Incognito / Ẩn danh)' : ''} "${effectiveProfileName}" (Proxy: "${effectiveProxy || 'Direct'}", Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
+          `🚀 Opening SV Browser profile ${modeBadge} "${effectiveProfileName}" (Proxy: "${effectiveProxy || 'Direct'}", Vị trí: x=${pos.x}, y=${pos.y} • ${pos.width}x${pos.height})...`,
           'Open Profile'
         );
         try {
           let launchRes: any = null;
           const scaleVal = (windowScale / 100).toFixed(2);
           const rawProxyParam = effectiveProxy ? `&raw_proxy=${encodeURIComponent(effectiveProxy)}` : '';
-          const queryParams = `win_pos=${pos.x},${pos.y}&window_pos=${pos.x},${pos.y}&win_position=${pos.x},${pos.y}&window_position=${pos.x},${pos.y}&win_size=${pos.width},${pos.height}&window_size=${pos.width},${pos.height}&window_scale=${scaleVal}&win_scale=${scaleVal}&skip_proxy_check=${skipProxyCheck}${rawProxyParam}`;
+          const headlessParam = effectiveHeadless ? '&headless=true' : '';
+          const incognitoParam = effectiveIncognito ? '&incognito=true' : '';
+          const queryParams = `win_pos=${pos.x},${pos.y}&window_pos=${pos.x},${pos.y}&win_position=${pos.x},${pos.y}&window_position=${pos.x},${pos.y}&win_size=${pos.width},${pos.height}&window_size=${pos.width},${pos.height}&window_scale=${scaleVal}&win_scale=${scaleVal}&skip_proxy_check=${skipProxyCheck}${rawProxyParam}${headlessParam}${incognitoParam}`;
           const startUrls = [
             `http://127.0.0.1:8725/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
             `http://localhost:8725/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
@@ -8211,6 +8240,18 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     }
   };
 
+  const selectAllProfiles = () => {
+    const allIds = profiles.map((p) => String(p.id));
+    updateSelectedProfiles(allIds);
+  };
+
+  const clearAllFilters = () => {
+    setSelectedTag('All');
+    setSelectedGroup('All');
+    setSearchQuery('');
+    setCurrentPage(1);
+  };
+
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
 
   const toggleProfileSelect = (id: string, index?: number, shiftKey?: boolean) => {
@@ -9544,16 +9585,34 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                             </span>
                           </label>
 
+                          {/* Headless mode (Chạy Chrome ẩn không hiện cửa sổ) */}
                           <label className="flex items-center space-x-2.5 cursor-pointer">
                             <input
                               type="checkbox"
-                              checked={hideWindowWhenDone}
-                              onChange={(e) => setHideWindowWhenDone(e.target.checked)}
+                              checked={isHeadlessMode}
+                              onChange={(e) => {
+                                setIsHeadlessMode(e.target.checked);
+                                setHideWindowWhenDone(e.target.checked);
+                              }}
                               className="rounded text-[#1677ff]"
                             />
                             <EyeOff className="w-3.5 h-3.5 text-[#64748b]" />
                             <span className="text-xs text-[#334155] dark:text-[#cbd5e1]">
-                              Hide window when done and active when process resume (Mở Chrome ẩn danh - start-incognito)
+                              Chạy Chrome dưới dạng ẩn không hiện Chrome (Headless mode - start-headless)
+                            </span>
+                          </label>
+
+                          {/* Incognito mode (Mở Chrome ẩn danh) */}
+                          <label className="flex items-center space-x-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={isIncognitoMode}
+                              onChange={(e) => setIsIncognitoMode(e.target.checked)}
+                              className="rounded text-[#1677ff]"
+                            />
+                            <Incognito className="w-3.5 h-3.5 text-indigo-500" />
+                            <span className="text-xs text-[#334155] dark:text-[#cbd5e1]">
+                              Mở Chrome ở chế độ ẩn danh (Incognito mode - start-incognito)
                             </span>
                           </label>
 
@@ -9722,9 +9781,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-[#64748b]">Incognito (Ẩn danh)</span>
-                          <span className={`font-semibold ${hideWindowWhenDone ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>
-                            {hideWindowWhenDone ? 'True' : 'False'}
+                          <span className="text-[#64748b] flex items-center space-x-1">
+                            <EyeOff className="w-3 h-3 text-slate-400" />
+                            <span>Chạy ẩn (Headless)</span>
+                          </span>
+                          <span className={`font-semibold ${isHeadlessMode ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`}>
+                            {isHeadlessMode ? 'True' : 'False'}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748b] flex items-center space-x-1">
+                            <Incognito className="w-3 h-3 text-indigo-400" />
+                            <span>Ẩn danh (Incognito)</span>
+                          </span>
+                          <span className={`font-semibold ${isIncognitoMode ? 'text-indigo-600 dark:text-indigo-400' : 'text-slate-500'}`}>
+                            {isIncognitoMode ? 'True' : 'False'}
                           </span>
                         </div>
                         <div className="flex justify-between">
@@ -10016,42 +10087,73 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                   {/* Filter Toolbar */}
                   <div className="shrink-0 flex flex-wrap items-center gap-2">
                     {/* Group Filter */}
-                    <div className="relative min-w-[130px]">
+                    <div className="relative min-w-[130px] flex items-center">
                       <select
                         value={selectedGroup}
                         onChange={(e) => {
                           setSelectedGroup(e.target.value);
                           setCurrentPage(1);
                         }}
-                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer"
+                        className={`w-full appearance-none px-3 py-1.5 ${selectedGroup !== 'All' ? 'pr-12 bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 font-semibold text-amber-800 dark:text-amber-200' : 'pr-7 bg-white dark:bg-[#0f172a] border-[#d9d9d9] dark:border-[#1e293b] font-medium text-[#1e293b] dark:text-[#f1f5f9]'} border rounded-md text-xs focus:outline-none focus:border-[#1677ff] cursor-pointer`}
                         title="Lọc theo Nhóm (Group)"
                       >
-                        {groups.map((grp) => (
-                          <option key={grp} value={grp}>
-                            {grp === 'All' ? '📁 Tất cả nhóm' : grp}
-                          </option>
-                        ))}
+                        {groups.map((grp) => {
+                          const count = grp === 'All' ? profiles.length : profiles.filter((p) => (p.group_name || p.group_id || 'Default group') === grp).length;
+                          return (
+                            <option key={grp} value={grp}>
+                              {grp === 'All' ? `📁 Tất cả nhóm (${profiles.length})` : `${grp} (${count})`}
+                            </option>
+                          );
+                        })}
                       </select>
+                      {selectedGroup !== 'All' && (
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedGroup('All'); setCurrentPage(1); }}
+                          className="absolute right-6 top-1/2 -translate-y-1/2 text-amber-700 hover:text-red-500 font-bold px-1 text-xs cursor-pointer"
+                          title="Bỏ lọc nhóm"
+                        >
+                          ✕
+                        </button>
+                      )}
                       <ChevronDown className="w-3.5 h-3.5 text-[#94a3b8] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
 
                     {/* Tag Filter */}
-                    <div className="relative min-w-[130px]">
+                    <div className="relative min-w-[140px] flex items-center">
                       <select
                         value={selectedTag}
                         onChange={(e) => {
                           setSelectedTag(e.target.value);
                           setCurrentPage(1);
                         }}
-                        className="w-full appearance-none px-3 py-1.5 pr-7 bg-white dark:bg-[#0f172a] border border-[#d9d9d9] dark:border-[#1e293b] rounded-md text-xs font-medium text-[#1e293b] dark:text-[#f1f5f9] focus:outline-none focus:border-[#1677ff] cursor-pointer"
+                        className={`w-full appearance-none px-3 py-1.5 ${selectedTag !== 'All' ? 'pr-12 bg-amber-50 dark:bg-amber-950/30 border-amber-300 dark:border-amber-700 font-semibold text-amber-800 dark:text-amber-200' : 'pr-7 bg-white dark:bg-[#0f172a] border-[#d9d9d9] dark:border-[#1e293b] font-medium text-[#1e293b] dark:text-[#f1f5f9]'} border rounded-md text-xs focus:outline-none focus:border-[#1677ff] cursor-pointer`}
                         title="Lọc profile theo Thẻ (Tags từ /api/v1/tags)"
                       >
-                        {tagOptions.map((tag) => (
-                          <option key={tag} value={tag}>
-                            {tag === 'All' ? '🏷️ Tất cả thẻ (Tags)' : `# ${tag}`}
-                          </option>
-                        ))}
+                        {tagOptions.map((tag) => {
+                          const count = tag === 'All' ? profiles.length : profiles.filter((p) => {
+                            const pTags: string[] = Array.isArray(p.tags)
+                              ? p.tags.map((t: any) => (typeof t === 'string' ? t : t?.name || '')?.trim().toLowerCase())
+                              : [];
+                            return pTags.includes(tag.trim().toLowerCase());
+                          }).length;
+                          return (
+                            <option key={tag} value={tag}>
+                              {tag === 'All' ? `🏷️ Tất cả thẻ (${profiles.length})` : `# ${tag} (${count})`}
+                            </option>
+                          );
+                        })}
                       </select>
+                      {selectedTag !== 'All' && (
+                        <button
+                          type="button"
+                          onClick={() => { setSelectedTag('All'); setCurrentPage(1); }}
+                          className="absolute right-6 top-1/2 -translate-y-1/2 text-amber-700 hover:text-red-500 font-bold px-1 text-xs cursor-pointer"
+                          title="Bỏ lọc thẻ tag"
+                        >
+                          ✕
+                        </button>
+                      )}
                       <ChevronDown className="w-3.5 h-3.5 text-[#94a3b8] absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
                     </div>
 
@@ -10199,8 +10301,20 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                         title="Select or deselect all filtered profiles (Ctrl+A)"
                       >
                         <CheckSquare className="w-3.5 h-3.5 text-[#1677ff]" />
-                        <span>{isAllSelected ? 'Deselect All' : 'Select All (Ctrl+A)'}</span>
+                        <span>{isAllSelected ? 'Deselect All' : `Select All (${filteredProfiles.length})`}</span>
                       </button>
+
+                      {filteredProfiles.length < profiles.length && (
+                        <button
+                          type="button"
+                          onClick={selectAllProfiles}
+                          className="px-2.5 py-1 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900 border border-blue-300 dark:border-blue-700 rounded-md text-[#1677ff] dark:text-[#38bdf8] font-semibold flex items-center space-x-1.5 transition-colors cursor-pointer shadow-2xs"
+                          title={`Chọn toàn bộ ${profiles.length} profile trong hệ thống (bỏ qua lọc)`}
+                        >
+                          <CheckSquare className="w-3.5 h-3.5 text-[#1677ff]" />
+                          <span>Chọn tất cả {profiles.length} profile</span>
+                        </button>
+                      )}
 
                       <button
                         type="button"
@@ -10272,6 +10386,58 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                       </div>
                     </div>
                   </div>
+
+                  {/* Banner khi đang lọc theo Tag hoặc Group */}
+                  {(selectedTag !== 'All' || selectedGroup !== 'All') && !searchQuery.trim() && (
+                    <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 bg-amber-50/90 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 rounded-lg text-xs">
+                      <div className="flex items-center space-x-2 text-[#1e293b] dark:text-[#f1f5f9]">
+                        <Filter className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                        <span>
+                          Đang lọc theo: {selectedTag !== 'All' && <strong className="text-amber-800 dark:text-amber-300">Thẻ #{selectedTag}</strong>}
+                          {selectedTag !== 'All' && selectedGroup !== 'All' && ' & '}
+                          {selectedGroup !== 'All' && <strong className="text-amber-800 dark:text-amber-300">Nhóm {selectedGroup}</strong>}
+                          {' — Khớp '}
+                          <strong>{filteredProfiles.length}</strong> / {profiles.length} profile
+                        </span>
+                        {filteredProfiles.length > 0 && (
+                          <span className="text-[11px] text-[#64748b] dark:text-[#94a3b8]">
+                            ({filteredProfiles.filter((p) => selectedProfileIds.includes(String(p.id))).length} đã chọn)
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <button
+                          type="button"
+                          onClick={clearAllFilters}
+                          className="px-2.5 py-1 bg-white dark:bg-[#0f172a] hover:bg-slate-100 dark:hover:bg-slate-800 border border-amber-300 dark:border-amber-800 rounded text-amber-800 dark:text-amber-300 font-medium flex items-center space-x-1 transition-colors cursor-pointer shadow-2xs"
+                          title="Bỏ lọc để hiển thị toàn bộ profile"
+                        >
+                          <span>✕ Bỏ lọc (Hiện đủ {profiles.length} profile)</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Banner kiểu Gmail khi đã chọn hết các profile hiển thị nhưng còn profile khác bị ẩn do bộ lọc */}
+                  {filteredProfiles.length > 0 &&
+                    filteredProfiles.length < profiles.length &&
+                    filteredProfiles.every((p) => selectedProfileIds.includes(String(p.id))) && (
+                      <div className="shrink-0 flex items-center justify-between px-3 py-1.5 bg-blue-100/90 dark:bg-blue-950/70 border border-blue-300 dark:border-blue-800 rounded-lg text-xs text-blue-900 dark:text-blue-200">
+                        <span>
+                          Đã chọn toàn bộ <strong>{filteredProfiles.length}</strong> profile đang hiển thị theo bộ lọc. Bạn có muốn chọn tất cả <strong>{profiles.length}</strong> profile không?
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            clearAllFilters();
+                            selectAllProfiles();
+                          }}
+                          className="px-3 py-0.5 bg-[#1677ff] hover:bg-blue-600 text-white font-bold rounded shadow-xs cursor-pointer transition-colors"
+                        >
+                          ✓ Chọn tất cả {profiles.length} profile (Bỏ lọc)
+                        </button>
+                      </div>
+                  )}
 
                   {/* Profile Table Matching Image Exactly */}
                   <div
@@ -10426,6 +10592,19 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                           {filteredProfiles.length}
                         </span>
                         <span>bản ghi</span>
+                        {filteredProfiles.length < profiles.length && (
+                          <span className="text-amber-600 dark:text-amber-400 font-medium ml-1">
+                            (đang lọc từ {profiles.length} profile •{' '}
+                            <button
+                              type="button"
+                              onClick={clearAllFilters}
+                              className="underline hover:text-amber-800 dark:hover:text-amber-200 cursor-pointer"
+                            >
+                              Hiện tất cả {profiles.length}
+                            </button>
+                            )
+                          </span>
+                        )}
                         {selectedProfileIds.length > 0 && (
                           <span className="ml-1 text-[#1677ff] dark:text-[#38bdf8] font-medium">
                             • {selectedProfileIds.length} đã chọn
@@ -10851,21 +11030,42 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                       </div>
 
                       <div className="space-y-2.5 text-xs">
-                        {/* Incognito mode toggle */}
+                        {/* Headless mode toggle */}
                         <label className="flex items-center justify-between cursor-pointer p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50">
                           <div className="flex items-center space-x-2">
-                            <EyeOff className="w-4 h-4 text-indigo-500" />
+                            <EyeOff className="w-4 h-4 text-slate-500" />
                             <div>
-                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Mở ẩn danh (start-incognito)</div>
-                              <div className="text-[10px] text-[#64748b]">Không lưu cache/cookie</div>
+                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Chạy ẩn Chrome (start-headless)</div>
+                              <div className="text-[10px] text-[#64748b]">Không hiện cửa sổ • Siêu tiết kiệm GPU / RAM</div>
                             </div>
                           </div>
                           <input
                             type="checkbox"
-                            checked={hideWindowWhenDone}
+                            checked={isHeadlessMode}
                             onChange={(e) => {
+                              setIsHeadlessMode(e.target.checked);
                               setHideWindowWhenDone(e.target.checked);
-                              saveConfigForCurrentProject({ hideWindowWhenDone: e.target.checked });
+                              saveConfigForCurrentProject({ isHeadlessMode: e.target.checked, hideWindowWhenDone: e.target.checked });
+                            }}
+                            className="rounded text-[#1677ff] cursor-pointer"
+                          />
+                        </label>
+
+                        {/* Incognito mode toggle */}
+                        <label className="flex items-center justify-between cursor-pointer p-1.5 rounded hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <div className="flex items-center space-x-2">
+                            <Incognito className="w-4 h-4 text-indigo-500" />
+                            <div>
+                              <div className="font-semibold text-[#1e293b] dark:text-[#f1f5f9]">Mở ẩn danh (start-incognito)</div>
+                              <div className="text-[10px] text-[#64748b]">Không lưu cache / cookie / lịch sử</div>
+                            </div>
+                          </div>
+                          <input
+                            type="checkbox"
+                            checked={isIncognitoMode}
+                            onChange={(e) => {
+                              setIsIncognitoMode(e.target.checked);
+                              saveConfigForCurrentProject({ isIncognitoMode: e.target.checked });
                             }}
                             className="rounded text-[#1677ff] cursor-pointer"
                           />
@@ -11042,9 +11242,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                                         </span>
                                       </td>
                                       <td className="py-2.5 px-3 text-center">
-                                        {hideWindowWhenDone ? (
-                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                            Ẩn danh (Incognito)
+                                        {isHeadlessMode && isIncognitoMode ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-200 dark:border-purple-800 inline-flex items-center space-x-1">
+                                            <EyeOff className="w-2.5 h-2.5" />
+                                            <Incognito className="w-2.5 h-2.5" />
+                                            <span>Ẩn ngầm &amp; Ẩn danh</span>
+                                          </span>
+                                        ) : isHeadlessMode ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800 inline-flex items-center space-x-1">
+                                            <EyeOff className="w-2.5 h-2.5" />
+                                            <span>Chạy ẩn (Headless)</span>
+                                          </span>
+                                        ) : isIncognitoMode ? (
+                                          <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 inline-flex items-center space-x-1">
+                                            <Incognito className="w-2.5 h-2.5" />
+                                            <span>Ẩn danh (Incognito)</span>
                                           </span>
                                         ) : (
                                           <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
@@ -11135,9 +11347,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                                     )}
                                   </td>
                                   <td className="py-2.5 px-3 text-center">
-                                    {hideWindowWhenDone ? (
-                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800">
-                                        Ẩn danh (Incognito)
+                                    {isHeadlessMode && isIncognitoMode ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-purple-100 text-purple-700 dark:bg-purple-950/70 dark:text-purple-300 border border-purple-200 dark:border-purple-800 inline-flex items-center space-x-1">
+                                        <EyeOff className="w-2.5 h-2.5" />
+                                        <Incognito className="w-2.5 h-2.5" />
+                                        <span>Ẩn ngầm &amp; Ẩn danh</span>
+                                      </span>
+                                    ) : isHeadlessMode ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-200 dark:border-amber-800 inline-flex items-center space-x-1">
+                                        <EyeOff className="w-2.5 h-2.5" />
+                                        <span>Chạy ẩn (Headless)</span>
+                                      </span>
+                                    ) : isIncognitoMode ? (
+                                      <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-indigo-100 text-indigo-700 dark:bg-indigo-950/70 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800 inline-flex items-center space-x-1">
+                                        <Incognito className="w-2.5 h-2.5" />
+                                        <span>Ẩn danh (Incognito)</span>
                                       </span>
                                     ) : (
                                       <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
