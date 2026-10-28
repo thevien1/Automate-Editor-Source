@@ -1807,7 +1807,10 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
           await sleep(30);
         } else if (actType === 29 || actName === 'http request') {
           const rawUrl = getRawInputValue(act.raw_input, 'URL', '');
-          const url = resolveVars(rawUrl, vars);
+          let url = resolveVars(rawUrl, vars);
+          try {
+            url = encodeURI(url);
+          } catch {}
           const method = getRawInputValue(act.raw_input, 'METHOD', 'GET').toUpperCase();
           const rawHeaders = getRawInputValue(act.raw_input, 'HEADER', getRawInputValue(act.raw_input, 'HEADERS', ''));
           const headers = resolveVars(rawHeaders, vars);

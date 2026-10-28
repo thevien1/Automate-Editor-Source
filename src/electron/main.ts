@@ -1687,6 +1687,12 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       const { url, method, headers, data, timeout } = payload;
       if (!url) return { success: false, error: 'URL is required' };
 
+      // Tự động encode URI nếu URL chứa khoảng trắng (như tên profile $profileName trong query string)
+      let cleanUrl = String(url).trim();
+      try {
+        cleanUrl = encodeURI(cleanUrl);
+      } catch {}
+
       const headerObj: Record<string, string> = {};
       if (headers && typeof headers === 'string') {
         const lines = headers.split(/\r?\n/);
@@ -1716,7 +1722,7 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
 
         // Bỏ qua hoàn toàn proxy của profile và proxy môi trường - luôn kết nối mạng trực tiếp (Direct IP)
         // để tránh IP proxy bị chậm, yếu hoặc bị chặn khi gọi các API (GET, POST, PUT, DELETE)
-        const resp = await fetch(url, reqInit);
+        const resp = await fetch(cleanUrl, reqInit);
         clearTimeout(timeoutId);
         const text = await resp.text();
         return { success: true, status: resp.status, statusText: resp.statusText, data: text };
@@ -1729,6 +1735,11 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       const { url, savePath, headers } = payload;
       if (!url) return { success: false, error: 'URL is required' };
       if (!savePath) return { success: false, error: 'Save Path is required' };
+
+      let cleanUrl = String(url).trim();
+      try {
+        cleanUrl = encodeURI(cleanUrl);
+      } catch {}
 
       const headerObj: Record<string, string> = {};
       if (headers && typeof headers === 'string') {
@@ -1747,7 +1758,7 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
       // Luôn kết nối trực tiếp không qua proxy của profile
-      const resp = await fetch(url, { method: 'GET', headers: headerObj });
+      const resp = await fetch(cleanUrl, { method: 'GET', headers: headerObj });
       if (!resp.ok) {
         return { success: false, error: `HTTP ${resp.status} ${resp.statusText}` };
       }

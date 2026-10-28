@@ -7165,7 +7165,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       const nodes = resolveStr(getRawVal('NODES', ''));
       const varName = act.output_variable_name || 'json_result';
       try {
-        const parsed = JSON.parse(jsonStr);
+        let parsed: any = null;
+        if (!jsonStr || jsonStr.trim() === '' || jsonStr.trim().startsWith('$') || jsonStr === 'undefined' || jsonStr === 'null') {
+          parsed = {};
+        } else {
+          parsed = JSON.parse(jsonStr);
+        }
         const extracted = nodes ? getJsonPath(parsed, nodes) : parsed;
         const resStr = typeof extracted === 'object' && extracted !== null ? JSON.stringify(extracted) : String(extracted ?? '');
         vars[varName] = resStr;
@@ -7758,7 +7763,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     }
     // HTTP Request (type 29)
     else if (actType === 29 || actName === 'http request') {
-      const url = resolveStr(getRawVal('URL', ''));
+      let url = resolveStr(getRawVal('URL', ''));
+      try {
+        url = encodeURI(url);
+      } catch {}
       const method = getRawVal('METHOD', 'GET').toUpperCase();
       const headers = resolveStr(getRawVal('HEADER', getRawVal('HEADERS', '')));
       const data = resolveStr(getRawVal('DATA', ''));
@@ -7806,6 +7814,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           updateThreadLog(threadId, 'info', `   ↳ ${varName} = "${responseText.slice(0, 60)}${responseText.length > 60 ? '...' : ''}"`);
         }
       } catch (e: any) {
+        if (varName && (vars[varName] === undefined || vars[varName] === varName || vars[varName] === `$${cleanName}`)) {
+          vars[varName] = '';
+          vars[cleanName] = '';
+        }
         const failRes = await handleActionFailure('HTTP Request', e.message);
         if (failRes === 'ERROR_STOP') return 'ERROR_STOP';
       }
