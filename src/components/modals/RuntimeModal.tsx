@@ -7772,7 +7772,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
         if ((window as any).electronAPI?.fileAction) {
           const res = await (window as any).electronAPI.fileAction({
             action: 'httpRequest',
-            payload: { url, method, headers, data, timeout },
+            payload: { url, method, headers, data, timeout, useProfileProxy: false },
           });
           if (res && res.success) {
             responseText = res.data ?? '';
@@ -7801,6 +7801,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           vars[cleanName] = responseText;
         }
         updateThreadLog(threadId, 'success', `✔ HTTP Request › ${method} ${url}`);
+        updateThreadLog(threadId, 'info', `   ↳ Kết nối trực tiếp (Direct IP - Không dùng proxy profile)`);
         if (varName) {
           updateThreadLog(threadId, 'info', `   ↳ ${varName} = "${responseText.slice(0, 60)}${responseText.length > 60 ? '...' : ''}"`);
         }
@@ -7822,7 +7823,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
         if ((window as any).electronAPI?.fileAction) {
           const res = await (window as any).electronAPI.fileAction({
             action: 'httpDownload',
-            payload: { url, savePath, headers },
+            payload: { url, savePath, headers, useProfileProxy: false },
           });
           if (res && res.success === false) {
             throw new Error(res.error || 'HTTP Download failed');
@@ -7837,6 +7838,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           vars[cleanName] = 'True';
         }
         updateThreadLog(threadId, 'success', `✔ HTTP Download › ${url} -> ${savePath}`);
+        updateThreadLog(threadId, 'info', `   ↳ Kết nối trực tiếp (Direct IP - Không dùng proxy profile)`);
         if (varName) {
           updateThreadLog(threadId, 'info', `   ↳ ${varName} = "True"`);
         }

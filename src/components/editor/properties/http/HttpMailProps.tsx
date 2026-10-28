@@ -23,6 +23,13 @@ export const HttpMailProps: React.FC<ActionPropsCommon> = ({
   const isReadMailCode = name.includes('read mail code') || type === 35;
   const isReadOutlookOAuth2 = name.includes('read outlook') || type === 80;
 
+  // Luôn đảm bảo USE_PROFILE_PROXY là False cho HTTP Request (không đi qua proxy profile tránh IP yếu/bị chặn)
+  React.useEffect(() => {
+    if (isHttpRequest && getRawVal('USE_PROFILE_PROXY', 'False') !== 'False') {
+      handleRawInputByKey('USE_PROFILE_PROXY', 'False');
+    }
+  }, [isHttpRequest, actionNode.id]);
+
   // HTTP REQUEST ACTION
   if (isHttpRequest && !isHttpDownload) {
     return (
@@ -94,17 +101,16 @@ export const HttpMailProps: React.FC<ActionPropsCommon> = ({
           />
         </div>
 
-        <div className="flex items-center space-x-2 pt-0.5">
-          <input
-            type="checkbox"
-            id="http_req_use_proxy"
-            checked={getRawVal('USE_PROFILE_PROXY', 'False').toLowerCase() === 'true'}
-            onChange={(e) => handleRawInputByKey('USE_PROFILE_PROXY', e.target.checked ? 'True' : 'False')}
-            className="rounded bg-white dark:bg-[#0f172a] border-[#d9d9d9] dark:border-[#1e293b] text-[#1677ff] dark:text-[#38bdf8] focus:ring-0 cursor-pointer"
-          />
-          <label htmlFor="http_req_use_proxy" className="text-xs text-[#334155] dark:text-[#cbd5e1] cursor-pointer">
-            Use profile's proxy
-          </label>
+        <div className="rounded-md bg-blue-50/60 dark:bg-[#1e293b]/70 border border-blue-200/60 dark:border-[#334155] p-2.5 space-y-1">
+          <div className="flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block shrink-0"></span>
+            <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              Kết nối trực tiếp (Direct IP - Không dùng proxy profile)
+            </span>
+          </div>
+          <p className="text-[11px] text-[#64748b] dark:text-[#94a3b8] leading-relaxed">
+            Các phương thức HTTP (GET, POST, PUT, DELETE) luôn kết nối trực tiếp qua mạng máy, không chạy qua proxy của profile để tránh lỗi IP proxy yếu hoặc bị chặn.
+          </p>
         </div>
 
         <div>

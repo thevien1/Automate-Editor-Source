@@ -1823,7 +1823,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             if ((window as any).electronAPI?.fileAction) {
               const res = await (window as any).electronAPI.fileAction({
                 action: 'httpRequest',
-                payload: { url, method, headers, data, timeout },
+                payload: { url, method, headers, data, timeout, useProfileProxy: false },
               });
               if (res && res.success) {
                 responseText = res.data ?? '';
@@ -1852,7 +1852,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               vars[cleanName] = responseText;
             }
             if (stopSignalRef.current) break;
-            logActionResult(act, `${method} ${url}`, varName ? { name: varName, value: responseText } : undefined);
+            logActionResult(act, `${method} ${url} (Direct IP - Không dùng proxy profile)`, varName ? { name: varName, value: responseText } : undefined);
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {
@@ -1878,7 +1878,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
             if ((window as any).electronAPI?.fileAction) {
               const res = await (window as any).electronAPI.fileAction({
                 action: 'httpDownload',
-                payload: { url, savePath, headers },
+                payload: { url, savePath, headers, useProfileProxy: false },
               });
               if (res && res.success === false) {
                 throw new Error(res.error || 'HTTP Download failed');
@@ -1894,7 +1894,7 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
               vars[cleanName] = 'True';
             }
             if (stopSignalRef.current) break;
-            logActionResult(act, `${url} ▸ ${savePath}`, varName ? { name: varName, value: 'True' } : undefined);
+            logActionResult(act, `${url} ▸ ${savePath} (Direct IP - Không dùng proxy profile)`, varName ? { name: varName, value: 'True' } : undefined);
           } catch (e: any) {
             const contOnError = act.continue_on_error === true || String(act.continue_on_error).toLowerCase() === 'true';
             if (contOnError) {

@@ -145,7 +145,7 @@ export const ACTION_CATEGORIES: ActionCategory[] = [
     name: 'HTTP',
     count: 2,
     actions: [
-      { type: 29, name: 'HTTP Request', category: 'HTTP', description: 'Perform REST API request (GET/POST/PUT)', hasOutVar: true, defaultRawInput: [{ Key: 'URL', Value: '' }, { Key: 'METHOD', Value: 'GET' }, { Key: 'HEADER', Value: '' }, { Key: 'DATA', Value: '' }, { Key: 'TIMEOUT', Value: '' }, { Key: 'USE_PROFILE_PROXY', Value: 'False' }] },
+      { type: 29, name: 'HTTP Request', category: 'HTTP', description: 'Perform REST API request (GET/POST/PUT/DELETE) via direct network (Bypass profile proxy)', hasOutVar: true, defaultRawInput: [{ Key: 'URL', Value: '' }, { Key: 'METHOD', Value: 'GET' }, { Key: 'HEADER', Value: '' }, { Key: 'DATA', Value: '' }, { Key: 'TIMEOUT', Value: '' }, { Key: 'USE_PROFILE_PROXY', Value: 'False' }] },
       { type: 30, name: 'HTTP Download', category: 'HTTP', description: 'Download file from URL', hasOutVar: true, defaultRawInput: [{ Key: 'URL', Value: '' }, { Key: 'SAVE_PATH', Value: '' }, { Key: 'HEADER', Value: '' }] },
     ]
   },

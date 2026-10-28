@@ -1714,6 +1714,8 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
           reqInit.body = data;
         }
 
+        // Bỏ qua hoàn toàn proxy của profile và proxy môi trường - luôn kết nối mạng trực tiếp (Direct IP)
+        // để tránh IP proxy bị chậm, yếu hoặc bị chặn khi gọi các API (GET, POST, PUT, DELETE)
         const resp = await fetch(url, reqInit);
         clearTimeout(timeoutId);
         const text = await resp.text();
@@ -1744,6 +1746,7 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       const dir = path.dirname(savePath);
       if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
 
+      // Luôn kết nối trực tiếp không qua proxy của profile
       const resp = await fetch(url, { method: 'GET', headers: headerObj });
       if (!resp.ok) {
         return { success: false, error: `HTTP ${resp.status} ${resp.statusText}` };
