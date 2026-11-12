@@ -108,7 +108,7 @@
         }
       ],
       "artifactName": "SV-Browser-Automate-Editor-${version}-mac-${arch}.${ext}",
-      "icon": "public/icon.png",
+      "icon": "public/runtime_icon.png",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
