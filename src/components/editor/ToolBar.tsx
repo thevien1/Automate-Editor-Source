@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe, Code2 } from '../common/Icons';
+import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe, Code2, Sparkles } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
 
 export const ToolBar: React.FC = () => {
@@ -9,6 +9,7 @@ export const ToolBar: React.FC = () => {
     selectedBlockKey,
     setShowTestModal,
     setShowRuntimeModal,
+    setShowAiModal,
     undo,
     redo,
     canUndo,
@@ -149,10 +150,14 @@ export const ToolBar: React.FC = () => {
           <span>Record action</span>
         </button>
 
-        {/* Generate with AI */}
-        <button className="flex items-center space-x-1.5 px-2.5 py-1 rounded text-[#9333ea] dark:text-[#c084fc] hover:bg-[#9333ea]/15 font-semibold transition-colors">
-          <Wand2 className="w-3.5 h-3.5" />
-          <span>Generate with AI</span>
+        {/* AI Copilot */}
+        <button
+          onClick={() => setShowAiModal(true)}
+          className="flex items-center space-x-1.5 px-2.5 py-1 rounded-md text-[#9333ea] dark:text-[#c084fc] hover:bg-[#9333ea]/15 active:scale-95 font-semibold transition-all cursor-pointer shadow-sm border border-[#9333ea]/20 dark:border-[#c084fc]/25 bg-gradient-to-r from-purple-500/10 to-indigo-500/10 dark:from-purple-500/15 dark:to-indigo-500/15 hover:border-[#9333ea]/40"
+          title="AI Workflow Copilot (Hỗ trợ tạo kịch bản tự động hóa bằng AI & MCP Skill Server)"
+        >
+          <Sparkles className="w-3.5 h-3.5 text-[#9333ea] dark:text-[#c084fc] animate-pulse" />
+          <span>AI Copilot</span>
         </button>
       </div>
 

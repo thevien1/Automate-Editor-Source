@@ -2,7 +2,8 @@ import React, { createContext, useContext, useState, useEffect, useRef } from 'r
 import { ProjectData, ProjectRuntimeConfig, ActionNode, BaseNode, NormalBlockNode, BlockNode, WorkflowNode, ForBlockNode, IfBlockNode, WhileBlockNode, EditorFile } from '../types/gscript';
 import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
 import { createDefaultProject, createDefaultNormalBlock, generateGuid, serializeRawInput } from '../utils/gpmUtils';
-import { UpdateInfo, checkForAppUpdates } from '../services/updateService';
+import { UpdateInfo, checkForAppUpdates, CURRENT_APP_VERSION } from '../services/updateService';
+import { startUpdateScheduler } from '../services/updateScheduler';
 import { normalizeWorkflowNodes, nodesToJsonString } from '../utils/jsonWorkflowUtils';
 import { ConfirmModalOptions } from '../components/modals/ConfirmModal';
 
@@ -12,6 +13,7 @@ export const BROWSER_SYSTEM_VARIABLES = [
   'profileProxy',
   'loopIndex',
   'threadId',
+  'runOrder',
   'port',
 ];
 
@@ -157,6 +159,10 @@ interface ProjectContextType {
   showToast: (title: string, message: string) => void;
   showTestModal: boolean;
   setShowTestModal: (show: boolean) => void;
+  showAiModal: boolean;
+  setShowAiModal: (show: boolean) => void;
+  aiPreviewData: { nodes: any[]; target?: string } | null;
+  setAiPreviewData: (data: { nodes: any[]; target?: string } | null) => void;
   showRuntimeModal: boolean;
   setShowRuntimeModal: (show: boolean) => void;
   showBuildModal: boolean;
@@ -493,6 +499,8 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
   };
 
   const [showTestModal, setShowTestModal] = useState<boolean>(false);
+  const [showAiModal, setShowAiModal] = useState<boolean>(false);
+  const [aiPreviewData, setAiPreviewData] = useState<{ nodes: any[]; target?: string } | null>(null);
   const [showRuntimeModal, setShowRuntimeModal] = useState<boolean>(false);
   const [showBuildModal, setShowBuildModal] = useState<boolean>(false);
   const [showSettingsModal, setShowSettingsModal] = useState<boolean>(false);
@@ -514,28 +522,53 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setConfirmModalState(null);
   };
 
+  const updateRequestRef = useRef<Promise<UpdateInfo | null> | null>(null);
+  const notifiedUpdateVersionRef = useRef('');
   const checkAppUpdate = async (manual: boolean = false): Promise<UpdateInfo | null> => {
-    setIsCheckingUpdate(true);
-    try {
-      const res = await checkForAppUpdates();
-      setUpdateInfo(res);
-      if (manual && res.hasUpdate) {
-        setShowUpdateModal(true);
-      }
-      return res;
-    } catch {
-      return null;
-    } finally {
-      setIsCheckingUpdate(false);
+    if (!updateRequestRef.current) {
+      setIsCheckingUpdate(true);
+      updateRequestRef.current = checkForAppUpdates().then(res => {
+        setUpdateInfo(res);
+        return res;
+      }).catch(() => null).finally(() => {
+        updateRequestRef.current = null;
+        setIsCheckingUpdate(false);
+      });
     }
+    const res = await updateRequestRef.current;
+    if (res && ((manual && (res.hasUpdate || res.error)) ||
+      (res.hasUpdate && notifiedUpdateVersionRef.current !== res.latestVersion))) {
+      notifiedUpdateVersionRef.current = res.latestVersion;
+      setShowUpdateModal(true);
+    }
+    return res;
   };
 
+  useEffect(() => startUpdateScheduler(() => checkAppUpdate(false)), []);
+
   useEffect(() => {
-    // Check update on startup after 2 seconds
-    const timer = setTimeout(() => {
-      checkAppUpdate(false);
-    }, 2000);
-    return () => clearTimeout(timer);
+    const api = (window as any).electronAPI;
+    if (!api?.onUpdateState) return;
+    let active = true;
+    const sync = (state: any) => {
+      if (!active || !state?.supported) return;
+      if (['downloading', 'downloaded', 'installing'].includes(state.status)) {
+        // Progress events can be frequent: update the shared context only when
+        // availability or version changes. The modal owns the progress bar.
+        setUpdateInfo(prev => prev?.hasUpdate && prev.latestVersion === state.version ? prev : {
+          hasUpdate: true, currentVersion: prev?.currentVersion || CURRENT_APP_VERSION,
+          latestVersion: state.version, releaseName: '', releaseNotes: '', publishedAt: '',
+          htmlUrl: prev?.htmlUrl || '', checkedAt: Date.now(),
+        });
+        if (notifiedUpdateVersionRef.current !== state.version) {
+          notifiedUpdateVersionRef.current = state.version;
+          setShowUpdateModal(true);
+        }
+      }
+    };
+    const unsubscribe = api.onUpdateState(sync);
+    api.getUpdateState?.().then(sync).catch(() => {});
+    return () => { active = false; unsubscribe(); };
   }, []);
 
   // Check launch args / URL query for Runtime mode
@@ -711,7 +744,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
 
     if (!proj) {
-      const projName = name || path.split('\\').pop() || 'Project';
+      const projName = name || path.split(/[\\/]/).pop() || 'Project';
       proj = createDefaultProject(projName, path);
     }
 
@@ -728,7 +761,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     // Update Recents
     setRecentProjects((prev) => {
       const existing = prev.filter((p) => p.path !== path);
-      const projDisplayName = proj?.info?.name || name || path.split('\\').pop() || 'Project';
+      const projDisplayName = proj?.info?.name || name || path.split(/[\\/]/).pop() || 'Project';
       const updated = [
         { id: generateGuid(), name: projDisplayName, path, lastOpened: new Date().toISOString() },
         ...existing,
@@ -1852,6 +1885,21 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     currentProjectRef.current = currentProject;
   }, [currentProject]);
 
+  // Lắng nghe sự kiện từ API http://localhost:8775/create để nạp vào XEM TRƯỚC (chỉ điền khi người dùng nhấn Áp dụng)
+  React.useEffect(() => {
+    if ((window as any).electronAPI?.onWorkflowAutoApply) {
+      const unsubscribe = (window as any).electronAPI.onWorkflowAutoApply((data: any) => {
+        if (!data || !data.nodes || !Array.isArray(data.nodes) || data.nodes.length === 0) return;
+        setAiPreviewData({ nodes: data.nodes, target: data.target || 'main_logic' });
+        setShowAiModal(true);
+        showToast('AI đã tạo kịch bản', `Đã nhận ${data.nodes.length} action. Vui lòng xem trước và nhấn "Áp dụng vào Kịch bản ngay"!`);
+      });
+      return () => {
+        if (typeof unsubscribe === 'function') unsubscribe();
+      };
+    }
+  }, []);
+
   // Khi tắt cửa sổ / unload: Không tự động lưu đè lên đĩa (chỉ lưu khi người dùng bấm Lưu)
   React.useEffect(() => {
     // Không đăng ký auto-save on beforeunload
@@ -1890,6 +1938,10 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         showToast,
         showTestModal,
         setShowTestModal,
+        showAiModal,
+        setShowAiModal,
+        aiPreviewData,
+        setAiPreviewData,
         showRuntimeModal,
         setShowRuntimeModal,
         showBuildModal,

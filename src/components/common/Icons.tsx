@@ -148,6 +148,7 @@ export const Dices = createIcon('dice-5');
 export const ListOrdered = createIcon('list-ol');
 export const Link = createIcon('link-45deg');
 export const Link2 = createIcon('link');
+export const ExternalLink = createIcon('box-arrow-up-right');
 export const XCircle = createIcon('x-circle');
 export const Code2 = createIcon('code-slash');
 export const Shuffle = createIcon('shuffle');

@@ -1,6 +1,15 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,
+  checkForUpdates: () => ipcRenderer.invoke('updater:check'),
+  getUpdateState: () => ipcRenderer.invoke('updater:state'),
+  installUpdate: () => ipcRenderer.invoke('updater:install'),
+  onUpdateState: (callback: (state: any) => void) => {
+    const handler = (_event: any, state: any) => callback(state);
+    ipcRenderer.on('updater:state', handler);
+    return () => ipcRenderer.removeListener('updater:state', handler);
+  },
   minimize: () => ipcRenderer.send('window-minimize'),
   maximize: () => ipcRenderer.send('window-maximize'),
   close: () => ipcRenderer.send('window-close'),
@@ -26,5 +35,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   readPackage: (packagePath: string) => ipcRenderer.invoke('fs:readPackage', packagePath),
   showInFolder: (targetPath: string) => ipcRenderer.invoke('fs:showInFolder', targetPath),
   getLaunchArgs: () => ipcRenderer.invoke('app:getLaunchArgs'),
+  onWorkflowAutoApply: (callback: (data: { nodes: any[]; target?: string; includeExisting?: boolean }) => void) => {
+    const handler = (_event: any, data: any) => callback(data);
+    ipcRenderer.on('workflow:auto-apply-nodes', handler);
+    return () => ipcRenderer.removeListener('workflow:auto-apply-nodes', handler);
+  },
 });
 

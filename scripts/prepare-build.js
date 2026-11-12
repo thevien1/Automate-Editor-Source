@@ -7,7 +7,7 @@ const packageJsonPath = path.join(rootDir, 'package.json');
 const releaseDir = path.join(rootDir, 'release');
 
 // 1. Tự động đóng các tiến trình SV Browser Automate Editor đang chạy để không bị khóa file
-try {
+if (process.platform === 'win32' && !process.argv.includes('--platform=mac')) try {
   console.log('🔄 Đang kiểm tra và đóng các phiên bản cũ đang chạy...');
   execSync('powershell -Command "Stop-Process -Name \\"SV Browser Automate Editor\\" -Force -ErrorAction SilentlyContinue"', { stdio: 'ignore' });
   execSync('taskkill /F /IM "SV Browser Automate Editor.exe" /T', { stdio: 'ignore' });
@@ -30,11 +30,51 @@ if (!noBump) {
   pkg.version = newVersion;
   fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2) + '\n', 'utf-8');
 
+  // Đồng bộ phiên bản sang public/skill.json
+  const publicSkillPath = path.join(rootDir, 'public', 'skill.json');
+  if (fs.existsSync(publicSkillPath)) {
+    try {
+      const skill = JSON.parse(fs.readFileSync(publicSkillPath, 'utf-8'));
+      skill.version = newVersion;
+      fs.writeFileSync(publicSkillPath, JSON.stringify(skill, null, 2) + '\n', 'utf-8');
+      console.log(`📄 Đã cập nhật public/skill.json lên v${newVersion}`);
+    } catch (e) {
+      console.warn(`  ⚠️ Không thể cập nhật public/skill.json: ${e.message}`);
+    }
+  }
+
+  // Đồng bộ SKILL.md sang public/SKILL.md để Vite bundle vào dist
+  const rootSkillMd = path.join(rootDir, 'SKILL.md');
+  const publicSkillMd = path.join(rootDir, 'public', 'SKILL.md');
+  if (fs.existsSync(rootSkillMd)) {
+    try {
+      fs.copyFileSync(rootSkillMd, publicSkillMd);
+      console.log('📄 Đã đồng bộ SKILL.md sang public/SKILL.md');
+    } catch (e) {}
+  }
+
   console.log('\n============================================================');
   console.log(`🚀 TỰ ĐỘNG TĂNG PHIÊN BẢN: v${oldVersion}  ==>  v${newVersion}`);
   console.log('============================================================\n');
 } else {
   console.log(`\n📌 Giữ nguyên phiên bản hiện tại: v${oldVersion}\n`);
+  const publicSkillPath = path.join(rootDir, 'public', 'skill.json');
+  if (fs.existsSync(publicSkillPath)) {
+    try {
+      const skill = JSON.parse(fs.readFileSync(publicSkillPath, 'utf-8'));
+      skill.version = oldVersion;
+      fs.writeFileSync(publicSkillPath, JSON.stringify(skill, null, 2) + '\n', 'utf-8');
+    } catch (e) {}
+  }
+}
+
+// Keep npm ci reproducible after version bumps.
+const lockPath = path.join(rootDir, 'package-lock.json');
+if (fs.existsSync(lockPath)) {
+  const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+  lock.version = newVersion;
+  if (lock.packages && lock.packages['']) lock.packages[''].version = newVersion;
+  fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
 }
 
 // 3. Tự động xóa sạch các file cài đặt và file build cũ trong thư mục release/
@@ -47,7 +87,9 @@ if (fs.existsSync(releaseDir)) {
       const fullPath = path.join(releaseDir, entry);
       try {
         const stat = fs.statSync(fullPath);
-        if (!stat.isDirectory()) {
+        const macBuild = process.argv.includes('--platform=mac');
+        const macArtifact = entry.includes('-mac-') || entry.startsWith('latest-mac');
+        if (!stat.isDirectory() && (macBuild ? macArtifact : !macArtifact)) {
           // Xóa các file .exe, .blockmap, .yml, .zip cũ
           fs.unlinkSync(fullPath);
           cleanedFilesCount++;

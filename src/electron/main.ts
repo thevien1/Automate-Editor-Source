@@ -3,10 +3,13 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import { spawn, execSync } from 'child_process';
-import * as XLSX from 'xlsx';
+import { runExcelAction, stopExcelWorker } from './excelWorkerClient';
 import http from 'http';
 import WebSocket from 'ws';
 import { RUNTIME_ICON_BASE64 } from './runtimeIconBase64';
+import { startSkillServer } from './skillServer';
+import { registerAppUpdater } from './appUpdater';
+import { chromeCandidates, macLauncher } from './platformSupport';
 
 // Disable all background throttling in Chromium so automation never freezes or lags when unfocused/occluded
 app.commandLine.appendSwitch('disable-background-timer-throttling');
@@ -26,10 +29,10 @@ const isInitialRuntime = process.argv.includes('--runtime') ||
 // Set Windows AppUserModelId for Taskbar icon grouping and display:
 // Completely separate ID for Runtime so it NEVER groups with or inherits the Editor taskbar icon!
 if (isInitialRuntime) {
-  app.setAppUserModelId('com.svbrowser.automate.runtime');
+  if (process.platform === 'win32') app.setAppUserModelId('com.svbrowser.automate.runtime');
   app.setName('SV Browser Automate Runtime');
 } else {
-  app.setAppUserModelId('com.svbrowser.automateeditor');
+  if (process.platform === 'win32') app.setAppUserModelId('com.svbrowser.automateeditor');
   app.setName('SV Browser Automate Editor');
 }
 
@@ -66,14 +69,14 @@ function createWindow(customArgv?: string[]): BrowserWindow {
   const iconPath = path.join(__dirname, `../public/${iconName}.ico`);
   const iconPngPath = path.join(__dirname, `../public/${iconName}.png`);
 
-  let resolvedIcon: any = fs.existsSync(iconPath)
+  let resolvedIcon: any = process.platform === 'win32' && fs.existsSync(iconPath)
     ? iconPath
     : fs.existsSync(iconPngPath)
     ? iconPngPath
     : undefined;
 
   let runtimeIconDiskPath: string | undefined = undefined;
-  if (isRuntimeArg) {
+  if (isRuntimeArg && process.platform === 'win32') {
     try {
       const diskDir = path.join(app.getPath('userData'), 'icons');
       if (!fs.existsSync(diskDir)) fs.mkdirSync(diskDir, { recursive: true });
@@ -119,7 +122,7 @@ function createWindow(customArgv?: string[]): BrowserWindow {
     projectPath: projectArg,
   });
 
-  if (resolvedIcon) {
+  if (resolvedIcon && process.platform !== 'darwin') {
     win.setIcon(resolvedIcon);
   }
 
@@ -143,6 +146,15 @@ function createWindow(customArgv?: string[]): BrowserWindow {
 
   // Tự động mở toàn màn hình (maximized) khi khởi chạy
   win.maximize();
+  win.setMenuBarVisibility(false);
+
+  // Chặn mở cửa sổ Electron trắng menu khi click link, mở trực tiếp bằng trình duyệt mặc định
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url && (url.startsWith('https://') || url.startsWith('http://'))) {
+      shell.openExternal(url);
+    }
+    return { action: 'deny' };
+  });
 
   const queryParams: Record<string, string> = {};
   if (isRuntimeArg) queryParams.mode = 'runtime';
@@ -213,7 +225,7 @@ ipcMain.handle('app:getDefaultSavePath', () => {
   try {
     return path.join(app.getPath('documents'), 'SV_Browser_Projects');
   } catch {
-    return 'C:\\SV_Browser_Projects';
+    return path.join(os.homedir(), 'SV_Browser_Projects');
   }
 });
 
@@ -518,6 +530,17 @@ ipcMain.handle('fs:buildPackage', async (_, data: {
     const targetDir = exportPath ? exportPath : path.join(folderPath, 'build');
     if (!fs.existsSync(targetDir)) {
       fs.mkdirSync(targetDir, { recursive: true });
+    }
+
+    if (process.platform !== 'win32') {
+      const safeName = app_name.replace(/[\\/:*?"<>|]/g, '_');
+      const packagePath = path.join(targetDir, `${safeName}.svblaunch`);
+      fs.writeFileSync(packagePath, svbLaunchContent, 'utf-8');
+      if (process.platform !== 'darwin') return { success: true, packagePath, targetDir, appName: app_name };
+      const launcherPath = path.join(targetDir, `${safeName}.command`);
+      fs.writeFileSync(launcherPath, macLauncher(`${safeName}.svblaunch`), { encoding: 'utf-8', mode: 0o755 });
+      fs.chmodSync(launcherPath, 0o755);
+      return { success: true, packagePath, launcherPath, targetDir, appName: app_name };
     }
 
     // Safe helper to strip Windows hidden/readonly attributes and remove file before overwriting
@@ -1175,6 +1198,10 @@ let fileActionLock = Promise.resolve<any>(undefined);
 ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }) => {
   try {
     let { action, payload } = req;
+    if (action === 'readSvBrowserProfiles') {
+      const profilePath = path.join(app.getPath('appData'), 'sv-browser', 'SVBrowserData', 'profiles.json');
+      return { success: true, content: fs.readFileSync(profilePath, 'utf8') };
+    }
     if (action === 'exists') {
       const targetPath = (payload?.path || '').trim().replace(/^["']|["']$/g, '');
       const exists = Boolean(targetPath && fs.existsSync(targetPath) && fs.statSync(targetPath).isFile());
@@ -1410,109 +1437,8 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       return { success: true, path: target };
     }
 
-    const colToIdx = (colStr: string): number => {
-      const trimmed = colStr.trim();
-      const num = parseInt(trimmed, 10);
-      if (!isNaN(num)) {
-        return Math.max(0, num - 1);
-      }
-      let cIdx = 0;
-      const upper = trimmed.toUpperCase();
-      for (let i = 0; i < upper.length; i++) {
-        cIdx = cIdx * 26 + (upper.charCodeAt(i) - 64);
-      }
-      return Math.max(0, cIdx - 1);
-    };
-
-    if (action === 'readExcel') {
-      if (!fs.existsSync(payload.path)) {
-        return { success: false, error: 'Excel file does not exist' };
-      }
-      const wb = XLSX.readFile(payload.path);
-      const sheetIdx = parseInt(payload.sheetIndex, 10) || 0;
-      const sheetName = wb.SheetNames[sheetIdx] || wb.SheetNames[0];
-      if (!sheetName || !wb.Sheets[sheetName]) {
-        return { success: false, error: `Sheet index ${sheetIdx} does not exist` };
-      }
-      const ws = wb.Sheets[sheetName];
-      const colIdx = colToIdx(String(payload.col || 'A'));
-      const rowNum = parseInt(String(payload.row || '1'), 10) || 1;
-      const cellAddress = XLSX.utils.encode_cell({ c: colIdx, r: rowNum - 1 });
-      const cell = ws[cellAddress];
-      const val = cell ? (cell.v !== undefined ? String(cell.v) : (cell.w || '')) : '';
-      return { success: true, value: val };
-    }
-    if (action === 'readExcelAllRows') {
-      if (!fs.existsSync(payload.path)) {
-        return { success: false, error: 'Excel file does not exist' };
-      }
-      const wb = XLSX.readFile(payload.path);
-      const sheetIdx = parseInt(payload.sheetIndex, 10) || 0;
-      const sheetName = wb.SheetNames[sheetIdx] || wb.SheetNames[0];
-      if (!sheetName || !wb.Sheets[sheetName]) {
-        return { success: false, error: `Sheet index ${sheetIdx} does not exist` };
-      }
-      const ws = wb.Sheets[sheetName];
-      const rows: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-      return { success: true, sheetName, rows };
-    }
-    if (action === 'writeExcel') {
-      let wb: XLSX.WorkBook;
-      if (fs.existsSync(payload.path)) {
-        wb = XLSX.readFile(payload.path);
-      } else {
-        wb = XLSX.utils.book_new();
-      }
-      const sheetIdx = parseInt(payload.sheetIndex, 10) || 0;
-      let sheetName = wb.SheetNames[sheetIdx];
-      let ws: XLSX.WorkSheet;
-      if (!sheetName || !wb.Sheets[sheetName]) {
-        sheetName = `Sheet${sheetIdx + 1}`;
-        ws = XLSX.utils.aoa_to_sheet([]);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      } else {
-        ws = wb.Sheets[sheetName];
-      }
-      const colIdx = colToIdx(String(payload.col || 'A'));
-      const rowNum = parseInt(String(payload.row || '1'), 10) || 1;
-      const cellAddress = XLSX.utils.encode_cell({ c: colIdx, r: rowNum - 1 });
-      XLSX.utils.sheet_add_aoa(ws, [[payload.value ?? '']], { origin: cellAddress });
-      const dir = path.dirname(payload.path);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      XLSX.writeFile(wb, payload.path);
-      return { success: true };
-    }
-    if (action === 'appendExcel') {
-      let wb: XLSX.WorkBook;
-      if (fs.existsSync(payload.path)) {
-        wb = XLSX.readFile(payload.path);
-      } else {
-        wb = XLSX.utils.book_new();
-      }
-      const sheetIdx = parseInt(payload.sheetIndex, 10) || 0;
-      let sheetName = wb.SheetNames[sheetIdx];
-      let ws: XLSX.WorkSheet;
-      if (!sheetName || !wb.Sheets[sheetName]) {
-        sheetName = `Sheet${sheetIdx + 1}`;
-        ws = XLSX.utils.aoa_to_sheet([]);
-        XLSX.utils.book_append_sheet(wb, ws, sheetName);
-      } else {
-        ws = wb.Sheets[sheetName];
-      }
-      const colIdx = colToIdx(String(payload.col || 'A'));
-      let nextRow = 1;
-      while (
-        ws[XLSX.utils.encode_cell({ c: colIdx, r: nextRow - 1 })] &&
-        String(ws[XLSX.utils.encode_cell({ c: colIdx, r: nextRow - 1 })].v ?? '').trim() !== ''
-      ) {
-        nextRow++;
-      }
-      const cellAddress = XLSX.utils.encode_cell({ c: colIdx, r: nextRow - 1 });
-      XLSX.utils.sheet_add_aoa(ws, [[payload.value ?? '']], { origin: cellAddress });
-      const dir = path.dirname(payload.path);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      XLSX.writeFile(wb, payload.path);
-      return { success: true, row: nextRow };
+    if (['readExcel', 'readExcelAllRows', 'writeExcel', 'appendExcel'].includes(action)) {
+      return runExcelAction(action, payload);
     }
     if (action === 'folderExists') {
       const exists = fs.existsSync(payload.path) && fs.statSync(payload.path).isDirectory();
@@ -1827,14 +1753,14 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
       }
 
       // Spawn python scripts/find_image.py
-      const scriptPath = path.join(app.getAppPath(), 'scripts', 'find_image.py');
+      const scriptPath = path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'find_image.py');
       return new Promise((resolve) => {
         try {
           const pyArgs = [scriptPath, templatePath, String(threshold), trueColor ? 'Yes' : 'No'];
           if (screenshotBuf && screenshotBuf.length > 0) {
             pyArgs.push('--stdin');
           }
-          const py = spawn('python', pyArgs);
+          const py = spawn(process.platform === 'win32' ? 'python' : 'python3', pyArgs);
           let stdoutData = '';
           let stderrData = '';
 
@@ -1865,6 +1791,21 @@ ipcMain.handle('fs:fileAction', async (_, req: { action: string; payload?: any }
         }
       });
     }
+    if (action === 'osClick' && process.platform === 'darwin') {
+      return new Promise((resolve) => {
+        const child = spawn('python3', [path.join(app.isPackaged ? process.resourcesPath : app.getAppPath(), 'scripts', 'mac_click.py'),
+          String(payload?.x ?? 0), String(payload?.y ?? 0), String(payload?.button || 'left'), String(payload?.clicks || 1)]);
+        let output = '', errors = '';
+        child.stdout.on('data', data => { output += data; });
+        child.stderr.on('data', data => { errors += data; });
+        child.on('error', error => resolve({ success: false, error: error.message }));
+        child.on('close', () => {
+          try { resolve(JSON.parse(output.trim())); }
+          catch { resolve({ success: false, error: errors || 'macOS mouse helper failed' }); }
+        });
+      });
+    }
+    if (action === 'osClick' && process.platform !== 'win32') return { success: false, error: 'OS click is unsupported on this platform' };
     if (action === 'osClick') {
       const x = Math.round(Number(payload?.x) || 0);
       const y = Math.round(Number(payload?.y) || 0);
@@ -1921,17 +1862,7 @@ Write-Output '{"success":true}'
 
 // Helper to find Chrome executable across standard installation locations
 const findChromePath = (): string | null => {
-  const localAppData = process.env.LOCALAPPDATA || '';
-  const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
-  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
-
-  const candidatePaths = [
-    path.join(programFiles, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(programFilesX86, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(localAppData, 'Google', 'Chrome', 'Application', 'chrome.exe'),
-    path.join(programFiles, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-    path.join(programFilesX86, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
-  ];
+  const candidatePaths = chromeCandidates(process.platform, os.homedir(), process.env);
 
   for (const p of candidatePaths) {
     if (fs.existsSync(p)) return p;
@@ -3104,10 +3035,20 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         return { success: false, error: 'No files provided to upload' };
       }
 
-      // Check if files exist on disk
-      for (const f of fileList) {
+      // Check if files exist on disk (auto-correct foreign machine paths to backend/uploads if found)
+      for (let i = 0; i < fileList.length; i++) {
+        let f = fileList[i];
         if (!fs.existsSync(f)) {
-          return { success: false, error: `File not found on disk: ${f}` };
+          const filename = path.basename(f);
+          const alt1 = path.resolve('D:/project/facebook/backend/uploads', filename);
+          const alt2 = path.resolve(process.cwd(), 'uploads', filename);
+          if (fs.existsSync(alt1)) {
+            fileList[i] = alt1;
+          } else if (fs.existsSync(alt2)) {
+            fileList[i] = alt2;
+          } else {
+            return { success: false, error: `File not found on disk: ${f}` };
+          }
         }
       }
 
@@ -3130,6 +3071,17 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           el = inputs.find(i => (i.getAttribute('accept') || '').includes('image/*') && i.hasAttribute('multiple'))
             || inputs.find(i => (i.getAttribute('accept') || '').includes('image'))
             || inputs[inputs.length - 1];
+        }
+        if (!el) {
+          // Check if there is an attach button to click to trigger file input mounting
+          const attachBtn = document.querySelector('div[role="button"][aria-label*="file" i], div[role="button"][aria-label*="photo" i], div[role="button"][aria-label*="ảnh" i], div[role="button"][aria-label*="Attach" i], div[role="button"][aria-label*="Đính kèm" i]');
+          if (attachBtn) {
+            try { (attachBtn as HTMLElement).click(); } catch(e) {}
+            const inputsAfter = Array.from(document.querySelectorAll('input[type="file"]'));
+            el = inputsAfter.find(i => (i.getAttribute('accept') || '').includes('image/*') && i.hasAttribute('multiple'))
+              || inputsAfter.find(i => (i.getAttribute('accept') || '').includes('image'))
+              || inputsAfter[inputsAfter.length - 1];
+          }
         }
         return el;
       })()`;
@@ -3200,6 +3152,10 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
             button: accept ? 'OK (JS Alert)' : 'Cancel (JS Alert)',
           };
         }
+      }
+
+      if (process.platform !== 'win32') {
+        return { success: false, error: 'Hộp thoại hệ điều hành này cần xác nhận trực tiếp trên trình duyệt. JavaScript alert vẫn được hỗ trợ qua CDP.' };
       }
 
       // Handle Native Browser Dialog (e.g. Chrome Web Store "Thêm tiện ích" / "Add extension" prompt)
@@ -3440,6 +3396,14 @@ exit 0
   }
 });
 
+const pendingPackages: string[] = [];
+app.on('open-file', (event, filePath) => {
+  event.preventDefault();
+  if (!/\.(svblaunch|gpmlaunch)$/i.test(filePath)) return;
+  if (app.isReady()) createWindow(['--runtime', '--package', filePath]);
+  else pendingPackages.push(filePath);
+});
+
 const gotTheLock = app.requestSingleInstanceLock();
 
 if (!gotTheLock) {
@@ -3459,7 +3423,23 @@ if (!gotTheLock) {
   });
 
   app.whenReady().then(() => {
-    createWindow();
+    registerAppUpdater();
+    app.on('before-quit', () => { void stopExcelWorker(); });
+    try {
+      startSkillServer(8775, (actionData) => {
+        // Tự động điền các action nodes vào cửa sổ Editor đang mở
+        for (const win of windows) {
+          if (!win.isDestroyed()) {
+            win.webContents.send('workflow:auto-apply-nodes', actionData);
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Failed to start skill server:', e);
+    }
+    if (pendingPackages.length) {
+      for (const file of pendingPackages.splice(0)) createWindow(['--runtime', '--package', file]);
+    } else createWindow();
 
     app.on('activate', () => {
       if (windows.size === 0) createWindow();

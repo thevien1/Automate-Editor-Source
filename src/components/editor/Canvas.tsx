@@ -16,6 +16,7 @@ export const Canvas: React.FC = () => {
     showShortcuts,
     setShowShortcuts,
     selectNode,
+    setShowAiModal,
   } = useProject();
   const [isCanvasDragOver, setIsCanvasDragOver] = useState(false);
 
@@ -95,14 +96,12 @@ export const Canvas: React.FC = () => {
           </div>
           <div className="text-xs text-[#0958d9] dark:text-[#93c5fd]">
             Hướng dẫn viết logic kịch bản tối ưu, dễ đọc và bảo trì. Xem chi tiết tại:{' '}
-            <a
-              href="http://localhost:3080/docs"
-              target="_blank"
-              rel="noreferrer"
-              className="font-bold underline text-[#1677ff] dark:text-[#38bdf8] hover:underline"
+            <button
+              onClick={() => setShowAiModal(true)}
+              className="font-bold underline text-[#1677ff] dark:text-[#38bdf8] hover:underline cursor-pointer inline-flex items-center space-x-1"
             >
-              TẠI ĐÂY (Docs)
-            </a>
+              <span>TẠI ĐÂY (AI Copilot & Docs :8775)</span>
+            </button>
           </div>
         </div>
 

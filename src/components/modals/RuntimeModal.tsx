@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
   Minus,
@@ -62,6 +62,8 @@ import {
 } from '../../utils/virtualMouseScript';
 import { evaluateGpmCondition, evaluateGpmConditionAsync } from '../../utils/conditionEvaluator';
 import { resolveVariableString } from '../../utils/variableResolver';
+import { applyThreadLogs, queueThreadLog, PendingThreadLogs, VISIBLE_THREAD_LOGS, createCooperativeYield } from '../../utils/runtimePerformance';
+import { RuntimeProfileStopper } from '../../services/runtimeProfileStopper';
 import runtimeLogoImg from '../../assets/runtime_logo.png';
 
 interface RuntimeModalProps {
@@ -237,7 +239,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
 };
 
 export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, fullWindow = false }) => {
-  const { currentProject, updateRuntimeConfig, saveProject, openProjectByPath } = useProject();
+  const { currentProject, updateRuntimeConfig, saveProject, openProjectByPath, showToast } = useProject();
 
   // Wizard Step: 1 = Select app, 2 = Configure, 3 = Profile, 4 = Tạo Profile mới (Clone & Ephemeral), 5 = Running
   // Always starts at Step 1 (Select app) when user clicks Run
@@ -1304,9 +1306,37 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
   // Step 5: Running Multi-Thread State
   const [threads, setThreads] = useState<ThreadState[]>([]);
+  const pendingThreadLogsRef = useRef(new Map<number, PendingThreadLogs>());
+  const logFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => {
+    if (logFlushTimerRef.current !== null) clearTimeout(logFlushTimerRef.current);
+    pendingThreadLogsRef.current.clear();
+  }, []);
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const stopSignalRef = useRef<boolean>(false);
+  const executionActiveRef = useRef(false);
+  const profileStopperRef = useRef<RuntimeProfileStopper | null>(null);
+  if (!profileStopperRef.current) {
+    profileStopperRef.current = new RuntimeProfileStopper(async (url, timeoutMs) => {
+      const api = (window as any).electronAPI;
+      if (api?.fileAction) {
+        const result = await api.fileAction({
+          action: 'httpRequest', payload: { url, method: 'GET', timeout: timeoutMs / 1000 },
+        });
+        if (!result?.success || result.status < 200 || result.status >= 300) return false;
+        let body = result.data;
+        try { if (typeof body === 'string') body = JSON.parse(body); } catch {}
+        return body?.success !== false;
+      }
+      const response = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!response.ok) return false;
+      const body = await response.json().catch(() => null);
+      return body?.success !== false;
+    });
+  }
+  const stopCleanupRef = useRef<Promise<void> | null>(null);
+  const [isStopping, setIsStopping] = useState(false);
 
   // Initialize session name when currentProject changes
   useEffect(() => {
@@ -1356,9 +1386,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   }, [isExecuting]);
 
   const appName = currentProject?.info.name || 'Untitled';
-  const appPath = `C:\\Users\\Admin\\Desktop\\project\\${appName}`;
+  const appPath = currentProject?.folderPath || appName;
 
-  const getTime = () => new Date().toLocaleTimeString('vi-VN', { hour12: false });
+  const logTimeFormatterRef = useRef(new Intl.DateTimeFormat('vi-VN', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+  const getTime = () => logTimeFormatterRef.current.format(new Date());
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
   // Step navigation
@@ -1426,19 +1457,61 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   };
 
   // Multi-thread automation runner
-  const startMultiThreadExecution = async () => {
+  const startMultiThreadExecution = async (retryIncomplete = false) => {
+    if (executionActiveRef.current) return;
+    const retryQueue = retryIncomplete
+      ? threads.filter(thread => thread.status !== 'completed').map(thread => ({
+          ...thread,
+          status: 'idle' as const,
+          port: thread.profileId || autoGenProfilesMode ? 0 : thread.port,
+          currentAction: 'Queued',
+        }))
+      : null;
+    if (retryQueue?.length === 0) return;
+    executionActiveRef.current = true;
+    stopSignalRef.current = false;
+    setIsExecuting(true);
+    setElapsedSeconds(0);
+    try {
+      await executeMultiThreadRun(retryQueue);
+    } finally {
+      try {
+        await stopCleanupRef.current;
+      } finally {
+        stopCleanupRef.current = null;
+        executionActiveRef.current = false;
+        setIsStopping(false);
+        setIsExecuting(false);
+        fetchProfiles();
+      }
+    }
+  };
+
+  const executeMultiThreadRun = async (retryQueue: ThreadState[] | null) => {
     saveConfigForCurrentProject();
     if (saveProject && !currentProject?.isPackaged) {
       try {
         await saveProject(true);
       } catch (e) {}
     }
-    stopSignalRef.current = false;
     activeTempProfilesRef.current.clear();
     deletedTempProfileIdsRef.current.clear();
-    setIsExecuting(true);
-    setElapsedSeconds(0);
+    const initial = retryQueue ?? await prepareThreadQueue();
+    if (stopSignalRef.current) return;
+    if (retryQueue) {
+      const retryById = new Map(retryQueue.map(thread => [thread.id, thread]));
+      setThreads(previous => previous.map(thread => retryById.get(thread.id) ?? thread));
+    } else {
+      pendingThreadLogsRef.current.clear();
+      setThreads(initial);
+    }
+    if (initial.length > 0 && selectedLogThreadId === null) {
+      setSelectedLogThreadId(initial[0].id);
+    }
+    await runThreadQueue(initial);
+  };
 
+  const prepareThreadQueue = async (): Promise<ThreadState[]> => {
     // 0. Pre-read and pre-filter TXT lines ONCE at session start to ensure strict FIFO order
     // and avoid any race conditions or index shifting when profiles finish asynchronously.
     interface TxtDispatchItem {
@@ -1648,11 +1721,16 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       }
     }
 
-    setThreads(initial);
-    if (initial.length > 0 && selectedLogThreadId === null) {
-      setSelectedLogThreadId(initial[0].id);
-    }
+    return initial;
+  };
 
+  const runThreadQueue = async (initial: ThreadState[]) => {
+    const waitForSlot = async (delay: number) => {
+      const deadline = Date.now() + delay;
+      while (!stopSignalRef.current && Date.now() < deadline) {
+        await sleep(Math.min(100, Math.max(0, deadline - Date.now())));
+      }
+    };
     // Run worker pool: Check if proxyMode is 'rotating'
     const rotatingApis = getRotatingApiUrlsList();
     if (proxyMode === 'rotating' && rotatingApis.length > 0) {
@@ -1736,7 +1814,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
           const batchPromises = currentBatch.map(async (t, idxInGroup) => {
             const workerScreenIdx = baseScreenSlot + idxInGroup;
             if (idxInGroup > 0) {
-              await sleep(idxInGroup * staggerDelay);
+              await waitForSlot(idxInGroup * staggerDelay);
             }
             try {
               await runWorkerThread(t, workerScreenIdx);
@@ -1771,7 +1849,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       let nextIndex = 0;
       const workers = Array.from({ length: concurrency }, async (_, workerIdx) => {
         if (workerIdx > 0 && threadDelay > 0) {
-          await sleep(workerIdx * threadDelay * 1000);
+          await waitForSlot(workerIdx * threadDelay * 1000);
         }
         while (nextIndex < initial.length && !stopSignalRef.current) {
           const taskIdx = nextIndex++;
@@ -1788,8 +1866,6 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       await Promise.all(workers);
     }
 
-    setIsExecuting(false);
-    fetchProfiles();
   };
 
   const updateThreadLog = (
@@ -1798,18 +1874,15 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     text: string,
     currentAction?: string
   ) => {
-    setThreads((prev) =>
-      prev.map((t) => {
-        if (t.id === threadId) {
-          return {
-            ...t,
-            currentAction: currentAction !== undefined ? currentAction : t.currentAction,
-            logs: [...t.logs, { time: getTime(), text, type }],
-          };
-        }
-        return t;
-      })
-    );
+    queueThreadLog(pendingThreadLogsRef.current, threadId, { time: getTime(), text, type }, currentAction);
+    if (logFlushTimerRef.current === null) {
+      logFlushTimerRef.current = setTimeout(() => {
+        logFlushTimerRef.current = null;
+        const batch = pendingThreadLogsRef.current;
+        pendingThreadLogsRef.current = new Map();
+        setThreads(prev => applyThreadLogs(prev, batch));
+      }, 100);
+    }
   };
 
   const setThreadStatus = (threadId: number, status: ThreadState['status']) => {
@@ -1819,36 +1892,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   };
 
   // GPMLogin / SV Browser Stop Profile API (GET /profiles/stop/{id})
-  const stopProfileApi = async (profileId: string) => {
-    if (!profileId) return;
-    const endpoints = [
-      `http://localhost:8725/api/v1/profiles/stop/${profileId}`,
-      `http://127.0.0.1:8725/api/v1/profiles/stop/${profileId}`,
-      `http://localhost:8725/api/v1/profiles/close/${profileId}`,
-      `http://127.0.0.1:8725/api/v1/profiles/close/${profileId}`,
-      `http://localhost:8725/api/v3/profiles/stop/${profileId}`,
-      `http://127.0.0.1:8725/api/v3/profiles/stop/${profileId}`,
-      `http://localhost:8725/api/v3/profiles/close/${profileId}`,
-      `http://127.0.0.1:8725/api/v3/profiles/close/${profileId}`,
-      `http://localhost:9495/api/v1/profiles/stop/${profileId}`,
-    ];
-    for (const ep of endpoints) {
-      try {
-        const r = await fetch(ep);
-        if (r.ok) return;
-      } catch (e) {
-        if ((window as any).electronAPI?.fileAction) {
-          try {
-            await (window as any).electronAPI.fileAction({
-              action: 'httpRequest',
-              payload: { url: ep, method: 'GET' },
-            });
-            return;
-          } catch {}
-        }
-      }
-    }
-  };
+  const stopProfileApi = (profileId: string) => profileStopperRef.current!.stop(profileId);
 
   // Lấy chi tiết thông tin Profile mẫu theo UID
   const getFullProfileByUid = async (uid: string): Promise<GpmProfile | null> => {
@@ -1875,8 +1919,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
     try {
       const pRes = await (window as any).electronAPI?.fileAction?.({
-        action: 'readAllText',
-        payload: { path: `${process.env.APPDATA || ''}\\sv-browser\\SVBrowserData\\profiles.json` },
+        action: 'readSvBrowserProfiles',
       });
       if (pRes?.success && pRes?.content) {
         const parsed = JSON.parse(pRes.content);
@@ -3097,6 +3140,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
   // Run automation for a single worker thread
   const runWorkerThread = async (t: ThreadState, workerIdx?: number) => {
+    if (stopSignalRef.current) return;
     const threadId = t.id;
     setThreadStatus(threadId, 'running');
 
@@ -3391,6 +3435,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     let createdTempStoragePath = '';
     let effectiveProxy = (proxyMode === 'rotating' ? t.profileProxy : resolvedProfileProxy) || resolvedProfileProxy || '';
 
+    if (stopSignalRef.current) return;
+
     // 2.5. Tự tạo Profile mới tạm thời & tự xóa vĩnh viễn khi xong/lỗi/stop
     if (autoGenProfilesMode || (autoCloneProfile && t.profileId)) {
       let srcProf: GpmProfile = templateProfileInfo || profiles.find((p) => String(p.id) === String(t.profileId || templateProfileUid)) || {
@@ -3594,9 +3640,12 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             `http://localhost:9495/api/v1/profiles/${actionPath}/${effectiveProfileId}?${queryParams}`,
           ];
 
+          if (stopSignalRef.current) return;
+          profileStopperRef.current!.track({ threadId, profileId: effectiveProfileId, name: effectiveProfileName });
           for (const url of startUrls) {
+            if (stopSignalRef.current) break;
             try {
-              const resp = await fetch(url);
+              const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
               launchRes = await resp.json();
               const candidate = launchRes?.data?.remote_debugging_address || launchRes?.remote_debugging_address || launchRes?.data?.port;
               if (candidate || (launchRes && launchRes.success)) {
@@ -3640,6 +3689,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             return;
           }
 
+          if (stopSignalRef.current) {
+            await stopProfileApi(effectiveProfileId);
+            return;
+          }
           const portStr = String(addr).split(':').pop();
           activePort = parseInt(portStr || '0', 10);
           updateThreadLog(threadId, 'success', `✔ Profile started on port ${activePort}`);
@@ -3751,6 +3804,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
       const threadVars: Record<string, string> = {
         $threadId: String(threadId),
+        // IDs are assigned 1..N after sorting the selected profiles. Unlike
+        // workerIdx (a reused concurrency slot), this stays tied to the profile.
+        $runOrder: String(t.id),
+        runOrder: String(t.id),
         $port: String(activePort),
         $profileId: effectiveProfileId,
         $profileName: effectiveProfileName,
@@ -4004,10 +4061,13 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       }
     };
 
+    const yieldToUI = createCooperativeYield();
     const executeThreadNodes = async (nodesToRun: WorkflowNode[]): Promise<'STOP' | 'CONTINUE' | 'ERROR_STOP' | 'BREAK_LOOP' | 'NEXT_LOOP'> => {
       let lastConditionBranchMet = false;
 
       for (let i = 0; i < nodesToRun.length; i++) {
+        if (stopSignalRef.current) break;
+        await yieldToUI();
         if (stopSignalRef.current) break;
         const n = nodesToRun[i];
         const isBlock = 'nodes' in n && Array.isArray((n as any).nodes);
@@ -4060,6 +4120,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             updateThreadLog(threadId, 'info', `🔁 Bắt đầu vòng lặp For (${start} ➔ ${end}, bước nhảy ${step})`);
 
             for (let iter = start; iter < end && !stopSignalRef.current; iter += step) {
+              await yieldToUI();
+              if (stopSignalRef.current) break;
               threadVars['$loopIndex'] = String(iter);
               threadVars['loopIndex'] = String(iter);
               threadVars['$loop_index'] = String(iter);
@@ -4081,6 +4143,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             let count = 0;
             updateThreadLog(threadId, 'info', `🔁 Bắt đầu vòng lặp While [${block.condition || ''}]`);
             while (await evaluateGpmConditionAsync(block.condition || '', threadVars, checkXPathInChrome) && count < 100 && !stopSignalRef.current) {
+              await yieldToUI();
+              if (stopSignalRef.current) break;
               threadVars['$loopIndex'] = String(count);
               threadVars['loopIndex'] = String(count);
               threadVars['$loop_index'] = String(count);
@@ -4166,7 +4230,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             updateThreadLog(threadId, 'info', `▶ Call workflow ▸ Bắt đầu thực thi sub-workflow "${refFile}" (${childNodes.length} actions)`);
 
             const childRes = await executeThreadNodes(childNodes);
-            if (childRes === 'STOP' || childRes === 'ERROR_STOP') return childRes;
+            if (childRes === 'STOP' || childRes === 'ERROR_STOP' || childRes === 'BREAK_LOOP' || childRes === 'NEXT_LOOP') return childRes;
 
             // Alias variables modified in child workflow with prefix $refFile_varName
             for (const [k, v] of Object.entries(threadVars)) {
@@ -4263,7 +4327,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
         createdTempStoragePath
       );
     } else if (effectiveProfileId) {
-      if (closeBrowserOnDone || proxyMode === 'rotating') {
+      if (stopSignalRef.current || closeBrowserOnDone || proxyMode === 'rotating') {
         updateThreadLog(threadId, 'info', `⏹ Đang đóng trình duyệt "${effectiveProfileName}" để giải phóng RAM & cổng CDP...`, 'Close Profile');
         await stopProfileApi(effectiveProfileId);
         await sleep(400);
@@ -5641,9 +5705,22 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     // File upload (type 55)
     else if (actType === 55 || actName === 'file upload') {
       const rawPath = getRawVal('FILE_PATH', '');
-      const resolvedPath = resolveStr(rawPath).trim();
+      let resolvedPath = resolveStr(rawPath).trim();
       const rawXPath = (act.element_xpath || getRawVal('XPATH', '')).trim();
       const resolvedXPath = resolveStr(rawXPath).trim();
+
+      // Tự động chuẩn hóa đường dẫn file sang thư mục backend/uploads trên máy hiện tại nếu phát hiện đường dẫn cũ/máy khác (C:\Users\Admin\...)
+      if (resolvedPath && (window as any).electronAPI?.platform === 'win32') {
+        const fileParts = resolvedPath.split(/[\r\n|]+/).map(p => p.trim()).filter(Boolean);
+        const normalizedParts = fileParts.map(p => {
+          if (p.includes('\\uploads\\') || p.includes('/uploads/') || /fb_(spam_)?img_\d+/i.test(p) || p.toLowerCase().includes('\\users\\admin\\')) {
+            const filename = p.split(/[\\/]/).pop()?.split('?')[0];
+            if (filename) return `D:\\project\\facebook\\backend\\uploads\\${filename}`;
+          }
+          return p;
+        });
+        resolvedPath = normalizedParts.join('\n');
+      }
 
       updateThreadLog(threadId, 'info', `▶ File upload › "${resolvedPath}"`, 'File upload');
       if (!resolvedPath) {
@@ -8074,21 +8151,32 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   };
 
   const handleStopAll = async () => {
+    if (!executionActiveRef.current || stopSignalRef.current) return;
     stopSignalRef.current = true;
-    setIsExecuting(false);
-    // 1. Dừng và xóa vĩnh viễn toàn bộ profile tạm thời mới tạo đang chạy
-    for (const [profId, info] of Array.from(activeTempProfilesRef.current.entries())) {
-      await stopAndDeleteTempProfile(info.threadId, profId, info.name, info.storagePath);
-    }
-    // 2. Dừng các profile gốc còn lại nếu có
-    for (const t of threads) {
-      if (t.profileId && !deletedTempProfileIdsRef.current.has(t.profileId)) {
-        updateThreadLog(t.id, 'info', `⏹ Stopping profile "${t.profileName}" via API...`);
-        await stopProfileApi(t.profileId);
-        setThreadStatus(t.id, 'idle');
+    setIsStopping(true);
+    stopCleanupRef.current = stopRunningProfiles();
+    await stopCleanupRef.current;
+  };
+
+  const stopRunningProfiles = async () => {
+    const temporaryProfiles = [...activeTempProfilesRef.current.entries()];
+    let nextTemporaryProfile = 0;
+    await Promise.all(Array.from({ length: Math.min(4, temporaryProfiles.length) }, async () => {
+      while (nextTemporaryProfile < temporaryProfiles.length) {
+        const [profileId, info] = temporaryProfiles[nextTemporaryProfile++];
+        await stopAndDeleteTempProfile(info.threadId, profileId, info.name, info.storagePath);
       }
+    }));
+    const failedProfiles = await profileStopperRef.current!.stopAll(profile => {
+      updateThreadLog(profile.threadId, 'info', `Stopping profile "${profile.name}"...`);
+    });
+    if (failedProfiles.length > 0) {
+      for (const profile of failedProfiles) {
+        updateThreadLog(profile.threadId, 'error', 'Không nhận được xác nhận đóng trình duyệt từ API.');
+      }
+      showToast('Stop All', `Chưa xác nhận đóng được ${failedProfiles.length} trình duyệt. Kiểm tra SV Browser.`);
     }
-    fetchProfiles();
+
   };
 
   const groups = [
@@ -8118,7 +8206,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
   const tagOptions = ['All', ...allTagNames];
 
-  const filteredProfiles = sortProfilesList(
+  const filteredProfiles = useMemo(() => sortProfilesList(
     (profiles || []).filter((p) => {
       if (!p) return false;
       if (selectedGroup !== 'All') {
@@ -8179,19 +8267,19 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       return true;
     }),
     sortOrder
-  );
+  ), [profiles, selectedGroup, selectedTag, searchQuery, sortOrder, selectedProfileIds]);
 
   // Batch UID Modal stats & matching calculation
-  const parsedBatchUids = Array.from(
+  const parsedBatchUids = useMemo(() => Array.from(
     new Set(
       batchUidText
         .split(/[\r\n,;|\t]+/)
         .map((s) => s.trim())
         .filter(Boolean)
     )
-  );
+  ), [batchUidText]);
 
-  const matchedBatchProfiles = (profiles || []).filter((p) => {
+  const matchedBatchProfiles = useMemo(() => (profiles || []).filter((p) => {
     if (!p) return false;
     const pId = String(p.id ?? '').toLowerCase().trim();
     const pUuid = String((p as any).uuid ?? (p as any).raw_id ?? '').toLowerCase().trim();
@@ -8200,7 +8288,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       const target = u.toLowerCase().trim();
       return pId === target || (pUuid && pUuid === target) || pName === target;
     });
-  });
+  }), [profiles, parsedBatchUids]);
 
   const matchedBatchIds = matchedBatchProfiles.map((p) => String(p.id));
   const matchedBatchKeySet = new Set(
@@ -8267,6 +8355,25 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   };
 
   const [lastClickedIndex, setLastClickedIndex] = useState<number | null>(null);
+  const profileDrag = useRef<{ pointerId: number; start: number; end: number } | null>(null);
+  const [profileDragRange, setProfileDragRange] = useState<{ start: number; end: number } | null>(null);
+  const suppressProfileClick = useRef(false);
+
+  const finishProfileDrag = (event: React.PointerEvent, apply: boolean) => {
+    const drag = profileDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    profileDrag.current = null;
+    setProfileDragRange(null);
+    if (!apply || !suppressProfileClick.current) return;
+    const ids = filteredProfiles.slice(Math.min(drag.start, drag.end), Math.max(drag.start, drag.end) + 1)
+      .map(profile => String(profile.id));
+    const range = new Set(ids);
+    const removing = selectedProfileIds.includes(String(filteredProfiles[drag.start].id));
+    updateSelectedProfiles(removing
+      ? selectedProfileIds.filter(id => !range.has(id))
+      : Array.from(new Set([...selectedProfileIds, ...ids])));
+    setLastClickedIndex(drag.end);
+  };
 
   const toggleProfileSelect = (id: string, index?: number, shiftKey?: boolean) => {
     const stringId = String(id);
@@ -10475,6 +10582,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                         className="col-span-4 font-medium text-[#475569] dark:text-[#cbd5e1] flex items-center space-x-1 cursor-pointer hover:text-[#1677ff] transition-colors"
                         title="Click để đổi thứ tự sắp xếp theo tên"
                       >
+                        <span className="w-8 shrink-0">STT</span>
                         <span>Profile Name</span>
                         {sortOrder === 'asc' && <span className="text-[#1677ff] font-bold">↑</span>}
                         {sortOrder === 'desc' && <span className="text-[#1677ff] font-bold">↓</span>}
@@ -10528,13 +10636,44 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                               : p.browser?.name || 'Chromium';
                           const groupName = p.group_name || p.group_id || 'Default group';
                           const globalIdx = startIndex + index;
+                          const inDragRange = profileDragRange && globalIdx >= Math.min(profileDragRange.start, profileDragRange.end)
+                            && globalIdx <= Math.max(profileDragRange.start, profileDragRange.end);
 
                           return (
                             <div
                               key={p.id}
+                              data-profile-index={globalIdx}
+                              onPointerDown={(e) => {
+                                suppressProfileClick.current = false;
+                                if (e.pointerType !== 'mouse' || e.button !== 0 || e.shiftKey ||
+                                  (e.target as HTMLElement).closest('button, a, select')) return;
+                                profileDrag.current = { pointerId: e.pointerId, start: globalIdx, end: globalIdx };
+                              }}
+                              onPointerMove={(e) => {
+                                const drag = profileDrag.current;
+                                if (!drag || drag.pointerId !== e.pointerId || !(e.buttons & 1)) return;
+                                const row = document.elementFromPoint(e.clientX, e.clientY)?.closest('[data-profile-index]');
+                                if (!row) return;
+                                const end = Number(row.getAttribute('data-profile-index'));
+                                if (end === drag.end) return;
+                                e.currentTarget.setPointerCapture(e.pointerId);
+                                drag.end = end;
+                                suppressProfileClick.current = true;
+                                setProfileDragRange({ start: drag.start, end });
+                              }}
+                              onPointerUp={(e) => finishProfileDrag(e, true)}
+                              onPointerCancel={(e) => finishProfileDrag(e, false)}
+                              onLostPointerCapture={(e) => finishProfileDrag(e, false)}
+                              onClickCapture={(e) => {
+                                if (e.detail > 0 && suppressProfileClick.current) {
+                                  suppressProfileClick.current = false;
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                }
+                              }}
                               onClick={(e) => toggleProfileSelect(p.id, globalIdx, e.shiftKey)}
                               className={`grid grid-cols-12 gap-2 px-4 py-2.5 items-center text-xs transition-colors cursor-pointer select-none ${
-                                isSelected
+                                inDragRange ? 'bg-blue-200 dark:bg-blue-800/60' : isSelected
                                   ? 'bg-blue-50/70 dark:bg-blue-950/40'
                                   : 'hover:bg-slate-50 dark:hover:bg-[#131d33]'
                               }`}
@@ -10550,8 +10689,9 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                                   className="w-4 h-4 rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                                 />
                               </div>
-                              <div className="col-span-4 font-normal text-[#1e293b] dark:text-[#f1f5f9] truncate" title={p.name}>
-                                {p.name}
+                              <div className="col-span-4 flex min-w-0 items-center gap-1 font-normal text-[#1e293b] dark:text-[#f1f5f9]" title={p.name}>
+                                <span className="w-8 shrink-0 tabular-nums text-slate-500">{globalIdx + 1}</span>
+                                <span className="truncate">{p.name}</span>
                               </div>
                               <div
                                 className="col-span-3 flex flex-wrap items-center gap-1 overflow-hidden"
@@ -11485,10 +11625,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                       {isExecuting ? (
                         <button
                           onClick={handleStopAll}
+                          disabled={isStopping}
                           className="px-4 py-2 text-xs rounded-lg bg-red-500 hover:bg-red-600 text-white font-semibold flex items-center space-x-1.5 cursor-pointer shadow-xs transition-colors"
                         >
                           <Square className="w-3.5 h-3.5 fill-white" />
-                          <span>Stop All</span>
+                          <span>{isStopping ? 'Đang dừng…' : 'Stop All'}</span>
                         </button>
                       ) : (
                         <>
@@ -11501,12 +11642,21 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                             <span>Choose profiles</span>
                           </button>
                           <button
-                            onClick={startMultiThreadExecution}
+                            onClick={() => startMultiThreadExecution()}
                             className="px-4 py-2 text-xs rounded-lg bg-[#1677ff] hover:bg-blue-600 text-white font-semibold flex items-center space-x-1.5 cursor-pointer shadow-xs transition-colors"
                             title="Run all selected profiles again"
                           >
                             <RotateCcw className="w-3.5 h-3.5 text-white" />
-                            <span>Run selected again</span>
+                            <span>Chạy lại tất cả</span>
+                          </button>
+                          <button
+                            onClick={() => startMultiThreadExecution(true)}
+                            disabled={!threads.some(thread => thread.status !== 'completed')}
+                            className="px-4 py-2 text-xs rounded-lg bg-[#1677ff] hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold flex items-center space-x-1.5 cursor-pointer"
+                            title="Chạy profile chưa hoàn thành hoặc bị lỗi"
+                          >
+                            <Play className="w-3.5 h-3.5" />
+                            <span>Chạy tiếp / chạy lại lỗi</span>
                           </button>
                         </>
                       )}
@@ -11518,6 +11668,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                     <table className="w-full text-left text-xs border-collapse">
                       <thead>
                         <tr className="bg-[#f8fafc] dark:bg-[#0a0f1d] border-b border-[#e2e8f0] dark:border-[#1e293b] text-[#64748b]">
+                          <th className="py-3 pl-4 font-semibold w-12">STT</th>
                           <th className="py-3 px-4 font-semibold">Profile Name</th>
                           <th className="py-3 px-4 font-semibold w-28 text-center">Core</th>
                           <th className="py-3 px-4 font-semibold w-32 text-center">Status</th>
@@ -11528,8 +11679,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                       <tbody className="divide-y divide-[#e2e8f0] dark:divide-[#1e293b]">
                         {threads.length === 0 ? (
                           <tr>
-                            <td colSpan={5} className="py-8 text-center text-[#94a3b8]">
-                              No profiles currently running. Click "Run selected again" or go Back to select profiles.
+                            <td colSpan={6} className="py-8 text-center text-[#94a3b8]">
+                              Chưa có lượt chạy. Chọn profile để bắt đầu.
                             </td>
                           </tr>
                         ) : (
@@ -11549,6 +11700,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                                 }`}
                                 title="Click to view execution log"
                               >
+                                <td className="py-3 pl-4 tabular-nums text-slate-500">{t.id}</td>
                                 <td className="py-3 px-4">
                                   <div className="font-bold text-xs text-[#1e293b] dark:text-[#f1f5f9] flex items-center space-x-1.5">
                                     <span>{t.profileName || t.name}</span>
@@ -11648,7 +11800,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                               </span>
                             </div>
                             <div className="text-[11px] text-[#64748b] mt-0.5">
-                              {currentLogThread.logs?.length || 0} lines
+                              {currentLogThread.logs?.length || 0} lines (latest 500 retained, latest 200 shown)
                             </div>
                           </div>
                           <button
@@ -11662,7 +11814,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
                         {/* Drawer Body - Colored Console Logs matching media_1789722580341.png */}
                         <div className="flex-1 overflow-y-auto p-4 font-mono text-[11px] space-y-1.5 bg-[#080d19]">
-                          {(currentLogThread.logs || []).map((l, idx) => (
+                          {(currentLogThread.logs || []).slice(-VISIBLE_THREAD_LOGS).map((l, idx) => (
                             <div
                               key={idx}
                               className={`leading-relaxed break-all ${
@@ -11695,6 +11847,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
                         </button>
                         <button
                           onClick={() => {
+                            if (selectedLogThreadId !== null) pendingThreadLogsRef.current.delete(selectedLogThreadId);
                             setThreads((prev) =>
                               prev.map((t) => (t.id === selectedLogThreadId ? { ...t, logs: [] } : t))
                             );

@@ -4906,6 +4906,8 @@ export const TestModal: React.FC<TestModalProps> = ({ isOpen, onClose }) => {
       vars['port'] = port || '43076';
       vars['$threadId'] = '1';
       vars['threadId'] = '1';
+      vars['$runOrder'] = '1';
+      vars['runOrder'] = '1';
       vars['$profileId'] = vars['$profileId'] || 'test-profile-id';
       vars['profileId'] = vars['profileId'] || 'test-profile-id';
       vars['$profileName'] = vars['$profileName'] || currentProject?.info?.name || 'Test Profile';

@@ -308,12 +308,12 @@ export function evaluateGpmCondition(conditionStr: string, vars: Record<string, 
   expr = transformStringOperators(expr);
 
   // Handle string-to-boolean equality coercions in JavaScript
-  expr = expr.replace(/"(true|True)"\s*==\s*true/g, 'true');
-  expr = expr.replace(/"(false|False)"\s*==\s*false/g, 'true');
-  expr = expr.replace(/"(true|True)"\s*==\s*false/g, 'false');
-  expr = expr.replace(/"(false|False)"\s*==\s*true/g, 'false');
-  expr = expr.replace(/true\s*==\s*"(true|True)"/g, 'true');
-  expr = expr.replace(/false\s*==\s*"(false|False)"/g, 'true');
+  expr = expr.replace(/["'](true|True)["']\s*==\s*true/g, 'true');
+  expr = expr.replace(/["'](false|False)["']\s*==\s*false/g, 'true');
+  expr = expr.replace(/["'](true|True)["']\s*==\s*false/g, 'false');
+  expr = expr.replace(/["'](false|False)["']\s*==\s*true/g, 'false');
+  expr = expr.replace(/true\s*==\s*["'](true|True)["']/g, 'true');
+  expr = expr.replace(/false\s*==\s*["'](false|False)["']/g, 'true');
 
   // Handle unquoted word comparisons, e.g. "ok" == ok or ok == "ok"
   expr = expr.replace(/(===?|!==?)\s*([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match, op, word) => {

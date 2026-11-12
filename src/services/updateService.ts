@@ -62,6 +62,16 @@ export async function checkForAppUpdates(): Promise<UpdateInfo> {
   };
 
   try {
+    const api = (window as any).electronAPI;
+    if (api?.checkForUpdates) {
+      const result = await api.checkForUpdates();
+      if (!result.unsupported) {
+        return { ...defaultInfo, hasUpdate: Boolean(result.hasUpdate),
+          latestVersion: result.version || CURRENT_APP_VERSION,
+          releaseName: result.releaseName || '', releaseNotes: result.releaseNotes || '',
+          publishedAt: result.publishedAt || '', error: result.error };
+      }
+    }
     const response = await fetch(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
       headers: {
         Accept: 'application/vnd.github.v3+json',

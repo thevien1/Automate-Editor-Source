@@ -11,6 +11,7 @@ import { TestModal } from './components/modals/TestModal';
 import { RuntimeModal } from './components/modals/RuntimeModal';
 import { BuildPackageModal } from './components/modals/BuildPackageModal';
 import { ConfirmModal } from './components/modals/ConfirmModal';
+import { AiCopilotModal } from './components/modals/AiCopilotModal';
 import { SaveToast } from './components/common/SaveToast';
 import { useProject } from './context/ProjectContext';
 
@@ -21,6 +22,8 @@ export const App: React.FC = () => {
     currentProject,
     showTestModal,
     setShowTestModal,
+    showAiModal,
+    setShowAiModal,
     showRuntimeModal,
     setShowRuntimeModal,
     showBuildModal,
@@ -70,6 +73,11 @@ export const App: React.FC = () => {
           options={confirmModalState}
         />
         <SaveToast />
+        <UpdateModal
+          isOpen={showUpdateModal}
+          onClose={() => setShowUpdateModal(false)}
+          updateInfo={updateInfo}
+        />
       </div>
     );
   }
@@ -121,6 +129,10 @@ export const App: React.FC = () => {
       <TestModal
         isOpen={showTestModal}
         onClose={() => setShowTestModal(false)}
+      />
+      <AiCopilotModal
+        isOpen={showAiModal}
+        onClose={() => setShowAiModal(false)}
       />
       <RuntimeModal
         isOpen={showRuntimeModal}

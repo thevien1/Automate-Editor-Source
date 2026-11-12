@@ -247,7 +247,7 @@ export const VariableInput: React.FC<VariableInputProps> = ({
               badge = { label: 'TXT', color: 'bg-blue-50 text-blue-600 dark:bg-blue-950/60 dark:text-blue-400' };
             } else if (['email', 'password', 'code_2fa', 'url', 'username', 'two_factor_code', 'otp', 'phone', 'cookie', 'token'].includes(clean)) {
               badge = { label: 'Data', color: 'bg-purple-50 text-purple-600 dark:bg-purple-950/60 dark:text-purple-400' };
-            } else if (['profileName', 'profileId', 'profileProxy', 'loopIndex', 'threadId', 'port'].includes(clean)) {
+            } else if (['profileName', 'profileId', 'profileProxy', 'loopIndex', 'threadId', 'runOrder', 'port'].includes(clean)) {
               badge = { label: 'System', color: 'bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300' };
             }
 

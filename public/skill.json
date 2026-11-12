@@ -1,0 +1,697 @@
+{
+  "name": "SV Browser Automate Editor",
+  "version": "3.1.114",
+  "protocol": "Chromium DevTools Protocol (CDP) & .gscript workflow JSON",
+  "endpoint": "http://localhost:8775",
+  "skill_mcp_url": "http://localhost:8775",
+  "description": "Tài liệu kỹ thuật, danh mục Action, cú pháp điều kiện và cấu trúc JSON .gscript cho SV Browser Automate Editor. Dùng để AI đọc hiểu và sinh workflow tự động hóa chính xác.",
+  "instructions_for_ai": {
+    "workflow_generation_rule": "AI đọc hiểu tài liệu, danh mục action, condition_syntax và workflow_templates trong schema này để tạo các action node chuẩn xác.",
+    "how_to_auto_apply_into_software": "Sau khi sinh xong danh sách action nodes, BẮT BUỘC gọi HTTP POST đến http://localhost:8775/create với body {\"target\": \"main_logic\", \"nodes\": [ ... ]}. Phần mềm SV Browser Automate Editor sẽ nạp kịch bản vào khung Xem trước, người dùng kiểm tra xong nhấn 'Áp dụng vào Kịch bản ngay' để hoàn tất!",
+    "post_endpoint": "http://localhost:8775/create",
+    "post_headers": {
+      "Content-Type": "application/json"
+    },
+    "post_body_example": {
+      "target": "main_logic",
+      "nodes": [
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 39,
+          "display_text": "Go to URL",
+          "id": "11111111-1111-4111-8111-111111111111",
+          "raw_input": "[{\"Key\":\"URL\",\"Value\":\"https://accounts.google.com/\"},{\"Key\":\"TIME_OUT\",\"Value\":\"60\"}]",
+          "comment": "Mở Google Login"
+        }
+      ]
+    }
+  },
+  "remote_debugging": {
+    "type": "Chromium CDP",
+    "description": "Điều khiển trình duyệt Chromium qua remote debugging port (ví dụ: port=53000, 53002).",
+    "usage": "Trình duyệt được mở với cờ --remote-debugging-port={port}. Có thể điều khiển trực tiếp qua WebSocket CDP hoặc thông qua các node action trong workflow."
+  },
+  "workflow_architecture": {
+    "file_format": ".gscript (JSON chuẩn Json.NET .NET Framework)",
+    "root_keys": [
+      "$type",
+      "before_init",
+      "main_logic",
+      "after_quit",
+      "name"
+    ],
+    "root_type": "SVBAutomateEditor.Models.Editor, SVBAutomateEditor.Models",
+    "blocks": {
+      "before_init": "Khối chạy trước khi mở trình duyệt (đọc dữ liệu cấu hình, gán biến khởi tạo, đọc Excel/File)",
+      "main_logic": "Khối chạy chính sau khi trình duyệt đã mở (thao tác web, click, gõ text, cuộn trang, cào dữ liệu)",
+      "after_quit": "Khối dọn dẹp sau khi trình duyệt đóng (ghi file kết quả, xuất báo cáo, thông báo)"
+    }
+  },
+  "api_endpoints": {
+    "get_skill": {
+      "method": "GET",
+      "url": "http://localhost:8775",
+      "description": "Lấy toàn bộ tài liệu kỹ thuật, JSON schema, danh mục actions và templates mẫu."
+    },
+    "create_or_inject_workflow": {
+      "method": "POST",
+      "url": "http://localhost:8775/create",
+      "description": "TỰ ĐỘNG ĐIỀN kịch bản vào phần mềm Editor. AI gửi mảng nodes vào body, phần mềm sẽ tự động chèn trực tiếp vào kịch bản mà không cần người dùng thao tác.",
+      "request_body_schema": {
+        "target": "string (mặc định 'main_logic', hoặc 'before_init', 'after_quit', hoặc tên sub-workflow)",
+        "nodes": "Mảng các ActionNode hoặc NormalBlockNode hợp lệ",
+        "include_existing": "boolean (tùy chọn: true nếu muốn bổ sung tiếp vào kịch bản đã có)"
+      }
+    }
+  },
+  "core_rules": [
+    "1. CHỈ sử dụng đúng các action có trong danh mục (tra cứu 'actions' bên dưới). Không tự bịa action mới hoặc đoán mã type.",
+    "2. KIỂM TRA PHẦN TỬ TỒN TẠI: BẮT BUỘC dùng cú pháp hasElement(XPATH) hoặc !hasElement(XPATH). TUYỆT ĐỐI không viết XPath trần và không dùng Count element > 0.",
+    "3. EXECUTE JS CODE (type 68): Khi cần gán giá trị trả về vào output_variable_name, BẮT BUỘC phải viết 'return ...;'. SV Browser KHÔNG tự thêm return. Tuyệt đối không dùng IIFE (function(){...})() để lấy giá trị.",
+    "4. FORMAT CLIPBOARD PASTE-READY: Khi AI sinh đoạn workflow dán vào Editor, luôn trả về một MẢNG JSON [ ... ] chứa ActionNode hoặc NormalBlockNode.",
+    "5. ID CỦA NODE: Mọi node đều phải có 'id' là một GUID v4 ngẫu nhiên (dạng xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx).",
+    "6. RAW_INPUT ESCAPE: Field raw_input là một chuỗi JSON escaped biểu diễn mảng [{\"Key\":\"...\",\"Value\":\"...\"}].",
+    "7. DELAY SAU ACTION: Field 'delay' có định dạng 'min,max' tính bằng mili-giây (vd: '2000,3000' hoặc '0,0' hoặc '$delay').",
+    "8. BIẾN HỆ THỐNG: $profileId, $profileName, $profileProxy, $loopIndex, $inputExcel[COLUMN_NAME], $inputExcelTotalRows, $inputExcelCurrentRow."
+  ],
+  "condition_syntax": {
+    "syntax_guide": "Dùng trong IfBlockNode, ElseIfBlockNode, WhileBlockNode.",
+    "rules": [
+      "Kiểm tra phần tử: hasElement(//xpath_here) hoặc !hasElement(//xpath_here)",
+      "So sánh chuỗi: $var = \"value\" hoặc $var != \"value\"",
+      "So sánh số: $count > 5, $step <= 10",
+      "Chứa chuỗi: $url contains \"google.com\" hoặc $text !contains \"error\"",
+      "Kết hợp logic: && (AND), || (OR), dấu ngoặc đơn ( )"
+    ],
+    "examples": [
+      "hasElement(//input[@name='identifier'])",
+      "!hasElement(//div[contains(@class,'alert')])",
+      "$loopIndex < 10 && hasElement(//button[@type='submit'])"
+    ]
+  },
+  "node_templates": {
+    "ActionNode": {
+      "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+      "type": 39,
+      "element_xpath": null,
+      "output_variable_name": null,
+      "delay": "2000,3000",
+      "continue_on_error": false,
+      "id": "e.g. 2ec65279-5038-4a60-8861-ab8905cbaae0",
+      "display_text": "Go to URL",
+      "raw_input": "[{\"Key\":\"URL\",\"Value\":\"https://accounts.google.com/\"},{\"Key\":\"TIME_OUT\",\"Value\":\"60\"}]",
+      "comment": "Mở trang đăng nhập Google"
+    },
+    "NormalBlockNode": {
+      "$type": "SVBAutomateEditor.Models.NormalBlockNode, SVBAutomateEditor.Models",
+      "nodes": [],
+      "expanded": true,
+      "continue_on_error": false,
+      "id": "e.g. 26c90ac1-9bdf-4923-885c-97e9c3253562",
+      "display_text": "Normal block",
+      "raw_input": null,
+      "comment": null
+    },
+    "IfBlockNode": {
+      "$type": "SVBAutomateEditor.Models.IfBlockNode, SVBAutomateEditor.Models",
+      "condition": "hasElement(//input[@type='email'])",
+      "nodes": [],
+      "expanded": true,
+      "continue_on_error": false,
+      "id": "GUID",
+      "display_text": "If",
+      "raw_input": "[{\"Key\":\"CONDITION\",\"Value\":\"hasElement(//input[@type='email'])\"}]",
+      "comment": null
+    },
+    "ForBlockNode": {
+      "$type": "SVBAutomateEditor.Models.ForBlockNode, SVBAutomateEditor.Models",
+      "start": 0,
+      "end": 10,
+      "step": 1,
+      "nodes": [],
+      "expanded": true,
+      "continue_on_error": false,
+      "id": "GUID",
+      "display_text": "For",
+      "raw_input": "[{\"Key\":\"START\",\"Value\":\"0\"},{\"Key\":\"END\",\"Value\":\"10\"},{\"Key\":\"STEP\",\"Value\":\"1\"}]",
+      "comment": null
+    },
+    "WhileBlockNode": {
+      "$type": "SVBAutomateEditor.Models.WhileBlockNode, SVBAutomateEditor.Models",
+      "condition": "!hasElement(//div[@id='finish'])",
+      "nodes": [],
+      "expanded": true,
+      "continue_on_error": false,
+      "id": "GUID",
+      "display_text": "While",
+      "raw_input": "[{\"Key\":\"CONDITION\",\"Value\":\"!hasElement(//div[@id='finish'])\"}]",
+      "comment": null
+    }
+  },
+  "workflow_templates": {
+    "google_login": {
+      "title": "Kịch bản đăng nhập Google Accounts",
+      "description": "Mở trang đăng nhập Google, chờ ô email, điền mail, click tiếp theo, điền mật khẩu và đóng profile",
+      "nodes": [
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 39,
+          "element_xpath": null,
+          "output_variable_name": null,
+          "delay": "2000,3000",
+          "continue_on_error": false,
+          "id": "11111111-1111-4111-8111-111111111111",
+          "display_text": "Go to URL",
+          "raw_input": "[{\"Key\":\"URL\",\"Value\":\"https://accounts.google.com/\"},{\"Key\":\"TIME_OUT\",\"Value\":\"60\"}]",
+          "comment": "Mở trang đăng nhập Google"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 44,
+          "element_xpath": "//input[@type='email' or @id='identifierId']",
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": false,
+          "id": "22222222-2222-4222-8222-222222222222",
+          "display_text": "Wait element",
+          "raw_input": "[{\"Key\":\"TIME_OUT\",\"Value\":\"30\"}]",
+          "comment": "Chờ ô nhập email hiển thị"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 48,
+          "element_xpath": "//input[@type='email' or @id='identifierId']",
+          "output_variable_name": null,
+          "delay": "500,1000",
+          "continue_on_error": false,
+          "id": "33333333-3333-4333-8333-333333333333",
+          "display_text": "Mouse click",
+          "raw_input": "[{\"Key\":\"CLICK_TYPE\",\"Value\":\"Click by Xpath\"},{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"POS\",\"Value\":\"\"}]",
+          "comment": "Click ô nhập email"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 54,
+          "element_xpath": "//input[@type='email' or @id='identifierId']",
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": false,
+          "id": "44444444-4444-4444-8444-444444444444",
+          "display_text": "Key press",
+          "raw_input": "[{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"TYPE\",\"Value\":\"Text\"},{\"Key\":\"KEY\",\"Value\":\"$email\"},{\"Key\":\"DELAY_PRESS\",\"Value\":\"50,150\"}]",
+          "comment": "Nhập email tài khoản"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 48,
+          "element_xpath": "//div[@id='identifierNext'] | //button[.//span[text()='Tiếp theo' or text()='Next']]",
+          "output_variable_name": null,
+          "delay": "2000,3000",
+          "continue_on_error": false,
+          "id": "55555555-5555-4555-8555-555555555555",
+          "display_text": "Mouse click",
+          "raw_input": "[{\"Key\":\"CLICK_TYPE\",\"Value\":\"Click by Xpath\"},{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"POS\",\"Value\":\"\"}]",
+          "comment": "Bấm nút Tiếp theo"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 76,
+          "element_xpath": null,
+          "output_variable_name": null,
+          "delay": "0,0",
+          "continue_on_error": false,
+          "id": "66666666-6666-4666-8666-666666666666",
+          "display_text": "Stop",
+          "raw_input": "[]",
+          "comment": "Dừng và đóng profile"
+        }
+      ]
+    },
+    "facebook_reactions_global": {
+      "title": "Kịch bản Facebook Thích & Yêu thích (Love) Toàn cầu",
+      "description": "Rê chuột vào nút Like bài viết hoặc comment, mở toolbar cảm xúc và click nút Thích (icon 1) hoặc Yêu thích (icon 2) chuẩn xác cho mọi quốc gia",
+      "nodes": [
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 50,
+          "element_xpath": "//div[@role='button'][.//div[@data-ad-rendering-role='like_button']] | //div[@role='article']//div[@role='button'][contains(., 'Thích') or contains(., 'Like')]",
+          "output_variable_name": null,
+          "delay": "1500,2500",
+          "continue_on_error": true,
+          "id": "77777777-7777-4777-8777-777777777777",
+          "display_text": "Mouse move",
+          "raw_input": "[{\"Key\":\"MOVE_TYPE\",\"Value\":\"Move by Xpath\"},{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"POS\",\"Value\":\"\"}]",
+          "comment": "Rê chuột vào nút Like để làm xuất hiện toolbar cảm xúc"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 48,
+          "element_xpath": "(//div[@role='toolbar']//div[@role='button'])[2] | //div[@role='toolbar']//div[@aria-label='Yêu thích' or @aria-label='Love']",
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": true,
+          "id": "88888888-8888-4888-8888-888888888888",
+          "display_text": "Mouse click",
+          "raw_input": "[{\"Key\":\"CLICK_TYPE\",\"Value\":\"Click by Xpath\"},{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"POS\",\"Value\":\"\"}]",
+          "comment": "Click cảm xúc Yêu thích (Love - Icon vị trí số 2 trên thanh toolbar)"
+        }
+      ]
+    },
+    "facebook_comment": {
+      "title": "Kịch bản Facebook Comment bình luận",
+      "description": "Tìm ô nhập bình luận, click, gõ nội dung và gửi",
+      "nodes": [
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 48,
+          "element_xpath": "//div[@role='textbox'][contains(@aria-label, 'bình luận') or contains(@aria-label, 'Comment') or contains(@aria-label, 'Viết bình luận')]",
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": true,
+          "id": "99999999-9999-4999-8999-999999999999",
+          "display_text": "Mouse click",
+          "raw_input": "[{\"Key\":\"CLICK_TYPE\",\"Value\":\"Click by Xpath\"},{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"POS\",\"Value\":\"\"}]",
+          "comment": "Click vào ô nhập bình luận"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 54,
+          "element_xpath": "//div[@role='textbox']",
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": false,
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "display_text": "Key press",
+          "raw_input": "[{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"TYPE\",\"Value\":\"Text\"},{\"Key\":\"KEY\",\"Value\":\"$commentText\"},{\"Key\":\"DELAY_PRESS\",\"Value\":\"60,150\"}]",
+          "comment": "Nhập nội dung bình luận"
+        },
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 54,
+          "element_xpath": "//div[@role='textbox']",
+          "output_variable_name": null,
+          "delay": "2000,3000",
+          "continue_on_error": false,
+          "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "display_text": "Key press",
+          "raw_input": "[{\"Key\":\"XPATH\",\"Value\":\"\"},{\"Key\":\"TYPE\",\"Value\":\"Key\"},{\"Key\":\"KEY\",\"Value\":\"Return\"},{\"Key\":\"DELAY_PRESS\",\"Value\":\"100,200\"}]",
+          "comment": "Gõ phím Enter để gửi bình luận"
+        }
+      ]
+    },
+    "call_sub_workflow": {
+      "title": "Kịch bản gọi Nhánh phụ (Sub-workflow)",
+      "description": "Gọi thực thi một nhánh phụ .gscript trong dự án",
+      "nodes": [
+        {
+          "$type": "SVBAutomateEditor.Models.ActionNode, SVBAutomateEditor.Models",
+          "type": 120,
+          "element_xpath": null,
+          "output_variable_name": null,
+          "delay": "1000,2000",
+          "continue_on_error": false,
+          "id": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "display_text": "Call workflow",
+          "raw_input": "[{\"Key\":\"REFERENCE_FILE\",\"Value\":\"xu_ly_2fa.gscript\"}]",
+          "comment": "Gọi nhánh phụ xu_ly_2fa.gscript"
+        }
+      ]
+    }
+  },
+  "actions_catalog": [
+    {
+      "type": 39,
+      "name": "Go to URL",
+      "category": "Browser - Navigation",
+      "description": "Mở đường dẫn URL trên tab hiện tại",
+      "raw_keys": [
+        "URL",
+        "TIME_OUT"
+      ]
+    },
+    {
+      "type": 36,
+      "name": "New tab",
+      "category": "Browser - Navigation",
+      "description": "Mở một tab mới trên trình duyệt",
+      "raw_keys": []
+    },
+    {
+      "type": 37,
+      "name": "Active tab",
+      "category": "Browser - Navigation",
+      "description": "Kích hoạt tab theo vị trí index hoặc prefix URL",
+      "raw_keys": [
+        "ACTIVE_TAB_TYPE",
+        "TAB_INDEX_OR_PREFIX_URL"
+      ]
+    },
+    {
+      "type": 38,
+      "name": "Close tab",
+      "category": "Browser - Navigation",
+      "description": "Đóng tab hiện tại",
+      "raw_keys": []
+    },
+    {
+      "type": 73,
+      "name": "Close all tab",
+      "category": "Browser - Navigation",
+      "description": "Đóng toàn bộ các tab khác ngoại trừ tab hiện tại",
+      "raw_keys": []
+    },
+    {
+      "type": 40,
+      "name": "Back URL",
+      "category": "Browser - Navigation",
+      "description": "Quay lại trang trước",
+      "raw_keys": []
+    },
+    {
+      "type": 41,
+      "name": "Reload",
+      "category": "Browser - Navigation",
+      "description": "Tải lại trang hiện tại",
+      "raw_keys": []
+    },
+    {
+      "type": 42,
+      "name": "Get URL",
+      "category": "Browser - Navigation",
+      "description": "Lấy URL của tab hiện tại gán vào biến",
+      "hasOutVar": true,
+      "raw_keys": []
+    },
+    {
+      "type": 43,
+      "name": "Wait URL Changed",
+      "category": "Browser - Navigation",
+      "description": "Chờ URL thay đổi",
+      "raw_keys": [
+        "CURRENT_URL",
+        "TIME_OUT"
+      ]
+    },
+    {
+      "type": 44,
+      "name": "Wait element",
+      "category": "Browser - Element",
+      "description": "Chờ phần tử xuất hiện trong DOM theo XPath",
+      "hasXPath": true,
+      "raw_keys": [
+        "TIME_OUT"
+      ]
+    },
+    {
+      "type": 45,
+      "name": "Get element attribute",
+      "category": "Browser - Element",
+      "description": "Lấy thuộc tính của phần tử (href, src, value)",
+      "hasXPath": true,
+      "hasOutVar": true,
+      "raw_keys": [
+        "ATTR_NAME"
+      ]
+    },
+    {
+      "type": 46,
+      "name": "Get element text",
+      "category": "Browser - Element",
+      "description": "Lấy nội dung chữ (text) của phần tử",
+      "hasXPath": true,
+      "hasOutVar": true,
+      "raw_keys": []
+    },
+    {
+      "type": 47,
+      "name": "Count element",
+      "category": "Browser - Element",
+      "description": "Đếm số lượng phần tử khớp với XPath",
+      "hasXPath": true,
+      "hasOutVar": true,
+      "raw_keys": []
+    },
+    {
+      "type": 48,
+      "name": "Mouse click",
+      "category": "Browser - Mouse",
+      "description": "Click chuột vào phần tử theo XPath hoặc tọa độ",
+      "hasXPath": true,
+      "raw_keys": [
+        "CLICK_TYPE",
+        "XPATH",
+        "POS"
+      ]
+    },
+    {
+      "type": 49,
+      "name": "Mouse try to click",
+      "category": "Browser - Mouse",
+      "description": "Thử click nhiều lần cho đến khi thỏa mãn điều kiện dừng",
+      "hasXPath": true,
+      "raw_keys": [
+        "CLICK_TYPE",
+        "XPATH",
+        "POS",
+        "NUMBER_OF_TRIES",
+        "DELAY_EACH_CLICK",
+        "STOP_CONDITION"
+      ]
+    },
+    {
+      "type": 50,
+      "name": "Mouse move",
+      "category": "Browser - Mouse",
+      "description": "Di chuyển chuột mượt mà đến phần tử hoặc tọa độ",
+      "hasXPath": true,
+      "raw_keys": [
+        "MOVE_TYPE",
+        "XPATH",
+        "POS"
+      ]
+    },
+    {
+      "type": 51,
+      "name": "Mouse press and hold",
+      "category": "Browser - Mouse",
+      "description": "Nhấn và giữ chuột",
+      "hasXPath": true,
+      "raw_keys": [
+        "PRESS_TYPE",
+        "XPATH",
+        "POS"
+      ]
+    },
+    {
+      "type": 52,
+      "name": "Mouse release",
+      "category": "Browser - Mouse",
+      "description": "Nhả phím chuột đang giữ",
+      "raw_keys": []
+    },
+    {
+      "type": 53,
+      "name": "Mouse scroll",
+      "category": "Browser - Mouse",
+      "description": "Cuộn chuột theo số lần (1 cuộn xuống, -1 cuộn lên)",
+      "raw_keys": [
+        "SCROLL_NUM"
+      ]
+    },
+    {
+      "type": 54,
+      "name": "Key press",
+      "category": "Browser - Keyboard",
+      "description": "Nhập văn bản hoặc phím tắt (Enter, Backspace, Control+A)",
+      "hasXPath": true,
+      "raw_keys": [
+        "XPATH",
+        "TYPE",
+        "KEY",
+        "DELAY_PRESS"
+      ]
+    },
+    {
+      "type": 55,
+      "name": "File upload",
+      "category": "Browser - Keyboard",
+      "description": "Tải file lên input file",
+      "hasXPath": true,
+      "raw_keys": [
+        "FILE_PATH"
+      ]
+    },
+    {
+      "type": 111,
+      "name": "Select dropdown",
+      "category": "Browser - Keyboard",
+      "description": "Chọn phần tử trong thẻ select HTML",
+      "hasXPath": true,
+      "raw_keys": [
+        "SELECT_TEXT"
+      ]
+    },
+    {
+      "type": 57,
+      "name": "Random scroll",
+      "category": "Browser - Scroll",
+      "description": "Cuộn trang ngẫu nhiên mô phỏng người dùng thật",
+      "raw_keys": []
+    },
+    {
+      "type": 58,
+      "name": "Scroll to top",
+      "category": "Browser - Scroll",
+      "description": "Cuộn lên đầu trang",
+      "raw_keys": []
+    },
+    {
+      "type": 59,
+      "name": "Scroll to bottom",
+      "category": "Browser - Scroll",
+      "description": "Cuộn xuống đáy trang",
+      "raw_keys": []
+    },
+    {
+      "type": 68,
+      "name": "Execute JS code",
+      "category": "Browser - Javascript",
+      "description": "Thực thi mã JavaScript trên trang (lưu ý: gán biến phải có lệnh return)",
+      "hasOutVar": true,
+      "raw_keys": [
+        "FILE_OR_CODE"
+      ]
+    },
+    {
+      "type": 64,
+      "name": "Import cookie",
+      "category": "Browser - Cookie",
+      "description": "Nạp cookie JSON vào trình duyệt",
+      "raw_keys": [
+        "FILE_PATH"
+      ]
+    },
+    {
+      "type": 65,
+      "name": "Export cookie",
+      "category": "Browser - Cookie",
+      "description": "Xuất cookie trình duyệt ra file JSON",
+      "raw_keys": [
+        "FILE_PATH"
+      ]
+    },
+    {
+      "type": 185,
+      "name": "Clear cookie",
+      "category": "Browser - Cookie",
+      "description": "Xóa toàn bộ cookie hoặc cookie của tên miền",
+      "raw_keys": [
+        "DOMAIN"
+      ]
+    },
+    {
+      "type": 1,
+      "name": "Set variable",
+      "category": "Variables",
+      "description": "Khởi tạo hoặc gán giá trị cho biến",
+      "hasOutVar": true,
+      "raw_keys": [
+        "VALUE",
+        "ALLOW_USER_INPUT",
+        "USER_INPUT_TYPE",
+        "COMBOBOX_DATA",
+        "INPUT_REQUIRED"
+      ]
+    },
+    {
+      "type": 2,
+      "name": "Increase variable",
+      "category": "Variables",
+      "description": "Tăng giá trị số của biến",
+      "hasOutVar": true,
+      "raw_keys": [
+        "CURRENT_VAL",
+        "INCREASE_BY"
+      ]
+    },
+    {
+      "type": 3,
+      "name": "Decrease variable",
+      "category": "Variables",
+      "description": "Giảm giá trị số của biến (lưu ý key là DESCREASE_BY)",
+      "hasOutVar": true,
+      "raw_keys": [
+        "CURRENT_VAL",
+        "DESCREASE_BY"
+      ]
+    },
+    {
+      "type": 7,
+      "name": "Delay",
+      "category": "Workflow",
+      "description": "Tạm dừng luồng trong khoảng thời gian (ms)",
+      "raw_keys": [
+        "MIN",
+        "MAX"
+      ]
+    },
+    {
+      "type": 5,
+      "name": "Exit loop",
+      "category": "Workflow",
+      "description": "Thoát khỏi vòng lặp gần nhất",
+      "raw_keys": []
+    },
+    {
+      "type": 6,
+      "name": "Next loop",
+      "category": "Workflow",
+      "description": "Chuyển sang lần lặp kế tiếp",
+      "raw_keys": []
+    },
+    {
+      "type": 76,
+      "name": "Stop",
+      "category": "Workflow",
+      "description": "Dừng kịch bản ngay lập tức",
+      "raw_keys": []
+    },
+    {
+      "type": 117,
+      "name": "Throw",
+      "category": "Workflow",
+      "description": "Ném lỗi và dừng kịch bản với thông báo",
+      "raw_keys": [
+        "MESSAGE"
+      ]
+    }
+  ],
+  "api_create_endpoint": {
+    "url": "http://localhost:8775/create",
+    "method": "POST",
+    "description": "API tạo mới hoặc bổ sung kịch bản tự động hóa dựa trên mô tả và kịch bản đã có",
+    "payload_schema": {
+      "port": "Cổng remote debugging của Chromium (vd: 53002)",
+      "prompt": "Mô tả tác vụ muốn tạo kịch bản",
+      "include_existing": "Boolean (true/false) có gửi kèm kịch bản hiện tại làm ngữ cảnh hay không",
+      "existing_workflow": "Toàn bộ các action nodes của Main logic và các nhánh phụ (sub_workflows) đang có trong editor",
+      "target": "Khối mục tiêu (main_logic, before_init, after_quit, hoặc tên nhánh phụ)"
+    },
+    "response_format": "Mảng JSON [ ... ] chứa danh sách ActionNode hoặc BlockNode paste-ready để nạp vào Editor"
+  },
+  "sub_workflows_guide": {
+    "description": "Quản lý và gọi nhánh phụ (Sub-workflows) trong SV Browser Automate Editor",
+    "action_call_workflow": {
+      "type": 120,
+      "name": "Call workflow",
+      "description": "Gọi và thực thi một nhánh phụ (file .gscript) trong dự án",
+      "raw_input_format": "[{\"Key\":\"REFERENCE_FILE\",\"Value\":\"ten_nhanh_phu.gscript\"}]"
+    },
+    "rules": [
+      "1. Nhánh phụ được lưu thành file .gscript riêng trong thư mục dự án và quản lý qua các tab trong Editor.",
+      "2. Để gọi nhánh phụ từ nhánh chính (Main logic), sử dụng Action Call workflow (type 120) với REFERENCE_FILE.",
+      "3. Để tạo rẽ nhánh điều kiện: dùng IfBlockNode, ElseIfBlockNode, ElseBlockNode cùng cấp.",
+      "4. Khi bổ sung vào kịch bản đã có, AI phải đọc mảng các node cũ trong existing_workflow để không làm mất logic hiện tại và nối tiếp các bước mới."
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "sv-browser-automate-editor",
-  "version": "3.1.94",
+  "version": "3.1.114",
   "description": "SV Browser Automate Editor - Visual workflow editor",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -11,8 +11,10 @@
     "runtime": "electron . --runtime",
     "electron:runtime": "concurrently -k \"vite\" \"electron . --runtime\"",
     "build:electron": "tsc -p tsconfig.electron.json && javascript-obfuscator dist-electron/main.js --output dist-electron/main.js --compact true --control-flow-flattening true --string-array true --string-array-encoding base64",
-    "dist:win": "node scripts/prepare-build.js && npm run build && npm run build:electron && electron-builder --win",
-    "dist:win:nobump": "node scripts/prepare-build.js --no-bump && npm run build && npm run build:electron && electron-builder --win"
+    "dist:win": "node scripts/prepare-build.js && npm run build && npm run build:electron && electron-builder --win && node scripts/collect-release.cjs",
+    "dist:win:nobump": "node scripts/prepare-build.js --no-bump && npm run build && npm run build:electron && electron-builder --win && node scripts/collect-release.cjs",
+    "dist:mac": "node scripts/prepare-build.js --no-bump --platform=mac && npm run build && npm run build:electron && electron-builder --mac --publish never && node scripts/collect-release.cjs --mac",
+    "release:collect": "node scripts/collect-release.cjs"
   },
   "keywords": [
     "sv-browser",
@@ -27,6 +29,7 @@
     "bootstrap-icons": "^1.13.1",
     "bytenode": "^1.6.0",
     "clsx": "^2.1.1",
+    "electron-updater": "^6.6.2",
     "lucide-react": "^1.16.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -72,10 +75,68 @@
       "icon": "public/icon.ico"
     },
     "nsis": {
+      "artifactName": "SV-Browser-Automate-Editor-Setup-${version}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true
-    }
+    },
+    "portable": {
+      "artifactName": "SV-Browser-Automate-Editor-${version}.${ext}"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "thevien1",
+        "repo": "Automate-Editor",
+        "releaseType": "release"
+      }
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "artifactName": "SV-Browser-Automate-Editor-${version}-mac-${arch}.${ext}",
+      "icon": "public/icon.png",
+      "category": "public.app-category.developer-tools",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSScreenCaptureUsageDescription": "SV Browser uses screen capture for image matching in workflows."
+      }
+    },
+    "fileAssociations": [
+      {
+        "ext": "svblaunch",
+        "name": "SV Browser Workflow Package",
+        "role": "Editor"
+      },
+      {
+        "ext": "gpmlaunch",
+        "name": "Legacy Workflow Package",
+        "role": "Editor"
+      }
+    ],
+    "extraResources": [
+      {
+        "from": "scripts",
+        "to": "scripts",
+        "filter": [
+          "*.py"
+        ]
+      }
+    ]
   }
 }

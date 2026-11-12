@@ -284,6 +284,14 @@ export const VARIABLES_METADATA: Record<string, VariableMeta> = {
     description: 'Số thứ tự luồng xử lý đồng thời trong chế độ Multi-threading.',
     usageGuide: 'Dùng để phân chia dữ liệu hoặc tránh trùng lặp giữa các luồng.',
   },
+  runOrder: {
+    name: '$runOrder',
+    label: 'Thứ tự chạy / Số máy',
+    source: 'Danh sách profile được xếp để chạy',
+    example: '1, 2, 3...',
+    description: 'Số thứ tự từ 1 theo danh sách profile sau khi sắp xếp để chạy. Mỗi profile giữ nguyên số này trong phiên chạy, kể cả khi chạy song song hoặc hoàn thành khác thứ tự.',
+    usageGuide: 'Bấm để copy $runOrder. Ví dụ nhập Máy $runOrder để nhận Máy 1, Máy 2, Máy 3; dùng $runOrder làm số dòng hoặc số máy. Đổi cách sắp xếp profile sẽ đổi thứ tự được gán trong phiên tiếp theo.',
+  },
   port: {
     name: '$port',
     label: 'Cổng Remote Port Debugger',

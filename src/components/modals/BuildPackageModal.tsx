@@ -9,6 +9,7 @@ interface BuildPackageModalProps {
 }
 
 export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, onClose }) => {
+  const isMac = (window as any).electronAPI?.platform === 'darwin';
   const { currentProject, setScreen, openProjectByPath, showToast } = useProject();
 
   // 1. Tự động hiển thị mẫu tên kèm " SV Browser" ở cuối
@@ -28,7 +29,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
   const [isPortable, setIsPortable] = useState(false);
   const [exportPath, setExportPath] = useState(() => {
     if (currentProject?.folderPath) {
-      return `${currentProject.folderPath}\\build`;
+      return `${currentProject.folderPath.replace(/[\\/]+$/, '')}/build`;
     }
     return '';
   });
@@ -61,7 +62,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
       setBuildProgress(0);
       setProgressStatus('');
       if (currentProject.folderPath) {
-        setExportPath(`${currentProject.folderPath}\\build`);
+        setExportPath(`${currentProject.folderPath.replace(/[\\/]+$/, '')}/build`);
       }
     }
   }, [isOpen, currentProject?.info.name, currentProject?.folderPath]);
@@ -243,7 +244,7 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                 <div>
                   <div className="font-bold text-sm">Đóng gói hoàn tất thành công!</div>
                   <div className="text-xs text-emerald-700 dark:text-emerald-300 mt-1">
-                    Đã tạo file thực thi (.exe) có icon sấm sét 3D riêng biệt. File .svblaunch và các mã nguồn thô đã được ẩn an toàn, người nhận chỉ cần mở file .exe là bảng Runtime tự động kích hoạt.
+                    {isMac ? 'Đã tạo gói .svblaunch và trình mở .command. Cài SV Browser Automate Editor trên Mac, sau đó mở gói để chạy Runtime.' : 'Đã tạo file khởi chạy .exe và gói .svblaunch.'}
                   </div>
                 </div>
               </div>
@@ -392,26 +393,27 @@ export const BuildPackageModal: React.FC<BuildPackageModalProps> = ({ isOpen, on
                     className="rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                   />
                   <span className="text-xs text-[#334155] dark:text-[#cbd5e1] font-medium">
-                    🔒 Mã hóa toàn bộ kịch bản & tự động ẩn file .svblaunch
+                    Đóng gói kịch bản (.svblaunch)
                   </span>
                 </label>
                 <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
-                  Toàn bộ mã nguồn kịch bản được nhúng mã hóa trực tiếp vào file <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">{appName}.exe</span>. Khi gửi cho người khác hoặc khi mở chạy, hệ thống <strong className="text-[#1e293b] dark:text-white">tuyệt đối không giải nén file code (.gscript) ra thư mục</strong>, bảo mật 100% mã nguồn.
+                  Kịch bản được đóng gói vào file <span className="font-mono text-emerald-600 dark:text-emerald-400 font-bold">{appName}{isMac ? '.svblaunch' : '.exe'}</span>. Gói chứa dữ liệu kịch bản; cần cài Editor để chạy.
                 </div>
 
                 <label className="flex items-center space-x-2 cursor-pointer pt-1">
                   <input
                     type="checkbox"
-                    checked={isPortable}
+                    disabled={isMac}
+                    checked={isMac ? false : isPortable}
                     onChange={(e) => setIsPortable(e.target.checked)}
                     className="rounded text-[#1677ff] focus:ring-0 cursor-pointer"
                   />
                   <span className="text-xs text-[#334155] dark:text-[#cbd5e1] font-medium">
-                    📦 Đóng gói Portable (Kèm bộ Runtime để chạy trên mọi máy tính không cần cài đặt Editor)
+                    {isMac ? 'macOS: sử dụng Editor đã cài để chạy Runtime' : '📦 Đóng gói Portable'}
                   </span>
                 </label>
                 <div className="text-[11px] text-[#64748b] dark:text-[#94a3b8] pl-5 leading-relaxed">
-                  Tự động sao chép kèm bộ thư viện chạy Runtime vào thư mục build. Người dùng chỉ cần sao chép cả thư mục sang máy tính khác là có thể nhấp đúp file .exe chạy trực tiếp mà không cần cài đặt phần mềm trước.
+                  Cần cài SV Browser Automate Editor trên máy nhận để mở gói kịch bản.
                 </div>
               </div>
 

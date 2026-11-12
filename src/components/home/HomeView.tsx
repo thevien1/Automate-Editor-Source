@@ -16,7 +16,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenProject,
   onSettings,
 }) => {
-  const { updateInfo, setShowUpdateModal } = useProject();
+  const { updateInfo, isCheckingUpdate, setShowUpdateModal } = useProject();
   return (
     <div className="flex-1 flex overflow-hidden bg-[#f8fafc] dark:bg-[#090d18] text-[#1e293b] dark:text-[#f1f5f9] transition-colors duration-200">
       {/* Sidebar */}
@@ -34,7 +34,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
           </p>
 
           {/* Update Available Announcement Banner */}
-          {updateInfo?.hasUpdate ? (
+          {isCheckingUpdate ? (
+            <div role="status" className="mt-4 text-xs text-slate-500">Đang kiểm tra cập nhật...</div>
+          ) : updateInfo?.error ? (
+            <button onClick={() => setShowUpdateModal(true)} className="mt-4 p-3 rounded-xl border border-amber-300 text-xs text-amber-700 dark:text-amber-300">
+              Chưa kiểm tra được phiên bản mới. Nhấn để thử lại.
+            </button>
+          ) : updateInfo?.hasUpdate ? (
             <div
               onClick={() => setShowUpdateModal(true)}
               className="w-full max-w-xl mx-auto mt-4 p-3 rounded-xl bg-gradient-to-r from-amber-50 to-orange-50 dark:from-amber-950/30 dark:to-orange-950/30 border border-amber-200 dark:border-amber-800/50 flex items-center justify-between shadow-xs cursor-pointer hover:border-amber-400 transition-all text-left"
@@ -79,7 +85,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <span className="px-1.5 py-0.2 rounded-full text-[10px] bg-emerald-200/70 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-300 font-semibold">Đã cài đặt</span>
                   </div>
                   <div className="text-[11px] text-emerald-700/80 dark:text-emerald-400/80 mt-0.5">
-                    Phần mềm đã được cập nhật đầy đủ và đồng bộ với GitHub.
+                    Không có bản mới tại lần kiểm tra gần nhất.
                   </div>
                 </div>
               </div>
