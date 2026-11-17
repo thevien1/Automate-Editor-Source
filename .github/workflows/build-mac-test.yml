@@ -4,10 +4,10 @@ on:
   push:
     branches: ['codex/mac-test-*']
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15-intel
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -26,3 +26,11 @@ jobs:
           path: release/*/mac/*
           if-no-files-found: error
           retention-days: 14
+      - name: Attach Mac installers to existing version release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$VERSION" release/"$VERSION"/mac/* --repo "$GITHUB_REPOSITORY"
+          echo "Mac installers: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION" >> "$GITHUB_STEP_SUMMARY"

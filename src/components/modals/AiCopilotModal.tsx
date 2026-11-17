@@ -61,8 +61,11 @@ export const AiCopilotModal: React.FC<AiCopilotModalProps> = ({ isOpen, onClose 
   const [copiedStep2, setCopiedStep2] = useState(false);
   const [copiedContext, setCopiedContext] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [copiedMcp, setCopiedMcp] = useState(false);
 
   const skillServerUrl = 'http://localhost:8775';
+  const mcpUrl = 'http://127.0.0.1:8775/mcp';
+  const mcpConfig = JSON.stringify({ mcpServers: { 'sv-browser-editor': { url: mcpUrl } } }, null, 2);
 
   // Get current existing nodes
   const currentMainNodes = currentProject?.script?.main_logic?.nodes || [];
@@ -198,9 +201,12 @@ export const AiCopilotModal: React.FC<AiCopilotModalProps> = ({ isOpen, onClose 
   // Bước 2: Viết câu lệnh thao tác, yêu cầu AI tạo dạng POST http://localhost:8775/create
   const promptStep2 = buildCopilotStep2Prompt(cleanPort, targetType, skillServerUrl);
 
-  const copyToClipboard = (text: string, type: 'step1' | 'step2' | 'link' | 'context') => {
+  const copyToClipboard = (text: string, type: 'step1' | 'step2' | 'link' | 'context' | 'mcp') => {
     navigator.clipboard.writeText(text);
-    if (type === 'step1') {
+    if (type === 'mcp') {
+      setCopiedMcp(true);
+      setTimeout(() => setCopiedMcp(false), 2000);
+    } else if (type === 'step1') {
       setCopiedStep1(true);
       setTimeout(() => setCopiedStep1(false), 2000);
     } else if (type === 'step2') {
@@ -553,6 +559,17 @@ export const AiCopilotModal: React.FC<AiCopilotModalProps> = ({ isOpen, onClose 
                 <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
                 <span>Sao chép Prompt gửi cho AI (Antigravity / Cursor / Claude / ChatGPT):</span>
               </span>
+            </div>
+
+            <div className="p-3 rounded-xl border border-purple-200 dark:border-purple-900 space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-purple-700 dark:text-purple-300">Kết nối MCP</span>
+                <button onClick={() => copyToClipboard(mcpConfig, 'mcp')} className="px-3 py-1.5 rounded-lg bg-purple-600 text-white text-xs">
+                  {copiedMcp ? 'Đã sao chép!' : 'Sao chép cấu hình MCP'}
+                </button>
+              </div>
+              <code className="text-xs break-all">{mcpUrl}</code>
+              <p className="text-xs text-slate-500">Chọn Streamable HTTP trong công cụ AI, dùng URL trên. AI đọc hướng dẫn và gửi bản xem trước; bạn bấm Áp dụng để đưa vào kịch bản.</p>
             </div>
 
             {/* Bước 1 Box */}

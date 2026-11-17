@@ -5709,19 +5709,6 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
       const rawXPath = (act.element_xpath || getRawVal('XPATH', '')).trim();
       const resolvedXPath = resolveStr(rawXPath).trim();
 
-      // Tự động chuẩn hóa đường dẫn file sang thư mục backend/uploads trên máy hiện tại nếu phát hiện đường dẫn cũ/máy khác (C:\Users\Admin\...)
-      if (resolvedPath && (window as any).electronAPI?.platform === 'win32') {
-        const fileParts = resolvedPath.split(/[\r\n|]+/).map(p => p.trim()).filter(Boolean);
-        const normalizedParts = fileParts.map(p => {
-          if (p.includes('\\uploads\\') || p.includes('/uploads/') || /fb_(spam_)?img_\d+/i.test(p) || p.toLowerCase().includes('\\users\\admin\\')) {
-            const filename = p.split(/[\\/]/).pop()?.split('?')[0];
-            if (filename) return `D:\\project\\facebook\\backend\\uploads\\${filename}`;
-          }
-          return p;
-        });
-        resolvedPath = normalizedParts.join('\n');
-      }
-
       updateThreadLog(threadId, 'info', `▶ File upload › "${resolvedPath}"`, 'File upload');
       if (!resolvedPath) {
         const failRes = await handleActionFailure('File upload', 'Đường dẫn tệp rỗng');

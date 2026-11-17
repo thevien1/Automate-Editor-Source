@@ -3035,17 +3035,14 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         return { success: false, error: 'No files provided to upload' };
       }
 
-      // Check if files exist on disk (auto-correct foreign machine paths to backend/uploads if found)
+      // Check if files exist on disk
       for (let i = 0; i < fileList.length; i++) {
         let f = fileList[i];
         if (!fs.existsSync(f)) {
           const filename = path.basename(f);
-          const alt1 = path.resolve('D:/project/facebook/backend/uploads', filename);
-          const alt2 = path.resolve(process.cwd(), 'uploads', filename);
-          if (fs.existsSync(alt1)) {
-            fileList[i] = alt1;
-          } else if (fs.existsSync(alt2)) {
-            fileList[i] = alt2;
+          const alt = path.resolve(process.cwd(), 'uploads', filename);
+          if (fs.existsSync(alt)) {
+            fileList[i] = alt;
           } else {
             return { success: false, error: `File not found on disk: ${f}` };
           }
@@ -3076,7 +3073,7 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
           // Check if there is an attach button to click to trigger file input mounting
           const attachBtn = document.querySelector('div[role="button"][aria-label*="file" i], div[role="button"][aria-label*="photo" i], div[role="button"][aria-label*="ảnh" i], div[role="button"][aria-label*="Attach" i], div[role="button"][aria-label*="Đính kèm" i]');
           if (attachBtn) {
-            try { (attachBtn as HTMLElement).click(); } catch(e) {}
+            try { attachBtn.click(); } catch(e) {}
             const inputsAfter = Array.from(document.querySelectorAll('input[type="file"]'));
             el = inputsAfter.find(i => (i.getAttribute('accept') || '').includes('image/*') && i.hasAttribute('multiple'))
               || inputsAfter.find(i => (i.getAttribute('accept') || '').includes('image'))
@@ -3091,6 +3088,10 @@ ipcMain.handle('automation:cdpAction', async (_, req: { port: string | number; a
         returnByValue: false,
       });
 
+      if (evalRes?.result?.exceptionDetails) {
+        const details = evalRes.result.exceptionDetails;
+        return { success: false, error: `Lỗi tìm ô upload: ${details.exception?.description || details.text || 'JavaScript evaluation failed'}` };
+      }
       const objectId = evalRes?.result?.result?.objectId;
       if (!objectId) {
         return { success: false, error: 'Không tìm thấy thẻ <input type="file"> để tải tệp lên' };

@@ -35,3 +35,9 @@ test('Mac packaging includes both installer and updater payload with universal a
   assert.ok(pkg.build.mac.target.every(t => t.arch.includes('universal')));
   assert.ok(pkg.build.extraResources.some(r => r.to === 'scripts' && r.filter.includes('*.py')));
 });
+
+test('Mac icon meets electron-builder minimum dimensions', () => {
+  const png = fs.readFileSync(require('../package.json').build.mac.icon);
+  assert.equal(png.subarray(1, 4).toString(), 'PNG');
+  assert.ok(png.readUInt32BE(16) >= 512 && png.readUInt32BE(20) >= 512);
+});

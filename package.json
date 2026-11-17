@@ -1,6 +1,6 @@
 {
   "name": "sv-browser-automate-editor",
-  "version": "3.1.114",
+  "version": "3.1.116",
   "description": "SV Browser Automate Editor - Visual workflow editor",
   "main": "dist-electron/main.js",
   "scripts": {
@@ -14,7 +14,9 @@
     "dist:win": "node scripts/prepare-build.js && npm run build && npm run build:electron && electron-builder --win && node scripts/collect-release.cjs",
     "dist:win:nobump": "node scripts/prepare-build.js --no-bump && npm run build && npm run build:electron && electron-builder --win && node scripts/collect-release.cjs",
     "dist:mac": "node scripts/prepare-build.js --no-bump --platform=mac && npm run build && npm run build:electron && electron-builder --mac --publish never && node scripts/collect-release.cjs --mac",
-    "release:collect": "node scripts/collect-release.cjs"
+    "release:collect": "node scripts/collect-release.cjs",
+    "skill:server": "tsc -p tsconfig.electron.json && node scripts/skillServer.js",
+    "test:mcp": "tsc -p tsconfig.electron.json && node --test scripts/test-mcp-server.cjs"
   },
   "keywords": [
     "sv-browser",
@@ -25,6 +27,7 @@
   "author": "SV Browser",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/ws": "^8.18.1",
     "bootstrap-icons": "^1.13.1",
     "bytenode": "^1.6.0",
@@ -35,7 +38,8 @@
     "react-dom": "^18.3.1",
     "tailwind-merge": "^2.3.0",
     "ws": "^8.21.3",
-    "xlsx": "^0.18.5"
+    "xlsx": "^0.18.5",
+    "zod": "3.25"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",
@@ -108,7 +112,7 @@
         }
       ],
       "artifactName": "SV-Browser-Automate-Editor-${version}-mac-${arch}.${ext}",
-      "icon": "public/icon.png",
+      "icon": "public/runtime_icon.png",
       "category": "public.app-category.developer-tools",
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",

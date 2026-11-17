@@ -1,9 +1,9 @@
 {
   "name": "SV Browser Automate Editor",
-  "version": "3.1.114",
+  "version": "3.1.116",
   "protocol": "Chromium DevTools Protocol (CDP) & .gscript workflow JSON",
   "endpoint": "http://localhost:8775",
-  "skill_mcp_url": "http://localhost:8775",
+  "skill_mcp_url": "http://127.0.0.1:8775/mcp",
   "description": "Tài liệu kỹ thuật, danh mục Action, cú pháp điều kiện và cấu trúc JSON .gscript cho SV Browser Automate Editor. Dùng để AI đọc hiểu và sinh workflow tự động hóa chính xác.",
   "instructions_for_ai": {
     "workflow_generation_rule": "AI đọc hiểu tài liệu, danh mục action, condition_syntax và workflow_templates trong schema này để tạo các action node chuẩn xác.",
@@ -693,5 +693,20 @@
       "3. Để tạo rẽ nhánh điều kiện: dùng IfBlockNode, ElseIfBlockNode, ElseBlockNode cùng cấp.",
       "4. Khi bổ sung vào kịch bản đã có, AI phải đọc mảng các node cũ trong existing_workflow để không làm mất logic hiện tại và nối tiếp các bước mới."
     ]
+  },
+  "mcp": {
+    "transport": "streamable-http",
+    "url": "http://127.0.0.1:8775/mcp",
+    "resources": [
+      "svb://docs/skill",
+      "svb://docs/schema"
+    ],
+    "tools": [
+      "get_editor_guide",
+      "search_actions",
+      "validate_workflow",
+      "preview_workflow"
+    ],
+    "preview_only": true
   }
 }

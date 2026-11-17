@@ -1,6 +1,7 @@
 import http from 'http';
 import fs from 'fs';
 import path from 'path';
+import { handleMcpRequest } from './mcpServer';
 
 export interface CreateWorkflowRequest {
   port?: string | number;
@@ -271,7 +272,7 @@ export function startSkillServer(
     // Enable CORS for all clients
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, MCP-Protocol-Version, MCP-Session-Id');
 
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
@@ -280,6 +281,11 @@ export function startSkillServer(
     }
 
     const url = req.url ? req.url.split('?')[0] : '/';
+
+    if (url === '/mcp') {
+      void handleMcpRequest(req, res, skillData, skillMdContent, onNodesCreated);
+      return;
+    }
 
     // 1. Health / Status check
     if (url === '/health' || url === '/ping' || url === '/status') {
@@ -292,6 +298,8 @@ export function startSkillServer(
           version: (skillData && skillData.version) || '3.1.96',
           endpoint: `http://localhost:${port}`,
           create_endpoint: `http://localhost:${port}/create`,
+          mcp_endpoint: `http://127.0.0.1:${port}/mcp`,
+          mcp_transport: 'streamable-http',
         })
       );
       return;
@@ -410,7 +418,7 @@ export function startSkillServer(
   });
 
   try {
-    server.listen(port, '0.0.0.0', () => {
+    server.listen(port, '127.0.0.1', () => {
       console.log(`[SkillServer] SV Browser Skill & MCP server listening at http://localhost:${port}`);
     });
   } catch (e) {
