@@ -219,7 +219,7 @@ export const DEFAULT_PROJECT_RUNTIME_CONFIG: ProjectRuntimeConfig = {
   selectedEngine: 'Selenium enhanced engine',
   selectedProvider: 'SV Browser',
   profilesSortOrder: 'default',
-  autoCloneProfile: true,
+  autoCloneProfile: false,
   autoGenProfilesMode: false,
   autoGenCountMode: 'input_data',
   autoGenCustomCount: 10,
@@ -913,7 +913,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
   const [useSchedule, setUseSchedule] = useState<boolean>(false);
 
   // Step 4: Tự động tạo Profile mới tạm thời (Clone từ Profile đã chọn) & Xoá vĩnh viễn khi xong/lỗi/stop
-  const [autoCloneProfile, setAutoCloneProfile] = useState<boolean>(true);
+  const [autoCloneProfile, setAutoCloneProfile] = useState<boolean>(false);
   const [autoGenProfilesMode, setAutoGenProfilesMode] = useState<boolean>(false);
   const [autoGenCountMode, setAutoGenCountMode] = useState<'input_data' | 'custom_count'>('input_data');
   const [autoGenCustomCount, setAutoGenCustomCount] = useState<number>(10);
@@ -1113,7 +1113,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     if (cfg.selectedGroup) setSelectedGroup(cfg.selectedGroup);
     if (cfg.selectedTag) setSelectedTag(cfg.selectedTag);
     setSelectedProfileIds(Array.isArray(cfg.selectedProfileIds) ? cfg.selectedProfileIds : []);
-    setAutoCloneProfile(cfg.autoCloneProfile ?? true);
+    setAutoCloneProfile(cfg.autoCloneProfile ?? false);
     setAutoGenProfilesMode(cfg.autoGenProfilesMode ?? false);
     setAutoGenCountMode(cfg.autoGenCountMode ?? 'input_data');
     setAutoGenCustomCount(cfg.autoGenCustomCount ?? 10);

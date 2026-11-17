@@ -1,6 +1,6 @@
 {
   "name": "SV Browser Automate Editor",
-  "version": "3.1.116",
+  "version": "3.1.117",
   "protocol": "Chromium DevTools Protocol (CDP) & .gscript workflow JSON",
   "endpoint": "http://localhost:8775",
   "skill_mcp_url": "http://127.0.0.1:8775/mcp",
