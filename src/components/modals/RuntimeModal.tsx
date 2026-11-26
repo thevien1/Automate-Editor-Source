@@ -1,3 +1,4 @@
+import { indexWorkflow, formatWorkflowLocation, WorkflowLocation } from '../../utils/workflowLocation';
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   X,
@@ -1306,6 +1307,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
   // Step 5: Running Multi-Thread State
   const [threads, setThreads] = useState<ThreadState[]>([]);
+  const currentThreadLocationsRef = useRef(new Map<number, WorkflowLocation & { callers?: string[] }>());
   const pendingThreadLogsRef = useRef(new Map<number, PendingThreadLogs>());
   const logFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => {
@@ -1874,7 +1876,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     text: string,
     currentAction?: string
   ) => {
-    queueThreadLog(pendingThreadLogsRef.current, threadId, { time: getTime(), text, type }, currentAction);
+    const location = currentThreadLocationsRef.current.get(threadId);
+    const detailed = type === 'error' || text.includes('⚠');
+    const prefix = location ? `[${formatWorkflowLocation(location, detailed)}${detailed && location.callers?.length ? ' | Gọi từ: ' + location.callers.join(' → ') : ''}] ` : type === 'error' ? '[Hệ thống / ngoài action workflow] ' : '';
+    queueThreadLog(pendingThreadLogsRef.current, threadId, { time: getTime(), text: prefix + text, type }, currentAction);
     if (logFlushTimerRef.current === null) {
       logFlushTimerRef.current = setTimeout(() => {
         logFlushTimerRef.current = null;
@@ -4062,7 +4067,8 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
     };
 
     const yieldToUI = createCooperativeYield();
-    const executeThreadNodes = async (nodesToRun: WorkflowNode[]): Promise<'STOP' | 'CONTINUE' | 'ERROR_STOP' | 'BREAK_LOOP' | 'NEXT_LOOP'> => {
+    const mainLocations = new Map((currentProject?.script ? indexWorkflow(currentProject.script) : []).map(item => [item.nodeId, item]));
+    const executeThreadNodes = async (nodesToRun: WorkflowNode[], locations = mainLocations, callers: string[] = []): Promise<'STOP' | 'CONTINUE' | 'ERROR_STOP' | 'BREAK_LOOP' | 'NEXT_LOOP'> => {
       let lastConditionBranchMet = false;
 
       for (let i = 0; i < nodesToRun.length; i++) {
@@ -4070,6 +4076,11 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
         await yieldToUI();
         if (stopSignalRef.current) break;
         const n = nodesToRun[i];
+        const previousLocation = currentThreadLocationsRef.current.get(threadId);
+        const nodeLocation = locations.get(n.id);
+        if (nodeLocation) currentThreadLocationsRef.current.set(threadId, { ...nodeLocation, callers });
+        else currentThreadLocationsRef.current.delete(threadId);
+        try {
         const isBlock = 'nodes' in n && Array.isArray((n as any).nodes);
 
         if (isBlock) {
@@ -4084,7 +4095,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             updateThreadLog(threadId, 'info', `🔍 If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
             lastConditionBranchMet = condMet;
             if (condMet) {
-              const res = await executeThreadNodes(block.nodes);
+              const res = await executeThreadNodes(block.nodes, locations, callers);
               if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
             }
           } else if (bText.startsWith('else if') || block.$type?.includes('ElseIfBlockNode')) {
@@ -4096,7 +4107,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
               updateThreadLog(threadId, 'info', `🔍 Else If [${displayCond}] › ${condMet ? 'ĐÚNG (Khớp)' : 'SAI (Không khớp)'}`);
               if (condMet) {
                 lastConditionBranchMet = true;
-                const res = await executeThreadNodes(block.nodes);
+                const res = await executeThreadNodes(block.nodes, locations, callers);
                 if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
               }
             }
@@ -4105,7 +4116,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             if (!lastConditionBranchMet) {
               updateThreadLog(threadId, 'info', `🔍 Nhánh Else › Chạy khối lệnh Else`);
               lastConditionBranchMet = true;
-              const res = await executeThreadNodes(block.nodes);
+              const res = await executeThreadNodes(block.nodes, locations, callers);
               if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
             }
           } else if (bText.startsWith('for') || block.$type?.includes('ForBlockNode')) {
@@ -4130,7 +4141,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
               threadVars['index'] = String(iter);
               threadVars['$i'] = String(iter);
               threadVars['i'] = String(iter);
-              const res = await executeThreadNodes(block.nodes);
+              const res = await executeThreadNodes(block.nodes, locations, callers);
               if (res === 'STOP' || res === 'ERROR_STOP') return res;
               if (res === 'BREAK_LOOP') {
                 updateThreadLog(threadId, 'info', `🚪 Thoát khỏi vòng lặp For thành công (Exit loop) tại $loopIndex = ${iter}`);
@@ -4154,7 +4165,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
               threadVars['$i'] = String(count);
               threadVars['i'] = String(count);
               count++;
-              const res = await executeThreadNodes(block.nodes);
+              const res = await executeThreadNodes(block.nodes, locations, callers);
               if (res === 'STOP' || res === 'ERROR_STOP') return res;
               if (res === 'BREAK_LOOP') {
                 updateThreadLog(threadId, 'info', `🚪 Thoát khỏi vòng lặp While thành công (Exit loop)`);
@@ -4164,7 +4175,7 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
             }
           } else {
             lastConditionBranchMet = false;
-            const res = await executeThreadNodes(block.nodes);
+            const res = await executeThreadNodes(block.nodes, locations, callers);
             if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
           }
         } else {
@@ -4229,7 +4240,10 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
             updateThreadLog(threadId, 'info', `▶ Call workflow ▸ Bắt đầu thực thi sub-workflow "${refFile}" (${childNodes.length} actions)`);
 
-            const childRes = await executeThreadNodes(childNodes);
+            const childLocations = new Map(indexWorkflow(targetScript, refFile).map(item => [item.nodeId, item]));
+            // Legacy sub-workflows can also contain before/after roots, which are not shown by their tab.
+            for (const item of indexWorkflow(targetScript)) if (!childLocations.has(item.nodeId)) childLocations.set(item.nodeId, { ...item, workflow: refFile, internal: true });
+            const childRes = await executeThreadNodes(childNodes, childLocations, [...callers, `${nodeLocation?.workflow === 'main' ? 'Nhánh chính' : nodeLocation?.workflow || 'workflow'} dòng ${nodeLocation?.line || '?'} (${act.id})`]);
             if (childRes === 'STOP' || childRes === 'ERROR_STOP' || childRes === 'BREAK_LOOP' || childRes === 'NEXT_LOOP') return childRes;
 
             // Alias variables modified in child workflow with prefix $refFile_varName
@@ -4245,6 +4259,14 @@ export const RuntimeModal: React.FC<RuntimeModalProps> = ({ isOpen, onClose, ful
 
           const res = await executeThreadAction(threadId, activePort, act, threadVars);
           if (res === 'STOP' || res === 'ERROR_STOP' || res === 'BREAK_LOOP' || res === 'NEXT_LOOP') return res;
+        }
+        } catch (error: any) {
+          updateThreadLog(threadId, 'error', `✕ Lỗi thực thi: ${error?.message || String(error)}`);
+          setThreadStatus(threadId, 'error');
+          return 'ERROR_STOP';
+        } finally {
+          if (previousLocation) currentThreadLocationsRef.current.set(threadId, previousLocation);
+          else currentThreadLocationsRef.current.delete(threadId);
         }
       }
       return 'CONTINUE';

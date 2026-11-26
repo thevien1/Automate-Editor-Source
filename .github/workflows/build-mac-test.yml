@@ -20,17 +20,48 @@ jobs:
         run: npm run dist:mac
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Check packaged MCP and recorder on macOS
+        run: |
+          ./node_modules/.bin/electron scripts/smoke-mcp-electron.cjs "release/mac-universal/SV Browser Automate Editor.app/Contents/Resources/app.asar"
+          ./node_modules/.bin/electron scripts/smoke-action-recorder.cjs
       - uses: actions/upload-artifact@v4
         with:
           name: macOS-test-universal
           path: release/*/mac/*
           if-no-files-found: error
           retention-days: 14
-      - name: Attach Mac installers to existing version release
+      - name: Publish Mac test installers
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           VERSION=$(node -p "require('./package.json').version")
-          gh release view "$VERSION" --repo "$GITHUB_REPOSITORY"
+          if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            RELEASE_COMMIT=$(gh api "repos/$GITHUB_REPOSITORY/commits/$VERSION" --jq '.sha')
+            if [ "$RELEASE_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "::error::Release $VERSION points to another commit. Increase package.json version before publishing changed code."
+              exit 1
+            fi
+            gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '[.assets[].name]' > "$RUNNER_TEMP/mac-release-assets.json"
+            export VERSION
+            node <<'NODE'
+          const fs = require('fs');
+          const dir = `release/${process.env.VERSION}/mac`;
+          const files = fs.readdirSync(dir);
+          const existing = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/mac-release-assets.json`, 'utf8'));
+          const found = files.filter(name => existing.includes(name));
+          if (found.length && found.length !== files.length) {
+            throw Error('Release has partial Mac artifacts. Use a new version to avoid mixing update manifests and installers.');
+          }
+          fs.writeFileSync(`${process.env.RUNNER_TEMP}/mac-release-complete`, found.length === files.length ? 'yes' : 'no');
+          NODE
+            if [ "$(cat "$RUNNER_TEMP/mac-release-complete")" = "yes" ]; then
+              echo "Mac assets already published for this commit; keeping the original files."
+              echo "Mac installers: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+          else
+            gh release create "$VERSION" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$VERSION macOS test" --notes "macOS universal test build. Unsigned / not notarized. Auto-update requires Apple Developer ID signing." --prerelease --latest=false
+          fi
           gh release upload "$VERSION" release/"$VERSION"/mac/* --repo "$GITHUB_REPOSITORY"
           echo "Mac installers: https://github.com/$GITHUB_REPOSITORY/releases/tag/$VERSION" >> "$GITHUB_STEP_SUMMARY"

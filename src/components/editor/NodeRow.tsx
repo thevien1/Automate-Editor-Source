@@ -346,6 +346,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
 
         {/* Block Header Banner (matching Image 1) */}
         <div
+          data-workflow-node-id={node.id}
           draggable={!isRoot}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
@@ -583,6 +584,7 @@ export const NodeRow: React.FC<NodeRowProps> = ({
   // ACTION NODE (Image 2 style)
   return (
     <div
+      data-workflow-node-id={node.id}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}

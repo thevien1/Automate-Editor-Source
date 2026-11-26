@@ -1,3 +1,4 @@
+import { indexWorkflow } from '../utils/workflowLocation';
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { ProjectData, ProjectRuntimeConfig, ActionNode, BaseNode, NormalBlockNode, BlockNode, WorkflowNode, ForBlockNode, IfBlockNode, WhileBlockNode, EditorFile } from '../types/gscript';
 import { RecentProject, ActionDefinition, ActiveScreen } from '../types/ui';
@@ -195,6 +196,7 @@ interface ProjectContextType {
   deleteSelectedNode: () => void;
   getSelectedNode: () => WorkflowNode | null;
   toggleBlockExpand: (blockId: string) => void;
+  revealWorkflowNode: (workflow: string, nodeId: string) => void;
   moveNode: (draggedId: string, targetId: string, position?: 'before' | 'after' | 'inside' | number) => void;
   canUndo: boolean;
   canRedo: boolean;
@@ -321,6 +323,29 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
     setSelectedNodeId(defaultNodeId);
     setSelectedNodeIds(defaultNodeId ? [defaultNodeId] : []);
     setSelectedBlockKey('main_logic');
+  };
+
+  const revealWorkflowNode = (workflow: string, nodeId: string) => {
+    const script = getActiveScript(currentProject, workflow);
+    if (!script) return;
+    const location = indexWorkflow(script, workflow).find(item => item.nodeId === nodeId);
+    if (!location) return;
+    if (activeWorkflowTab !== workflow) { setUndoStack([]); setRedoStack([]); }
+    setActiveWorkflowTabState(workflow);
+    setSelectedBlockKey(location.block); setSelectedNodeId(nodeId); setSelectedNodeIds([nodeId]);
+    const expand = (node: any): any => {
+      if (!node || !Array.isArray(node.nodes)) return node;
+      return { ...node, expanded: location.parentIds.includes(node.id) || node.id === nodeId ? true : node.expanded, nodes: node.nodes.map(expand) };
+    };
+    const expandedScript = { ...script, before_init: expand(script.before_init), main_logic: expand(script.main_logic), after_quit: expand(script.after_quit) };
+    setCurrentProject(prev => !prev ? prev : workflow === 'main' ? { ...prev, script: expandedScript } : { ...prev, subWorkflows: { ...prev.subWorkflows, [workflow]: expandedScript } });
+    let attempts = 0;
+    const scroll = () => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>('[data-workflow-node-id]')).find(el => el.dataset.workflowNodeId === nodeId);
+      if (row) row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      else if (++attempts < 15) requestAnimationFrame(scroll);
+    };
+    requestAnimationFrame(scroll);
   };
 
   const createSubWorkflow = async (name: string): Promise<{ success: boolean; error?: string }> => {
@@ -1867,11 +1892,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // Ctrl+F: Open search
       if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
         e.preventDefault();
-        const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
-        if (searchInput) {
-          searchInput.focus();
-          searchInput.select();
-        }
+        window.dispatchEvent(new Event('svb:workflow-search'));
         return;
       }
     };
@@ -1974,6 +1995,7 @@ export const ProjectProvider: React.FC<{ children: React.ReactNode }> = ({ child
         deleteSelectedNode,
         getSelectedNode,
         toggleBlockExpand,
+        revealWorkflowNode,
         moveNode,
         canUndo: undoStack.length > 0,
         canRedo: redoStack.length > 0,

@@ -1,6 +1,13 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  startRecorder: (options: { port: number }) => ipcRenderer.invoke('recorder:start', options),
+  stopRecorder: () => ipcRenderer.invoke('recorder:stop'),
+  onRecorderStatus: (callback: (status: any) => void) => {
+    const handler = (_event: any, status: any) => callback(status);
+    ipcRenderer.on('recorder:status', handler);
+    return () => ipcRenderer.removeListener('recorder:status', handler);
+  },
   platform: process.platform,
   checkForUpdates: () => ipcRenderer.invoke('updater:check'),
   getUpdateState: () => ipcRenderer.invoke('updater:state'),

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Play, FlaskConical, Save, Undo2, Redo2, Search, Trash2, Circle, Wand2, Globe, Code2, Sparkles } from '../common/Icons';
 import { useProject } from '../../context/ProjectContext';
+import { RecordActionControl } from './RecordActionControl';
 
 export const ToolBar: React.FC = () => {
   const {
@@ -121,9 +122,7 @@ export const ToolBar: React.FC = () => {
         {/* Search */}
         <button
           onClick={() => {
-            const el = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
-            el?.focus();
-            el?.select();
+            window.dispatchEvent(new Event('svb:workflow-search'));
           }}
           className="flex items-center space-x-1 px-2 py-1 rounded hover:bg-[#f1f5f9] dark:hover:bg-[#1e293b] text-[#64748b] dark:text-[#94a3b8] hover:text-black dark:hover:text-white cursor-pointer"
           title="Search (Ctrl+F)"
@@ -145,10 +144,7 @@ export const ToolBar: React.FC = () => {
         <div className="h-4 w-[1px] bg-[#e2e8f0] dark:bg-[#1e293b] mx-1" />
 
         {/* Record action */}
-        <button className="flex items-center space-x-1 px-2 py-1 rounded text-[#f43f5e] hover:bg-[#f43f5e]/15 transition-colors">
-          <Circle className="w-3 h-3 fill-[#f43f5e] text-[#f43f5e]" />
-          <span>Record action</span>
-        </button>
+        <RecordActionControl />
 
         {/* AI Copilot */}
         <button

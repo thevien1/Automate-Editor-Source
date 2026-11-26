@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { WorkflowTabs } from './WorkflowTabs';
+import { WorkflowSearch } from './WorkflowSearch';
 import { NodeRow } from './NodeRow';
 import { ShortcutsOverlay } from './ShortcutsOverlay';
 import { useProject } from '../../context/ProjectContext';
@@ -76,6 +77,7 @@ export const Canvas: React.FC = () => {
     <div className="flex-1 flex flex-col h-full bg-[#f8fafc] dark:bg-[#080c16] relative overflow-hidden text-left transition-colors">
       {/* Workflow Tabs */}
       <WorkflowTabs />
+      <WorkflowSearch />
 
       {/* Main Canvas Scroll Area */}
       <div

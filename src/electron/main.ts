@@ -9,6 +9,7 @@ import WebSocket from 'ws';
 import { RUNTIME_ICON_BASE64 } from './runtimeIconBase64';
 import { startSkillServer } from './skillServer';
 import { registerAppUpdater } from './appUpdater';
+import { registerActionRecorder } from './actionRecorder';
 import { chromeCandidates, macLauncher } from './platformSupport';
 
 // Disable all background throttling in Chromium so automation never freezes or lags when unfocused/occluded
@@ -3425,6 +3426,7 @@ if (!gotTheLock) {
 
   app.whenReady().then(() => {
     registerAppUpdater();
+    registerActionRecorder();
     app.on('before-quit', () => { void stopExcelWorker(); });
     try {
       startSkillServer(8775, (actionData) => {
