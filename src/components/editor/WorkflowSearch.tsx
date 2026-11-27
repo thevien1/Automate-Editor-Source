@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronUp, ChevronDown, X } from 'lucide-react';
 import { useProject } from '../../context/ProjectContext';
 import { indexWorkflow, BLOCK_NAMES } from '../../utils/workflowLocation';
 import { ACTION_CATEGORIES } from '../../data/actionsCatalog';
@@ -32,9 +33,9 @@ export const WorkflowSearch: React.FC = () => {
     <div className="flex items-center gap-2">
       <input ref={input} aria-label="Tìm trong workflow" placeholder="Search workflow…" value={query} onChange={e => { setQuery(e.target.value); setCursor(0); }} onKeyDown={e => { if (e.key === 'Escape') { e.preventDefault(); setOpen(false); } if (e.key === 'Enter') { e.preventDefault(); move(e.shiftKey ? -1 : 1); } }} className="flex-1 min-w-0 border border-blue-400 rounded px-2 py-1.5 bg-transparent outline-none" />
       <span role="status" className="whitespace-nowrap text-slate-500">{query.trim() ? matches.length ? `${cursor % matches.length + 1}/${matches.length}` : 'Không tìm thấy' : ''}</span>
-      <button aria-label="Kết quả trước" title="Trước (Shift+Enter)" disabled={!matches.length} onClick={() => move(-1)} className="px-2 py-1 disabled:opacity-30">⌃</button>
-      <button aria-label="Kết quả sau" title="Sau (Enter)" disabled={!matches.length} onClick={() => move(1)} className="px-2 py-1 disabled:opacity-30">⌄</button>
-      <button aria-label="Đóng tìm kiếm" onClick={() => setOpen(false)} className="px-2 py-1">×</button>
+      <button type="button" aria-label="Kết quả trước" title="Trước (Shift+Enter)" disabled={!matches.length} onClick={() => move(-1)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 active:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-600 dark:bg-blue-950 dark:text-blue-200 dark:hover:bg-blue-900 dark:focus-visible:ring-offset-slate-900"><ChevronUp size={20} strokeWidth={2.5} aria-hidden="true" /></button>
+      <button type="button" aria-label="Kết quả sau" title="Sau (Enter)" disabled={!matches.length} onClick={() => move(1)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 active:bg-blue-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-40 dark:border-blue-600 dark:bg-blue-950 dark:text-blue-200 dark:hover:bg-blue-900 dark:focus-visible:ring-offset-slate-900"><ChevronDown size={20} strokeWidth={2.5} aria-hidden="true" /></button>
+      <button type="button" aria-label="Đóng tìm kiếm" title="Đóng (Esc)" onClick={() => setOpen(false)} className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-slate-400 dark:hover:bg-slate-800"><X size={20} aria-hidden="true" /></button>
     </div>
     {current && <div className="text-[10px] text-slate-500 pt-1">{current.workflow === 'main' ? 'Nhánh chính' : `Nhánh phụ: ${current.workflow}`} › {BLOCK_NAMES[current.block]} › Dòng {current.line}</div>}
   </div>;

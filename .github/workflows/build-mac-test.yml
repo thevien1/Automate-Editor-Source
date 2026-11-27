@@ -3,6 +3,7 @@ on:
   workflow_dispatch:
   push:
     branches: ['codex/mac-test-*']
+    tags: ['3.*']
 permissions:
   contents: write
 jobs:
